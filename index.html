@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="MoneyTrack — Personal account balance and transaction tracker">
+  <title>MoneyTrack</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <!-- Nav -->
+  <nav id="nav" aria-label="Main navigation">
+    <div class="nav-brand" aria-hidden="true">
+      <span class="dot"></span>
+      <span>MoneyTrack</span>
+    </div>
+
+    <div role="tablist" aria-label="Sections">
+      <button role="tab" id="tab-accounts" aria-selected="true"
+              aria-controls="sec-accounts" tabindex="0">
+        Accounts
+      </button>
+      <button role="tab" id="tab-tracker" aria-selected="false"
+              aria-controls="sec-tracker" tabindex="-1">
+        Tracker
+      </button>
+    </div>
+
+    <button id="theme-toggle" aria-label="Toggle light/dark theme">☀️</button>
+  </nav>
+
+  <!-- Main -->
+  <main id="main">
+
+    <!-- ══ ACCOUNTS TAB ═══════════════════════════════════════ -->
+    <section id="sec-accounts" role="tabpanel"
+             aria-labelledby="tab-accounts" class="sec on">
+
+      <h1 class="section-title">Accounts</h1>
+      <p class="section-sub" id="accounts-date"></p>
+
+      <!-- Summary KPI cards -->
+      <div class="summary-grid" id="account-kpis" aria-live="polite">
+        <!-- Rendered by JS -->
+      </div>
+
+      <!-- Net Worth Mini Trend -->
+      <div class="card" id="nw-trend-card" style="display:none">
+        <div class="card-title">Net Worth Trend
+          <span id="nw-trend-count" style="font-weight:400;font-size:11px"></span>
+        </div>
+        <div class="nw-trend" id="nw-trend-chart" aria-hidden="true"></div>
+      </div>
+
+      <!-- Balance Trends -->
+      <div class="card" id="balance-trends-card" style="display:none">
+        <div class="card-title">Balance Trends
+          <span id="trend-snap-count" style="font-weight:400;font-size:11px;color:var(--muted)"></span>
+        </div>
+        <div id="balance-trends-content"></div>
+      </div>
+
+      <!-- Update Balances Form -->
+      <div class="card">
+        <div class="card-title">Update Balances
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">Enter current balances</span>
+        </div>
+
+        <p class="group-header">Checking Accounts</p>
+        <div class="account-fields" id="checking-fields">
+          <!-- Rendered by JS -->
+        </div>
+
+        <p class="group-header">Savings Accounts</p>
+        <div class="account-fields" id="savings-fields">
+          <!-- Rendered by JS -->
+        </div>
+
+        <p class="group-header">Debt / Credit Cards</p>
+        <div class="account-fields" id="debt-fields">
+          <!-- Rendered by JS -->
+        </div>
+
+        <p class="group-header">Investment Accounts</p>
+        <div class="account-fields" id="investment-fields">
+          <!-- Rendered by JS -->
+        </div>
+
+        <div class="flex gap-8 mt-12" style="flex-wrap:wrap;align-items:flex-end">
+          <div class="form-group" style="flex:0 0 auto;min-width:150px">
+            <label for="snapshot-date">Date</label>
+            <input type="date" id="snapshot-date">
+          </div>
+          <div class="form-group" style="flex:1;min-width:180px">
+            <label for="snapshot-note">Note (optional)</label>
+            <input type="text" id="snapshot-note" placeholder="e.g. End of March" maxlength="80">
+          </div>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-shrink:0">
+            <button class="btn btn-green" id="save-snapshot">Save Snapshot</button>
+            <button class="btn btn-ghost btn-sm" id="clear-balances">Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Balance History -->
+      <div class="card">
+        <div class="card-title">Balance History
+          <button class="btn btn-ghost btn-sm" id="export-snapshots">Export CSV</button>
+        </div>
+        <div id="snapshot-history" style="overflow-x:auto">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+
+      <!-- Debt Details -->
+      <div class="card" id="debt-details-card">
+        <div class="card-title">Debt Details
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">APR · interest cost · payoff</span>
+        </div>
+        <div id="debt-details">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+
+      <!-- Loans Out -->
+      <div class="card">
+        <div class="card-title">Loans Out
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">Money people owe you</span>
+        </div>
+        <div id="loans-content">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+
+      <!-- Manage Accounts -->
+      <div class="card" id="manage-accounts-card">
+        <div class="card-title">Manage Accounts
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">Add or remove custom accounts</span>
+        </div>
+        <div id="acct-mgmt-list">
+          <!-- Rendered by JS -->
+        </div>
+        <div id="acct-add-form" style="display:none"></div>
+        <div style="margin-top:12px">
+          <button class="btn btn-green btn-sm" id="show-add-account">+ Add Account</button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ══ TRACKER TAB ════════════════════════════════════════ -->
+    <section id="sec-tracker" role="tabpanel"
+             aria-labelledby="tab-tracker" class="sec">
+
+      <h1 class="section-title">Tracker</h1>
+      <p class="section-sub">Log income and expenses, analyse spending patterns.</p>
+
+      <!-- Add / Edit Transaction Form -->
+      <div class="card">
+        <div class="card-title" id="txn-form-title">
+          <span id="txn-form-label">Add Transaction</span>
+          <button class="btn btn-ghost btn-sm hidden" id="cancel-edit">Cancel Edit</button>
+        </div>
+        <input type="hidden" id="edit-id">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="txn-date">Date</label>
+            <input type="date" id="txn-date" required>
+          </div>
+          <div class="form-group">
+            <label for="txn-type">Type</label>
+            <select id="txn-type">
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+              <option value="transfer">Transfer</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="txn-amount">Amount ($)</label>
+            <input type="number" id="txn-amount" min="0" step="0.01" placeholder="0.00" required>
+          </div>
+          <div class="form-group">
+            <label for="txn-account">From Account</label>
+            <select id="txn-account">
+              <!-- Populated by JS from ACCOUNTS -->
+            </select>
+          </div>
+          <div class="form-group" id="to-account-group" style="display:none">
+            <label for="txn-to-account">To Account</label>
+            <select id="txn-to-account">
+              <!-- Populated by JS from ACCOUNTS -->
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="txn-recurring">Recurring</label>
+            <select id="txn-recurring">
+              <option value="">One-time</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="annual">Annual</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="txn-category">Category</label>
+            <select id="txn-category">
+              <optgroup label="Income">
+                <option value="Paycheck">Paycheck</option>
+                <option value="Freelance">Freelance</option>
+                <option value="Transfer In">Transfer In</option>
+                <option value="Other Income">Other Income</option>
+              </optgroup>
+              <optgroup label="Housing">
+                <option value="Rent">Rent</option>
+                <option value="Utilities">Utilities</option>
+                <option value="Insurance">Insurance</option>
+              </optgroup>
+              <optgroup label="Food">
+                <option value="Groceries">Groceries</option>
+                <option value="Dining Out">Dining Out</option>
+                <option value="Coffee">Coffee</option>
+              </optgroup>
+              <optgroup label="Transport">
+                <option value="Gas">Gas</option>
+                <option value="Rideshare">Rideshare</option>
+                <option value="Car Insurance">Car Insurance</option>
+                <option value="Parking">Parking</option>
+              </optgroup>
+              <optgroup label="Health">
+                <option value="Medical">Medical</option>
+                <option value="Pharmacy">Pharmacy</option>
+                <option value="Gym">Gym</option>
+              </optgroup>
+              <optgroup label="Shopping">
+                <option value="Clothing">Clothing</option>
+                <option value="Electronics">Electronics</option>
+                <option value="Amazon">Amazon</option>
+              </optgroup>
+              <optgroup label="Entertainment">
+                <option value="Streaming">Streaming</option>
+                <option value="Events">Events</option>
+                <option value="Hobbies">Hobbies</option>
+              </optgroup>
+              <optgroup label="Giving">
+                <option value="Tithe">Tithe</option>
+                <option value="Family Support">Family Support</option>
+                <option value="Donations">Donations</option>
+              </optgroup>
+              <optgroup label="Finance">
+                <option value="Savings Transfer">Savings Transfer</option>
+                <option value="Investment">Investment</option>
+                <option value="Loan Payment">Loan Payment</option>
+                <option value="Bank Fee">Bank Fee</option>
+                <option value="Subscriptions">Subscriptions</option>
+              </optgroup>
+              <optgroup label="Other">
+                <option value="Education">Education</option>
+                <option value="Personal Care">Personal Care</option>
+                <option value="Miscellaneous">Miscellaneous</option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="form-group" style="grid-column: 1 / -1">
+            <label for="txn-desc">Description</label>
+            <input type="text" id="txn-desc" placeholder="What was this for?" maxlength="120" required>
+          </div>
+        </div>
+        <div class="flex gap-8 mt-12">
+          <button class="btn btn-green" id="save-txn">Add Transaction</button>
+        </div>
+      </div>
+
+      <!-- Filter Bar -->
+      <div class="card" style="padding: 14px 20px">
+        <div class="filter-bar">
+          <span class="filter-label">Period:</span>
+          <select id="filter-period">
+            <option value="all">All Time</option>
+            <option value="today">Today</option>
+            <option value="week">This Week</option>
+            <option value="month" selected>This Month</option>
+            <option value="last30">Last 30 Days</option>
+            <option value="last7">Last 7 Days</option>
+            <option value="custom">Custom Range</option>
+          </select>
+
+          <span class="filter-label" id="custom-range-label" style="display:none">From:</span>
+          <input type="date" id="filter-from" style="display:none">
+          <span id="custom-range-to-label" style="display:none;font-size:11px;color:var(--muted)">To:</span>
+          <input type="date" id="filter-to" style="display:none">
+
+          <span class="filter-label">Account:</span>
+          <select id="filter-account">
+            <!-- Populated by JS from ACCOUNTS -->
+          </select>
+
+          <span class="filter-label">Type:</span>
+          <select id="filter-type">
+            <option value="all">All Types</option>
+            <option value="income">Income</option>
+            <option value="expense">Expense</option>
+            <option value="transfer">Transfer</option>
+          </select>
+
+          <button class="btn btn-ghost btn-sm" id="export-txns">Export CSV</button>
+        </div>
+
+        <!-- Summary Stats -->
+        <div class="tracker-summary" aria-live="polite">
+          <div class="ts-card">
+            <div class="ts-label">Money In</div>
+            <div class="ts-value text-green" id="stat-in">$0.00</div>
+          </div>
+          <div class="ts-card">
+            <div class="ts-label">Money Out</div>
+            <div class="ts-value text-red" id="stat-out">$0.00</div>
+          </div>
+          <div class="ts-card">
+            <div class="ts-label">Net</div>
+            <div class="ts-value" id="stat-net">$0.00</div>
+          </div>
+          <div class="ts-card">
+            <div class="ts-label">Saved</div>
+            <div class="ts-value" id="stat-rate" style="color:var(--muted)">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Category Breakdown + Daily Chart -->
+      <div class="analysis-grid" id="analysis-grid">
+        <div class="card">
+          <div class="card-title">Spending by Category</div>
+          <div id="cat-breakdown"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Daily Spending
+            <span id="daily-period-label" style="font-weight:400;font-size:11px"></span>
+          </div>
+          <div class="daily-chart" id="daily-chart" aria-hidden="true"></div>
+          <div id="account-breakdown" style="margin-top:14px">
+            <!-- Account spending breakdown -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Monthly Trends -->
+      <div class="card">
+        <div class="card-title">6-Month Trends
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">Income · Expenses · Savings rate</span>
+        </div>
+        <div id="monthly-trends">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+
+      <!-- Fixed Recurring Expenses -->
+      <div class="card" id="recurring-card">
+        <div class="card-title">Recurring Expenses</div>
+        <div id="recurring-summary">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+
+      <!-- Monthly Budgets -->
+      <div class="card">
+        <div class="card-title">Monthly Budgets
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">Set spending limits per category</span>
+        </div>
+        <div id="budget-setup">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+
+      <!-- Transaction Log -->
+      <div class="card">
+        <div class="card-title">Transactions
+          <span id="txn-count" style="font-weight:400;font-size:11px;color:var(--muted)"></span>
+        </div>
+        <input type="text" id="txn-search" class="txn-search acct-input"
+               placeholder="Search transactions..." aria-label="Search transactions">
+        <div id="txn-list" class="txn-list" role="list" aria-live="polite">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <script src="js/app.js" defer></script>
+</body>
+</html>
