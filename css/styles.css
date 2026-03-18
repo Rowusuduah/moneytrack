@@ -408,15 +408,46 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 }
 
 /* ─── Responsive ─────────────────────────────────────────────── */
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   .tracker-summary { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 600px) {
   .ts-value { font-size: 16px; }
   main { padding: 14px 12px; }
   .form-grid { grid-template-columns: 1fr; }
   .summary-grid { grid-template-columns: repeat(2, 1fr); }
   .cat-label { min-width: 90px; }
   .analysis-grid { grid-template-columns: 1fr; }
+
+  /* Nav: hide brand text, keep dot + tabs + toggle */
+  .nav-brand span:last-child { display: none; }
+
+  /* Debt meta: stack APR and min payment */
+  .debt-meta-grid { grid-template-columns: 1fr; }
+
+  /* Loan items: wrap paid/delete buttons below name */
+  .loan-item { flex-wrap: wrap; }
+  .loan-item > div:first-child { flex: 1 1 100%; }
+
+  /* Filter bar: full-width selects */
+  .filter-bar select,
+  .filter-bar input[type="date"] { flex: 1; min-width: 120px; }
+
+  /* Transaction items: tighten on small screens */
+  .txn-amount { font-size: 13px; }
+  .txn-actions { gap: 4px; }
+
+  /* Manage accounts item: wrap group badge to new line */
+  .acct-mgmt-item { flex-wrap: wrap; }
+  .acct-mgmt-name { flex: 1 1 auto; min-width: 0; }
+
+  /* Card padding reduced */
+  .card { padding: 14px 14px; }
+  .kpi { padding: 12px 14px; }
+  .kpi-value { font-size: 18px; }
 }
+
 @media (max-width: 360px) {
   .summary-grid { grid-template-columns: 1fr; }
   .tracker-summary { grid-template-columns: repeat(2, 1fr); }
