@@ -574,6 +574,20 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
   padding:14px 0 4px; border-top:1px solid var(--border); margin-top:12px;
 }
 
+/* ─── Google Drive Sync ──────────────────────────────────────── */
+.gdrive-sync {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.gdrive-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--muted); margin-bottom: 8px;
+}
+.gdrive-status {
+  font-size: 11px; color: var(--muted);
+}
+
 /* ─── Login Gate ─────────────────────────────────────────────── */
 #login-overlay {
   position: fixed; inset: 0; z-index: 9000;
