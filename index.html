@@ -4,6 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="MoneyTrack — Personal account balance and transaction tracker">
+  <meta name="theme-color" content="#4ade80">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MoneyTrack">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
   <title>MoneyTrack</title>
   <link rel="stylesheet" href="css/styles.css">
 </head>
@@ -64,6 +71,16 @@
       <!-- Summary KPI cards -->
       <div class="summary-grid" id="account-kpis" aria-live="polite">
         <!-- Rendered by JS -->
+      </div>
+
+      <!-- Financial Ratios -->
+      <div class="card" id="financial-ratios-card">
+        <div class="card-title">Financial Health
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">Key ratios from your data</span>
+        </div>
+        <div id="financial-ratios-content">
+          <!-- Rendered by JS -->
+        </div>
       </div>
 
       <!-- Net Worth Mini Trend -->
@@ -135,6 +152,10 @@
             Import JSON
             <input type="file" id="import-backup-input" accept=".json" style="display:none">
           </label>
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer">
+            Import Bank CSV
+            <input type="file" id="import-csv-input" accept=".csv" style="display:none">
+          </label>
         </div>
         <div class="gdrive-sync">
           <div class="gdrive-label">Google Drive Sync</div>
@@ -143,6 +164,34 @@
             <button class="btn btn-ghost btn-sm" id="gdrive-load">&#8595; Load from Drive</button>
             <span id="gdrive-status" class="gdrive-status"></span>
           </div>
+        </div>
+      </div>
+
+      <!-- Bill Reminders -->
+      <div class="card" id="bills-card">
+        <div class="card-title">Bill Reminders
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">Upcoming recurring bills</span>
+        </div>
+        <div id="bills-content">
+          <!-- Rendered by JS -->
+        </div>
+        <div id="bill-add-form" style="display:none"></div>
+        <div style="margin-top:12px">
+          <button class="btn btn-green btn-sm" id="show-add-bill">+ Add Bill</button>
+        </div>
+      </div>
+
+      <!-- Savings Goals -->
+      <div class="card" id="goals-card">
+        <div class="card-title">Savings Goals
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">Track progress toward targets</span>
+        </div>
+        <div id="goals-content">
+          <!-- Rendered by JS -->
+        </div>
+        <div id="goal-add-form" style="display:none"></div>
+        <div style="margin-top:12px">
+          <button class="btn btn-green btn-sm" id="show-add-goal">+ Add Goal</button>
         </div>
       </div>
 
@@ -437,5 +486,12 @@
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="js/app.js" defer></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>
