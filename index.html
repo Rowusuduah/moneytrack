@@ -10,6 +10,26 @@
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
 
+  <!-- Login Gate -->
+  <div id="login-overlay" aria-modal="true" role="dialog" aria-label="Sign in to MoneyTrack">
+    <div class="login-box">
+      <div class="login-brand">
+        <span class="dot"></span>
+        <span>MoneyTrack</span>
+      </div>
+      <p class="login-sub">Enter your password to continue</p>
+      <form id="login-form" autocomplete="off">
+        <div class="form-group">
+          <label for="login-pass">Password</label>
+          <input type="password" id="login-pass" class="acct-input"
+                 placeholder="••••••••" autocomplete="current-password" required>
+        </div>
+        <p class="login-error" id="login-error" aria-live="polite"></p>
+        <button type="submit" class="btn btn-green" style="width:100%;margin-top:8px">Unlock</button>
+      </form>
+    </div>
+  </div>
+
   <!-- Nav -->
   <nav id="nav" aria-label="Main navigation">
     <div class="nav-brand" aria-hidden="true">

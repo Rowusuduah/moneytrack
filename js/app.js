@@ -47,6 +47,11 @@ const CATEGORY_COLORS = {
   'Education':       '#fbbf24', 'Personal Care': '#a78bfa', 'Miscellaneous':'#8a8aa6',
 };
 
+// ─── Auth ────────────────────────────────────────────────────────
+// Change APP_PASSWORD to your own password before deploying.
+const APP_PASSWORD   = 'moneytrack2025';
+const SESSION_KEY    = 'moneytrack_auth';
+
 // ─── Storage Keys ────────────────────────────────────────────────
 const KEY_SNAPSHOTS = 'moneytrack_snapshots';
 const KEY_TXNS      = 'moneytrack_txns';
@@ -1756,4 +1761,40 @@ function init() {
   renderTracker();
 }
 
-document.addEventListener('DOMContentLoaded', init);
+// ─── Auth Gate ───────────────────────────────────────────────────
+function isAuthenticated() {
+  return sessionStorage.getItem(SESSION_KEY) === '1';
+}
+
+function showApp() {
+  const overlay = document.getElementById('login-overlay');
+  if (overlay) overlay.classList.add('hidden');
+  init();
+}
+
+function bindLoginForm() {
+  const form    = document.getElementById('login-form');
+  const input   = document.getElementById('login-pass');
+  const errorEl = document.getElementById('login-error');
+  if (!form) return;
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    if ((input?.value || '') === APP_PASSWORD) {
+      sessionStorage.setItem(SESSION_KEY, '1');
+      showApp();
+    } else {
+      if (errorEl) errorEl.textContent = 'Incorrect password. Please try again.';
+      if (input)   { input.value = ''; input.focus(); }
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (isAuthenticated()) {
+    showApp();
+  } else {
+    bindLoginForm();
+    document.getElementById('login-pass')?.focus();
+  }
+});
