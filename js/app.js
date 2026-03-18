@@ -1290,20 +1290,31 @@ function renderAccountsTab() {
 
 // ─── Snapshot Actions ────────────────────────────────────────────
 function saveSnapshot() {
-  const balances = {};
-  let hasData = false;
-  ACCOUNTS.forEach(a => {
-    const inp = document.getElementById('bal-' + a.id);
-    const v = parseFloat(inp ? inp.value : '') || 0;
-    balances[a.id] = roundMoney(v);
-    if (v > 0) hasData = true;
-  });
-  if (!hasData) { alert('Please enter at least one account balance before saving.'); return; }
-
   const note = (document.getElementById('snapshot-note')?.value || '').trim();
   const selectedDate = document.getElementById('snapshot-date')?.value || todayISO();
   const snaps = loadSnapshots();
   const dupIdx = snaps.findIndex(s => s.date === selectedDate);
+
+  // If updating an existing snapshot, carry over any fields the user left blank
+  // so that editing just one account doesn't wipe out all the others.
+  const existingAccts = dupIdx !== -1 ? (snaps[dupIdx].accounts || {}) : {};
+
+  const balances = {};
+  let hasData = false;
+  ACCOUNTS.forEach(a => {
+    const inp = document.getElementById('bal-' + a.id);
+    const raw = inp ? inp.value.trim() : '';
+    let v;
+    if (raw === '' && existingAccts[a.id] != null) {
+      v = existingAccts[a.id];           // field left blank → keep existing value
+    } else {
+      v = roundMoney(parseFloat(raw) || 0);
+    }
+    balances[a.id] = v;
+    if (v > 0) hasData = true;
+  });
+  if (!hasData) { alert('Please enter at least one account balance before saving.'); return; }
+
   if (dupIdx !== -1) snaps.splice(dupIdx, 1);
   snaps.push({ date: selectedDate, note, accounts: balances });
   // Keep array sorted by date ascending
