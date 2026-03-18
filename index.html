@@ -53,6 +53,10 @@
               aria-controls="sec-tracker" tabindex="-1">
         Tracker
       </button>
+      <button role="tab" id="tab-things" aria-selected="false"
+              aria-controls="sec-things" tabindex="-1">
+        Things
+      </button>
     </div>
 
     <button id="theme-toggle" aria-label="Toggle light/dark theme">☀️</button>
@@ -480,6 +484,41 @@
           <!-- Rendered by JS -->
         </div>
       </div>
+
+    </section>
+
+    <!-- ══ THINGS TAB ════════════════════════════════════════════ -->
+    <section id="sec-things" role="tabpanel"
+             aria-labelledby="tab-things" class="sec">
+
+      <h1 class="section-title">Things</h1>
+      <p class="section-sub">Track prices and usage of any item you buy regularly.</p>
+
+      <!-- KPI Strip -->
+      <div class="summary-grid" id="things-kpis" aria-live="polite">
+        <!-- Rendered by JS -->
+      </div>
+
+      <!-- Controls + Item Grid -->
+      <div id="things-controls" class="things-controls-bar">
+        <!-- Rendered by JS -->
+      </div>
+
+      <!-- List View -->
+      <div id="things-list-view">
+        <div id="things-add-item-form" style="display:none" class="card"></div>
+        <div id="things-item-grid" class="things-item-grid">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+
+      <!-- Detail View -->
+      <div id="things-detail-view" style="display:none">
+        <!-- Rendered by JS -->
+      </div>
+
+      <!-- Unit suggestions datalist -->
+      <datalist id="things-unit-list"></datalist>
 
     </section>
   </main>

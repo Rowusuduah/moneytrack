@@ -33,6 +33,16 @@ function refreshAccountConfig() {
   ACCOUNT_COLORS = Object.fromEntries(ACCOUNTS.map(a => [a.id, a.color]));
 }
 
+const DEFAULT_THINGS_CATS = [
+  'Groceries','Household','Personal Care','Fuel',
+  'Subscriptions','Medicine','Electronics','Clothing','Food & Dining','Other'
+];
+
+const THINGS_UNIT_SUGGESTIONS = [
+  'oz','fl oz','lbs','kg','g','ml','L','count','pack','roll','sheet',
+  'tablet','capsule','gallon','bottle','can','box','bag','unit'
+];
+
 const CATEGORY_COLORS = {
   'Paycheck':        '#4ade80', 'Freelance':     '#4ade80', 'Transfer In': '#4ade80', 'Other Income': '#4ade80',
   'Rent':            '#f87171', 'Utilities':     '#fb923c', 'Insurance':   '#fb923c',
@@ -308,8 +318,11 @@ const KEY_BUDGETS   = 'moneytrack_budgets';
 const KEY_DEBT_META = 'moneytrack_debt_meta';
 const KEY_LOANS     = 'moneytrack_loans';
 const KEY_ACCOUNTS  = 'moneytrack_accounts';
-const KEY_BILLS     = 'moneytrack_bills';
-const KEY_GOALS     = 'moneytrack_goals';
+const KEY_BILLS          = 'moneytrack_bills';
+const KEY_GOALS          = 'moneytrack_goals';
+const KEY_THINGS_ITEMS   = 'moneytrack_things_items';
+const KEY_THINGS_ENTRIES = 'moneytrack_things_entries';
+const KEY_THINGS_CATS    = 'moneytrack_things_cats';
 
 // ─── Utilities ───────────────────────────────────────────────────
 function escapeHTML(s) {
@@ -454,6 +467,15 @@ function saveGoals(arr) {
   try { localStorage.setItem(KEY_GOALS, JSON.stringify(arr)); } catch {}
   queueDriveSync();
 }
+
+function loadThingsItems()   { try { return JSON.parse(localStorage.getItem(KEY_THINGS_ITEMS)) || []; }   catch { return []; } }
+function saveThingsItems(a)  { try { localStorage.setItem(KEY_THINGS_ITEMS, JSON.stringify(a)); }   catch {} queueDriveSync(); }
+function loadThingsEntries() { try { return JSON.parse(localStorage.getItem(KEY_THINGS_ENTRIES)) || []; } catch { return []; } }
+function saveThingsEntries(a){ try { localStorage.setItem(KEY_THINGS_ENTRIES, JSON.stringify(a)); } catch {} queueDriveSync(); }
+function loadThingsCustomCats()  { try { return JSON.parse(localStorage.getItem(KEY_THINGS_CATS)) || []; } catch { return []; } }
+function saveThingsCustomCats(a) { try { localStorage.setItem(KEY_THINGS_CATS, JSON.stringify(a)); } catch {} }
+function getThingsCats()     { return [...new Set([...DEFAULT_THINGS_CATS, ...loadThingsCustomCats()])]; }
+function getItemEntries(id)  { return loadThingsEntries().filter(e => e.itemId === id).sort((a,b) => a.date.localeCompare(b.date)); }
 
 // ─── Account Select Population ───────────────────────────────────
 function populateAccountSelects() {
@@ -928,10 +950,8 @@ function renderFinancialRatios() {
   const snap = getLatestSnapshot();
   const b = snap ? (snap.accounts || {}) : {};
   const sum = g => roundMoney(ACCOUNTS.filter(a => a.group === g).reduce((s, a) => s + safeAmt(b[a.id]), 0));
-  const savings    = sum('savings');
-  const debt       = sum('debt');
-  const investment = sum('investment');
-  const checking   = sum('checking');
+  const savings = sum('savings');
+  const debt    = sum('debt');
 
   const txns = loadTxns();
   const today = new Date();
@@ -969,13 +989,13 @@ function renderFinancialRatios() {
       label: 'Emergency Fund',
       value: emergencyMonths !== null ? emergencyMonths.toFixed(1) + ' mo' : '—',
       sub:   'Savings ÷ avg monthly expenses',
-      color: emergencyMonths === null ? 'var(--muted)' : emergencyMonths >= 6 ? 'var(--green)' : emergencyMonths >= 3 ? '#fbbf24' : 'var(--red)',
+      color: emergencyMonths === null ? 'var(--muted)' : emergencyMonths >= 6 ? 'var(--green)' : emergencyMonths >= 3 ? 'var(--gold)' : 'var(--red)',
     },
     {
       label: '3-Month Savings Rate',
       value: savingsRate !== null ? Math.round(savingsRate * 100) + '%' : '—',
       sub:   'Avg (income − expenses) / income',
-      color: savingsRate === null ? 'var(--muted)' : savingsRate >= 0.2 ? 'var(--green)' : savingsRate >= 0 ? '#fbbf24' : 'var(--red)',
+      color: savingsRate === null ? 'var(--muted)' : savingsRate >= 0.2 ? 'var(--green)' : savingsRate >= 0 ? 'var(--gold)' : 'var(--red)',
     },
     {
       label: 'Net Worth Change',
@@ -1006,10 +1026,10 @@ function renderBillReminders() {
   const bills = loadBills();
   const today = new Date(); today.setHours(0,0,0,0);
 
-  const withDue = bills.map(b => {
-    const due = getNextDueDate(b);
+  const withDue = bills.map(bill => {
+    const due = getNextDueDate(bill);
     const daysUntil = due ? Math.round((due - today) / 86400000) : null;
-    return { ...b, due, daysUntil };
+    return { ...bill, due, daysUntil };
   }).sort((a, b) => {
     if (a.daysUntil === null) return 1;
     if (b.daysUntil === null) return -1;
@@ -1020,7 +1040,7 @@ function renderBillReminders() {
     el.innerHTML = '<p style="color:var(--muted);font-size:13px">No bills added yet. Click + Add Bill to get started.</p>';
   } else {
     el.innerHTML = withDue.map(b => {
-      const urgency  = b.daysUntil === null ? '' : b.daysUntil <= 0 ? 'bill-overdue' : b.daysUntil <= 3 ? 'bill-urgent' : b.daysUntil <= 7 ? 'bill-soon' : '';
+      const urgency  = b.daysUntil === null ? '' : b.daysUntil < 0 ? 'bill-overdue' : b.daysUntil <= 3 ? 'bill-urgent' : b.daysUntil <= 7 ? 'bill-soon' : '';
       const dueLabel = b.daysUntil === null ? 'Unknown' : b.daysUntil === 0 ? 'Due today' : b.daysUntil < 0 ? `${Math.abs(b.daysUntil)}d overdue` : `In ${b.daysUntil}d`;
       const amtLabel = b.amount ? fmt(b.amount) : '—';
       return `<div class="bill-item ${urgency}">
@@ -1703,6 +1723,8 @@ function renderRecurringCard() {
   }
   if (card) card.style.display = '';
 
+  // Sort newest-first so we keep the most recent entry per description
+  recExpenses.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const seen = new Set();
   const unique = recExpenses.filter(t => {
     const key = (t.description || '').toLowerCase();
@@ -1735,6 +1757,11 @@ function renderTracker() {
   renderRecurringCard();
   renderTransactionLog(txns);
 }
+
+// ─── Things Tracker State ────────────────────────────────────────
+let thingsView     = 'list';  // 'list' | 'detail'
+let thingsDetailId = null;
+let thingsFilters  = { search: '', category: '', sort: 'name' };
 
 // ─── Balance Trends Chart ────────────────────────────────────────
 let balTrendGroup = 'net';
@@ -2107,30 +2134,35 @@ function downloadCSV(csv, filename) {
 }
 
 // ─── Bank CSV Import ─────────────────────────────────────────────
-const BANK_CATEGORY_MAP = {
-  'netflix':       'Streaming',    'spotify':       'Streaming',    'hulu':          'Streaming',
-  'apple music':   'Streaming',    'apple.com':     'Subscriptions','icloud':        'Subscriptions',
-  'chatgpt':       'Subscriptions','openai':        'Subscriptions','google one':    'Subscriptions',
-  'amazon':        'Amazon',       'amzn':          'Amazon',
-  'walmart':       'Groceries',    'publix':        'Groceries',    'kroger':        'Groceries',
-  'whole foods':   'Groceries',    'aldi':          'Groceries',    'trader joe':    'Groceries',
-  'mcdonald':      'Dining Out',   'chick-fil':     'Dining Out',   'chipotle':      'Dining Out',
-  'starbucks':     'Coffee',       'dunkin':        'Coffee',
-  'uber eats':     'Dining Out',   'doordash':      'Dining Out',   'grubhub':       'Dining Out',
-  'uber':          'Rideshare',    'lyft':          'Rideshare',
-  'shell':         'Gas',          'chevron':       'Gas',          'exxon':         'Gas',
-  'wawa':          'Gas',          'bp ':           'Gas',          'speedway':      'Gas',
-  'geico':         'Car Insurance','progressive':   'Car Insurance','allstate':      'Insurance',
-  'payroll':       'Paycheck',     'direct dep':    'Paycheck',     'zelle':         'Transfer In',
-  'planet fitness':'Gym',          'gym':           'Gym',
-  'cvs':           'Pharmacy',     'walgreens':     'Pharmacy',
-  'tithe':         'Tithe',        'church':        'Tithe',
-  'rent':          'Rent',
-};
+// Keys are checked in order — longer/more-specific keys MUST come before
+// shorter ones that would otherwise match first (e.g. 'uber eats' before 'uber').
+const BANK_CATEGORY_MAP = [
+  ['uber eats',     'Dining Out'],   ['doordash',      'Dining Out'],   ['grubhub',       'Dining Out'],
+  ['mcdonald',      'Dining Out'],   ['chick-fil',     'Dining Out'],   ['chipotle',      'Dining Out'],
+  ['whole foods',   'Groceries'],    ['trader joe',    'Groceries'],    ['walmart',       'Groceries'],
+  ['publix',        'Groceries'],    ['kroger',        'Groceries'],    ['aldi',          'Groceries'],
+  ['apple music',   'Streaming'],    ['netflix',       'Streaming'],    ['spotify',       'Streaming'],
+  ['hulu',          'Streaming'],
+  ['apple.com',     'Subscriptions'],['icloud',        'Subscriptions'],['chatgpt',       'Subscriptions'],
+  ['openai',        'Subscriptions'],['google one',    'Subscriptions'],
+  ['planet fitness','Gym'],          ['gym',           'Gym'],
+  ['car insurance', 'Car Insurance'],['geico',         'Car Insurance'],['progressive',   'Car Insurance'],
+  ['allstate',      'Insurance'],
+  ['amazon',        'Amazon'],       ['amzn',          'Amazon'],
+  ['starbucks',     'Coffee'],       ['dunkin',        'Coffee'],
+  ['uber',          'Rideshare'],    ['lyft',          'Rideshare'],
+  ['shell',         'Gas'],          ['chevron',       'Gas'],          ['exxon',         'Gas'],
+  ['wawa',          'Gas'],          ['bp ',           'Gas'],          ['speedway',      'Gas'],
+  ['direct dep',    'Paycheck'],     ['payroll',       'Paycheck'],
+  ['zelle',         'Transfer In'],
+  ['cvs',           'Pharmacy'],     ['walgreens',     'Pharmacy'],
+  ['tithe',         'Tithe'],        ['church',        'Tithe'],
+  ['rent',          'Rent'],
+];
 
 function mapBankCategory(description) {
   const d = description.toLowerCase();
-  for (const [key, cat] of Object.entries(BANK_CATEGORY_MAP)) {
+  for (const [key, cat] of BANK_CATEGORY_MAP) {
     if (d.includes(key)) return cat;
   }
   return 'Miscellaneous';
@@ -2233,7 +2265,7 @@ function importBankCSV(file) {
       const newTxns = parsed
         .filter(t => !seen.has(`${t.date}|${t.description}|${t.amount}`))
         .map(t => ({
-          id:          Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+          id:          crypto.randomUUID(),
           date:        t.date,
           type:        t.type,
           amount:      roundMoney(t.amount),
@@ -2258,11 +2290,482 @@ function importBankCSV(file) {
   reader.readAsText(file);
 }
 
+// ─── Things Tracker — Calculations ───────────────────────────────
+function calcUnitCost(entry) {
+  if (!entry.quantity || entry.quantity <= 0) return null;
+  return roundMoney(entry.totalPrice / entry.quantity);
+}
+
+function dateDiffDays(isoA, isoB) {
+  const a = new Date(isoA + 'T00:00:00'), b = new Date(isoB + 'T00:00:00');
+  return Math.round((b - a) / 86400000);
+}
+
+function calcEntryDiff(curr, prev) {
+  const uc = calcUnitCost(curr), up = calcUnitCost(prev);
+  const days = dateDiffDays(prev.date, curr.date);
+  return {
+    priceChange:    roundMoney(curr.totalPrice - prev.totalPrice),
+    pricePct:       prev.totalPrice ? roundMoney(((curr.totalPrice - prev.totalPrice) / prev.totalPrice) * 100) : null,
+    qtyChange:      roundMoney(curr.quantity - prev.quantity),
+    qtyPct:         prev.quantity ? roundMoney(((curr.quantity - prev.quantity) / prev.quantity) * 100) : null,
+    unitCostChange: (uc != null && up != null) ? roundMoney(uc - up) : null,
+    unitCostPct:    (uc != null && up != null && up !== 0) ? roundMoney(((uc - up) / up) * 100) : null,
+    daysSince:      days,
+    usageRate:      (prev.quantity && days > 0) ? roundMoney(prev.quantity / days) : null,
+  };
+}
+
+function calcItemStats(entries) {
+  if (!entries.length) return null;
+  const sorted = [...entries].sort((a,b) => a.date.localeCompare(b.date));
+  const costs = sorted.map(calcUnitCost).filter(c => c != null);
+  return {
+    count:       sorted.length,
+    totalSpent:  roundMoney(sorted.reduce((s,e) => s + e.totalPrice, 0)),
+    avgUnitCost: costs.length ? roundMoney(costs.reduce((s,c) => s+c, 0) / costs.length) : null,
+    minUnitCost: costs.length ? Math.min(...costs) : null,
+    maxUnitCost: costs.length ? Math.max(...costs) : null,
+    trend:       costs.length >= 4 ? thingsTrendDirection(costs) : 'flat',
+    lastEntry:   sorted[sorted.length - 1],
+    firstEntry:  sorted[0],
+  };
+}
+
+function thingsTrendDirection(values) {
+  const mid = Math.floor(values.length / 2);
+  const first = values.slice(0, mid), second = values.slice(mid);
+  const avgFirst  = first.reduce((s,v) => s+v, 0) / first.length;
+  const avgSecond = second.reduce((s,v) => s+v, 0) / second.length;
+  const pct = ((avgSecond - avgFirst) / avgFirst) * 100;
+  if (pct > 2) return 'up';
+  if (pct < -2) return 'down';
+  return 'flat';
+}
+
+function generateInsight(item, entries) {
+  if (entries.length < 2) return null;
+  const sorted = [...entries].sort((a,b) => a.date.localeCompare(b.date));
+  const last = sorted[sorted.length - 1];
+  const prev = sorted[sorted.length - 2];
+  const diff = calcEntryDiff(last, prev);
+  const parts = [];
+  if (diff.unitCostPct != null) {
+    if (diff.unitCostPct > 5)       parts.push(`Unit cost up ${diff.unitCostPct.toFixed(1)}% vs last purchase`);
+    else if (diff.unitCostPct < -5) parts.push(`Unit cost down ${Math.abs(diff.unitCostPct).toFixed(1)}% — good deal`);
+  }
+  if (diff.daysSince != null && diff.daysSince > 0 && diff.usageRate != null) {
+    parts.push(`Using ~${diff.usageRate.toFixed(2)} ${escapeHTML(last.unit)}/day`);
+  }
+  if (diff.daysSince != null && diff.daysSince >= 0) {
+    parts.push(`${diff.daysSince} day${diff.daysSince === 1 ? '' : 's'} since last purchase`);
+  }
+  return parts.length ? parts.join(' · ') : null;
+}
+
+// ─── Things Tracker — Render ──────────────────────────────────────
+function renderThingsTab() {
+  if (thingsView === 'detail' && thingsDetailId) {
+    renderThingsDetailView(thingsDetailId);
+  } else {
+    thingsView = 'list';
+    const listView = document.getElementById('things-list-view');
+    const detailView = document.getElementById('things-detail-view');
+    if (listView)   listView.style.display   = '';
+    if (detailView) detailView.style.display = 'none';
+    renderThingsDashboard();
+    renderThingsControls();
+    renderThingsItemGrid();
+  }
+}
+
+function renderThingsDashboard() {
+  const el = document.getElementById('things-kpis');
+  if (!el) return;
+  const items   = loadThingsItems();
+  const entries = loadThingsEntries();
+  const totalSpent = roundMoney(entries.reduce((s,e) => s + (e.totalPrice || 0), 0));
+  const risingCount = items.filter(item => {
+    const ents = entries.filter(e => e.itemId === item.id).sort((a,b) => a.date.localeCompare(b.date));
+    const costs = ents.map(calcUnitCost).filter(c => c != null);
+    return costs.length >= 4 && thingsTrendDirection(costs) === 'up';
+  }).length;
+
+  el.innerHTML = `
+    <div class="kpi"><div class="kpi-label">Items Tracked</div><div class="kpi-value">${items.length}</div></div>
+    <div class="kpi"><div class="kpi-label">Entries Logged</div><div class="kpi-value">${entries.length}</div></div>
+    <div class="kpi"><div class="kpi-label">Total Spent</div><div class="kpi-value">${fmt(totalSpent)}</div></div>
+    <div class="kpi"><div class="kpi-label">Rising Prices</div><div class="kpi-value things-trend-up">${risingCount}</div></div>
+  `;
+}
+
+function renderThingsControls() {
+  const el = document.getElementById('things-controls');
+  if (!el) return;
+  const cats = getThingsCats();
+  const catOptions = cats.map(c =>
+    `<option value="${escapeHTML(c)}"${thingsFilters.category === c ? ' selected' : ''}>${escapeHTML(c)}</option>`
+  ).join('');
+  el.innerHTML = `
+    <input type="text" id="things-search" placeholder="Search items…" value="${escapeHTML(thingsFilters.search)}"
+           style="background:var(--surf2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:7px 10px;font-size:12px;outline:none;flex:1;min-width:120px;">
+    <select id="things-cat-filter" style="background:var(--surf2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:7px 10px;font-size:12px;outline:none;flex:1;min-width:120px;">
+      <option value="">All Categories</option>
+      ${catOptions}
+    </select>
+    <select id="things-sort" style="background:var(--surf2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:7px 10px;font-size:12px;outline:none;">
+      <option value="name"${thingsFilters.sort==='name'?' selected':''}>Name A→Z</option>
+      <option value="recent"${thingsFilters.sort==='recent'?' selected':''}>Most Recent</option>
+      <option value="spent"${thingsFilters.sort==='spent'?' selected':''}>Most Spent</option>
+    </select>
+    <button class="btn btn-green btn-sm" id="things-show-add-item">+ Add Item</button>
+  `;
+}
+
+function renderThingsItemGrid() {
+  const el = document.getElementById('things-item-grid');
+  if (!el) return;
+  let items   = loadThingsItems();
+  const allEntries = loadThingsEntries();
+
+  // Filter
+  const search = thingsFilters.search.toLowerCase();
+  if (search)                  items = items.filter(i => i.name.toLowerCase().includes(search));
+  if (thingsFilters.category)  items = items.filter(i => i.category === thingsFilters.category);
+
+  // Sort
+  items = [...items].sort((a,b) => {
+    if (thingsFilters.sort === 'name')   return a.name.localeCompare(b.name);
+    if (thingsFilters.sort === 'recent') {
+      const la = allEntries.filter(e => e.itemId === a.id).sort((x,y) => y.date.localeCompare(x.date))[0];
+      const lb = allEntries.filter(e => e.itemId === b.id).sort((x,y) => y.date.localeCompare(x.date))[0];
+      return (lb?.date || '').localeCompare(la?.date || '');
+    }
+    if (thingsFilters.sort === 'spent') {
+      const sa = allEntries.filter(e => e.itemId === a.id).reduce((s,e) => s + e.totalPrice, 0);
+      const sb = allEntries.filter(e => e.itemId === b.id).reduce((s,e) => s + e.totalPrice, 0);
+      return sb - sa;
+    }
+    return 0;
+  });
+
+  if (!items.length) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">📦</div><p>No items yet. Click + Add Item to start tracking.</p></div>`;
+    return;
+  }
+
+  el.innerHTML = items.map(item => {
+    const entries = allEntries.filter(e => e.itemId === item.id).sort((a,b) => a.date.localeCompare(b.date));
+    const stats = calcItemStats(entries);
+    const lastUC = stats?.lastEntry ? calcUnitCost(stats.lastEntry) : null;
+    const trendIcon = !stats ? '→' : stats.trend === 'up' ? '↑' : stats.trend === 'down' ? '↓' : '→';
+    const trendClass = !stats ? 'things-trend-flat' : `things-trend-${stats.trend}`;
+    const lastDate = stats?.lastEntry ? fmtDate(stats.lastEntry.date) : '—';
+    return `
+      <div class="things-item-card">
+        <div class="things-item-name">${escapeHTML(item.name)}</div>
+        <span class="things-cat-badge">${escapeHTML(item.category)}</span>
+        <div class="things-unit-cost">${lastUC != null ? fmt(lastUC) + '<small style="font-size:11px;font-weight:400;color:var(--muted)">/${escapeHTML(stats.lastEntry.unit)}</small>' : '<span style="color:var(--muted);font-size:13px">No entries yet</span>'}</div>
+        <div style="font-size:11px;color:var(--muted);display:flex;gap:8px;align-items:center">
+          <span class="${trendClass}">${trendIcon}</span>
+          <span>${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}</span>
+          <span>Last: ${lastDate}</span>
+        </div>
+        <div class="flex gap-8 mt-8">
+          <button class="btn btn-ghost btn-sm" style="flex:1" data-things-detail="${escapeHTML(item.id)}">View →</button>
+          <button class="txn-btn del" data-del-thing="${escapeHTML(item.id)}" aria-label="Delete ${escapeHTML(item.name)}">✕</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderThingsDetailView(itemId) {
+  const items = loadThingsItems();
+  const item  = items.find(i => i.id === itemId);
+  if (!item) { showThingsList(); return; }
+
+  const listView   = document.getElementById('things-list-view');
+  const detailView = document.getElementById('things-detail-view');
+  if (listView)   listView.style.display   = 'none';
+  if (!detailView) return;
+  detailView.style.display = '';
+
+  const entries = getItemEntries(itemId);
+  const stats   = calcItemStats(entries);
+  const insight = generateInsight(item, entries);
+
+  // Build entry rows
+  const entryRows = entries.slice().reverse().map((entry, revIdx) => {
+    const origIdx = entries.length - 1 - revIdx;
+    const uc = calcUnitCost(entry);
+    const prev = entries[origIdx - 1];
+    const diff = prev ? calcEntryDiff(entry, prev) : null;
+    const diffBadge = diff && diff.unitCostPct != null
+      ? `<span class="things-diff-badge ${diff.unitCostPct > 0 ? 'up' : 'down'}">${diff.unitCostPct > 0 ? '+' : ''}${diff.unitCostPct.toFixed(1)}%</span>`
+      : '';
+    return `
+      <tr>
+        <td>${fmtDate(entry.date)}</td>
+        <td>${escapeHTML(entry.store || '—')}</td>
+        <td>${entry.quantity} ${escapeHTML(entry.unit)}</td>
+        <td>${fmt(entry.totalPrice)}</td>
+        <td>${uc != null ? fmt(uc) : '—'}${diffBadge}</td>
+        <td><button class="txn-btn del" data-del-entry="${escapeHTML(entry.id)}" aria-label="Delete entry">✕</button></td>
+      </tr>
+    `;
+  }).join('');
+
+  detailView.innerHTML = `
+    <div class="card">
+      <div class="card-title">
+        <button class="btn btn-ghost btn-sm" id="things-back">← Back</button>
+        <span style="font-size:14px;font-weight:700;color:var(--text)">${escapeHTML(item.name)}</span>
+        <span class="things-cat-badge">${escapeHTML(item.category)}</span>
+      </div>
+      ${item.notes ? `<p style="font-size:12px;color:var(--muted);margin-bottom:10px">${escapeHTML(item.notes)}</p>` : ''}
+      ${insight ? `<div class="things-insight">${insight}</div>` : ''}
+
+      ${stats ? `
+      <div class="ratios-grid" style="margin-bottom:14px">
+        <div class="ratio-card"><div class="ratio-label">Total Spent</div><div class="ratio-value">${fmt(stats.totalSpent)}</div><div class="ratio-sub">${stats.count} purchase${stats.count === 1 ? '' : 's'}</div></div>
+        <div class="ratio-card"><div class="ratio-label">Avg Unit Cost</div><div class="ratio-value">${stats.avgUnitCost != null ? fmt(stats.avgUnitCost) : '—'}</div></div>
+        <div class="ratio-card"><div class="ratio-label">Best Price</div><div class="ratio-value things-trend-down">${stats.minUnitCost != null ? fmt(stats.minUnitCost) : '—'}</div></div>
+        <div class="ratio-card"><div class="ratio-label">Highest Price</div><div class="ratio-value things-trend-up">${stats.maxUnitCost != null ? fmt(stats.maxUnitCost) : '—'}</div></div>
+      </div>
+      ` : ''}
+
+      ${entries.length >= 2 ? `
+      <div style="margin-bottom:14px">
+        <svg class="things-chart" viewBox="0 0 300 80" aria-hidden="true" id="things-svg-${escapeHTML(itemId)}"></svg>
+      </div>
+      ` : ''}
+
+      <div style="margin-bottom:12px">
+        <button class="btn btn-green btn-sm" id="things-show-add-entry">+ Log Purchase</button>
+      </div>
+      <div id="things-add-entry-form" style="display:none"></div>
+
+      ${entries.length ? `
+      <div style="overflow-x:auto">
+        <table class="history-table">
+          <thead><tr><th>Date</th><th>Store</th><th>Qty / Unit</th><th>Total</th><th>Unit Cost</th><th></th></tr></thead>
+          <tbody>${entryRows}</tbody>
+        </table>
+      </div>
+      ` : `<div class="empty-state"><div class="empty-icon">📝</div><p>No purchases logged yet.</p></div>`}
+    </div>
+  `;
+
+  // Build SVG chart after DOM is ready
+  if (entries.length >= 2) {
+    const svg = document.getElementById(`things-svg-${itemId}`);
+    if (svg) buildThingsChart(entries, svg);
+  }
+}
+
+function buildThingsChart(entries, svgEl) {
+  const costs = entries.map(calcUnitCost).filter(c => c != null);
+  if (costs.length < 2) return;
+  const minC = Math.min(...costs), maxC = Math.max(...costs);
+  const range = maxC - minC || 1;
+  const W = 300, H = 80, pad = 8;
+  const pts = costs.map((c, i) => {
+    const x = pad + (i / (costs.length - 1)) * (W - pad * 2);
+    const y = H - pad - ((c - minC) / range) * (H - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  svgEl.innerHTML = `
+    <polyline points="${pts.join(' ')}" fill="none" stroke="var(--green)" stroke-width="2" stroke-linejoin="round"/>
+    ${costs.map((c, i) => {
+      const x = pad + (i / (costs.length - 1)) * (W - pad * 2);
+      const y = H - pad - ((c - minC) / range) * (H - pad * 2);
+      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="var(--green)" class="trend-dot"/>`;
+    }).join('')}
+  `;
+}
+
+function renderThingsAddItemForm() {
+  const formEl = document.getElementById('things-add-item-form');
+  if (!formEl) return;
+  const cats = getThingsCats();
+  formEl.innerHTML = `
+    <div class="card-title">Add New Item</div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="things-new-name">Item Name <span style="color:var(--red)">*</span></label>
+        <input type="text" id="things-new-name" placeholder="e.g. Tide Detergent" maxlength="80" required>
+      </div>
+      <div class="form-group">
+        <label for="things-new-cat">Category</label>
+        <select id="things-new-cat">
+          ${cats.map(c => `<option value="${escapeHTML(c)}">${escapeHTML(c)}</option>`).join('')}
+          <option value="__new__">＋ New Category</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="things-new-unit">Default Unit</label>
+        <input type="text" id="things-new-unit" placeholder="e.g. oz" list="things-unit-list">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label for="things-new-notes">Notes (optional)</label>
+        <textarea id="things-new-notes" rows="2" placeholder="Brand preferences, where you buy it, etc." maxlength="200" style="resize:vertical"></textarea>
+      </div>
+    </div>
+    <div class="flex gap-8 mt-12">
+      <button class="btn btn-green btn-sm" id="things-save-item">Save Item</button>
+      <button class="btn btn-ghost btn-sm" id="things-cancel-add-item">Cancel</button>
+    </div>
+  `;
+  formEl.style.display = '';
+  document.getElementById('things-new-name')?.focus();
+}
+
+function renderThingsAddEntryForm(itemId) {
+  const items = loadThingsItems();
+  const item  = items.find(i => i.id === itemId);
+  const formEl = document.getElementById('things-add-entry-form');
+  if (!formEl) return;
+  formEl.innerHTML = `
+    <div style="padding:14px 0 4px;border-top:1px solid var(--border);margin-top:4px">
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="things-entry-date">Date</label>
+          <input type="date" id="things-entry-date" value="${todayISO()}" max="${todayISO()}">
+        </div>
+        <div class="form-group">
+          <label for="things-entry-qty">Quantity <span style="color:var(--red)">*</span></label>
+          <input type="number" id="things-entry-qty" min="0.01" step="any" placeholder="e.g. 50">
+        </div>
+        <div class="form-group">
+          <label for="things-entry-unit">Unit</label>
+          <input type="text" id="things-entry-unit" placeholder="oz" list="things-unit-list" value="${escapeHTML(item?.defaultUnit || '')}">
+        </div>
+        <div class="form-group">
+          <label for="things-entry-price">Total Price ($) <span style="color:var(--red)">*</span></label>
+          <input type="number" id="things-entry-price" min="0" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label for="things-entry-store">Store (optional)</label>
+          <input type="text" id="things-entry-store" placeholder="e.g. Walmart" maxlength="60">
+        </div>
+        <div class="form-group">
+          <label for="things-entry-notes">Notes (optional)</label>
+          <input type="text" id="things-entry-notes" placeholder="Sale, coupon, etc." maxlength="120">
+        </div>
+      </div>
+      <div class="flex gap-8 mt-12">
+        <button class="btn btn-green btn-sm" id="things-save-entry">Log Entry</button>
+        <button class="btn btn-ghost btn-sm" id="things-cancel-add-entry">Cancel</button>
+      </div>
+    </div>
+  `;
+  formEl.style.display = '';
+  document.getElementById('things-entry-qty')?.focus();
+}
+
+// ─── Things Tracker — Actions ─────────────────────────────────────
+function saveThingsItem() {
+  const nameEl = document.getElementById('things-new-name');
+  const catEl  = document.getElementById('things-new-cat');
+  const unitEl = document.getElementById('things-new-unit');
+  const notesEl= document.getElementById('things-new-notes');
+  const name   = nameEl?.value.trim();
+  if (!name) { alert('Item name is required.'); nameEl?.focus(); return; }
+
+  let category = catEl?.value || 'Other';
+  if (category === '__new__') {
+    const newCat = prompt('Enter new category name:')?.trim();
+    if (!newCat) return;
+    const customs = loadThingsCustomCats();
+    if (!customs.includes(newCat)) { customs.push(newCat); saveThingsCustomCats(customs); }
+    category = newCat;
+  }
+
+  const item = {
+    id: crypto.randomUUID(),
+    name,
+    category,
+    defaultUnit: unitEl?.value.trim() || '',
+    notes:       notesEl?.value.trim() || '',
+    createdAt:   todayISO(),
+  };
+  const items = loadThingsItems();
+  items.push(item);
+  saveThingsItems(items);
+
+  const formEl = document.getElementById('things-add-item-form');
+  if (formEl) formEl.style.display = 'none';
+  renderThingsTab();
+}
+
+function deleteThingsItem(id) {
+  const items = loadThingsItems();
+  const item  = items.find(i => i.id === id);
+  if (!item) return;
+  if (!confirm(`Delete "${item.name}" and all its entries? This cannot be undone.`)) return;
+  saveThingsItems(items.filter(i => i.id !== id));
+  saveThingsEntries(loadThingsEntries().filter(e => e.itemId !== id));
+  if (thingsDetailId === id) { thingsView = 'list'; thingsDetailId = null; }
+  renderThingsTab();
+}
+
+function saveThingsEntry(itemId) {
+  const dateEl  = document.getElementById('things-entry-date');
+  const qtyEl   = document.getElementById('things-entry-qty');
+  const unitEl  = document.getElementById('things-entry-unit');
+  const priceEl = document.getElementById('things-entry-price');
+  const storeEl = document.getElementById('things-entry-store');
+  const notesEl = document.getElementById('things-entry-notes');
+
+  const qty   = parseFloat(qtyEl?.value);
+  const price = parseFloat(priceEl?.value);
+  if (!qty || qty <= 0)  { alert('Quantity must be greater than 0.'); qtyEl?.focus(); return; }
+  if (isNaN(price) || price < 0) { alert('Total price must be 0 or more.'); priceEl?.focus(); return; }
+
+  const entry = {
+    id:         crypto.randomUUID(),
+    itemId,
+    date:       dateEl?.value || todayISO(),
+    quantity:   qty,
+    unit:       unitEl?.value.trim() || 'unit',
+    totalPrice: roundMoney(price),
+    store:      storeEl?.value.trim() || '',
+    notes:      notesEl?.value.trim() || '',
+  };
+  const entries = loadThingsEntries();
+  entries.push(entry);
+  saveThingsEntries(entries);
+
+  const formEl = document.getElementById('things-add-entry-form');
+  if (formEl) formEl.style.display = 'none';
+  renderThingsDetailView(itemId);
+}
+
+function deleteThingsEntry(entryId, itemId) {
+  if (!confirm('Delete this entry?')) return;
+  saveThingsEntries(loadThingsEntries().filter(e => e.id !== entryId));
+  renderThingsDetailView(itemId);
+}
+
+function showThingsDetail(itemId) {
+  thingsView = 'detail';
+  thingsDetailId = itemId;
+  renderThingsDetailView(itemId);
+}
+
+function showThingsList() {
+  thingsView = 'list';
+  thingsDetailId = null;
+  renderThingsTab();
+}
+
 // ─── JSON Backup / Restore ───────────────────────────────────────
 const BACKUP_KEYS = [
   KEY_SNAPSHOTS, KEY_TXNS, KEY_BUDGETS,
   KEY_DEBT_META, KEY_LOANS, KEY_ACCOUNTS, KEY_THEME,
   KEY_BILLS, KEY_GOALS,
+  KEY_THINGS_ITEMS, KEY_THINGS_ENTRIES, KEY_THINGS_CATS,
 ];
 
 function exportBackup() {
@@ -2313,6 +2816,7 @@ function importBackup(file) {
 const TABS = [
   { tabId: 'tab-accounts', secId: 'sec-accounts' },
   { tabId: 'tab-tracker',  secId: 'sec-tracker'  },
+  { tabId: 'tab-things',   secId: 'sec-things'   },
 ];
 
 function switchTab(targetTabId) {
@@ -2328,6 +2832,7 @@ function switchTab(targetTabId) {
 
   if (targetTabId === 'tab-accounts') renderAccountsTab();
   if (targetTabId === 'tab-tracker')  renderTracker();
+  if (targetTabId === 'tab-things')   renderThingsTab();
 }
 
 // ─── Theme Toggle ────────────────────────────────────────────────
@@ -2490,6 +2995,35 @@ function bindEvents() {
     });
   }
 
+  // Things Tracker section
+  const thingsSec = document.getElementById('sec-things');
+  if (thingsSec && !thingsSec._delegated) {
+    thingsSec._delegated = true;
+    thingsSec.addEventListener('click', e => {
+      if (e.target.id === 'things-show-add-item')    { renderThingsAddItemForm(); return; }
+      if (e.target.id === 'things-cancel-add-item')  { const f = document.getElementById('things-add-item-form'); if (f) f.style.display='none'; return; }
+      if (e.target.id === 'things-save-item')        { saveThingsItem(); return; }
+      if (e.target.id === 'things-back')             { showThingsList(); return; }
+      if (e.target.id === 'things-show-add-entry')   { renderThingsAddEntryForm(thingsDetailId); return; }
+      if (e.target.id === 'things-cancel-add-entry') { const f = document.getElementById('things-add-entry-form'); if (f) f.style.display='none'; return; }
+      if (e.target.id === 'things-save-entry')       { saveThingsEntry(thingsDetailId); return; }
+      const detailBtn = e.target.closest('[data-things-detail]');
+      if (detailBtn) { showThingsDetail(detailBtn.dataset.thingsDetail); return; }
+      const delItem = e.target.closest('[data-del-thing]');
+      if (delItem) { deleteThingsItem(delItem.dataset.delThing); return; }
+      const delEntry = e.target.closest('[data-del-entry]');
+      if (delEntry) { deleteThingsEntry(delEntry.dataset.delEntry, thingsDetailId); return; }
+    });
+    thingsSec.addEventListener('input', e => {
+      if (e.target.id === 'things-search' || e.target.id === 'things-cat-filter' || e.target.id === 'things-sort') {
+        thingsFilters.search   = document.getElementById('things-search')?.value || '';
+        thingsFilters.category = document.getElementById('things-cat-filter')?.value || '';
+        thingsFilters.sort     = document.getElementById('things-sort')?.value || 'name';
+        renderThingsItemGrid();
+      }
+    });
+  }
+
   // Balance trend group tabs
   const trendsContent = document.getElementById('balance-trends-content');
   if (trendsContent && !trendsContent._delegated) {
@@ -2587,6 +3121,12 @@ function init() {
   updateToAccountVisibility();
   bindEvents();
   renderTracker();
+
+  // Populate Things Tracker unit datalist
+  const thingsUnitList = document.getElementById('things-unit-list');
+  if (thingsUnitList) {
+    thingsUnitList.innerHTML = THINGS_UNIT_SUGGESTIONS.map(u => `<option value="${escapeHTML(u)}">`).join('');
+  }
   // Auto-sync with Drive if user has previously authorised
   autoSyncDrive();
 }

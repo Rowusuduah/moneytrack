@@ -654,7 +654,7 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 .bill-due   { font-size: 11px; font-weight: 600; flex-shrink: 0; color: var(--muted); }
 .bill-overdue .bill-due,
 .bill-urgent  .bill-due { color: var(--red); }
-.bill-soon    .bill-due { color: #fbbf24; }
+.bill-soon    .bill-due { color: var(--gold); }
 
 /* ─── Savings Goals ──────────────────────────────────────────── */
 .goal-item {
@@ -673,6 +673,53 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 .goal-progress-bar {
   height: 100%; background: var(--green);
   border-radius: 4px; transition: width .4s ease;
+}
+
+/* ─── Things Tracker ────────────────────────────────────────────── */
+.things-controls-bar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-bottom: 14px;
+}
+
+.things-item-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.things-item-card {
+  background: var(--surf); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px;
+  display: flex; flex-direction: column; gap: 6px;
+  box-shadow: var(--shadow);
+  transition: border-color .2s, transform .2s;
+}
+.things-item-card:hover { border-color: var(--brig); transform: translateY(-1px); }
+.things-item-name  { font-size: 14px; font-weight: 700; color: var(--text); }
+.things-cat-badge  {
+  display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 7px;
+  border-radius: 10px; background: var(--surf2); color: var(--muted);
+  text-transform: uppercase; letter-spacing: .4px;
+}
+.things-unit-cost  { font-size: 18px; font-weight: 700; color: var(--green); }
+.things-trend-up   { color: var(--red); }
+.things-trend-down { color: var(--green); }
+.things-trend-flat { color: var(--muted); }
+.things-insight {
+  font-size: 12px; color: var(--muted); font-style: italic;
+  padding: 8px 10px; background: var(--surf2);
+  border-radius: 6px; margin: 4px 0 10px;
+}
+.things-diff-badge {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 1px 5px; border-radius: 5px; margin-left: 4px;
+}
+.things-diff-badge.up   { background: rgba(248,113,113,.15); color: var(--red); }
+.things-diff-badge.down { background: rgba(74,222,128,.15);  color: var(--green); }
+.things-chart { width: 100%; height: 80px; overflow: visible; display: block; }
+
+@media (max-width: 600px) {
+  .things-item-grid { grid-template-columns: 1fr; }
 }
 
 /* ─── Reduced Motion ─────────────────────────────────────────── */
