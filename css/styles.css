@@ -619,6 +619,62 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
   min-height: 18px; margin-top: 6px;
 }
 
+/* ─── Financial Ratios ──────────────────────────────────────── */
+.ratios-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+.ratio-card {
+  background: var(--surf2);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.ratio-label {
+  font-size: 10px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .4px;
+  margin-bottom: 4px;
+}
+.ratio-value {
+  font-size: 20px; font-weight: 800; letter-spacing: -.3px;
+  margin-bottom: 2px;
+}
+.ratio-sub { font-size: 10px; color: var(--muted); }
+
+/* ─── Bill Reminders ─────────────────────────────────────────── */
+.bill-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.bill-item:last-child { border-bottom: none; }
+.bill-info  { flex: 1; min-width: 0; }
+.bill-name  { font-size: 13px; font-weight: 600; color: var(--text); }
+.bill-meta  { font-size: 11px; color: var(--muted); }
+.bill-amount { font-size: 13px; font-weight: 600; color: var(--text); flex-shrink: 0; }
+.bill-due   { font-size: 11px; font-weight: 600; flex-shrink: 0; color: var(--muted); }
+.bill-overdue .bill-due,
+.bill-urgent  .bill-due { color: var(--red); }
+.bill-soon    .bill-due { color: #fbbf24; }
+
+/* ─── Savings Goals ──────────────────────────────────────────── */
+.goal-item {
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.goal-item:last-child { border-bottom: none; }
+.goal-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.goal-name { flex: 1; font-size: 13px; font-weight: 600; color: var(--text); }
+.goal-pct  { font-size: 12px; font-weight: 700; }
+.goal-progress-wrap {
+  height: 8px; background: var(--surf2);
+  border-radius: 4px; overflow: hidden;
+}
+.goal-progress-bar {
+  height: 100%; background: var(--green);
+  border-radius: 4px; transition: width .4s ease;
+}
+
 /* ─── Reduced Motion ─────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

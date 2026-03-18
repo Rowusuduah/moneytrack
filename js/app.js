@@ -48,30 +48,33 @@ const CATEGORY_COLORS = {
 };
 
 // ─── Google Drive Sync ───────────────────────────────────────────
-// SETUP: paste your OAuth 2.0 Client ID here (see instructions below).
-// 1. Go to https://console.cloud.google.com → New Project
-// 2. APIs & Services → Enable "Google Drive API"
-// 3. OAuth consent screen → External → add your Gmail as test user
-// 4. Credentials → Create → OAuth client ID → Web application
-// 5. Authorized JS origins → add: https://rowusuduah.github.io
-// 6. Copy the Client ID and paste it below, then push to GitHub.
-const GDRIVE_CLIENT_ID = '394124622094-3cj4ho2ipp3m6pm0un09tg9knelhfqtu.apps.googleusercontent.com';
-const GDRIVE_SCOPE     = 'https://www.googleapis.com/auth/drive.file';
-const GDRIVE_FILENAME  = 'MoneyTrack_Backup.json';
-const KEY_GDRIVE_FILE  = 'moneytrack_gdrive_file_id';
+const GDRIVE_CLIENT_ID    = '394124622094-3cj4ho2ipp3m6pm0un09tg9knelhfqtu.apps.googleusercontent.com';
+const GDRIVE_SCOPE        = 'https://www.googleapis.com/auth/drive.file';
+const GDRIVE_FILENAME     = 'MoneyTrack_Backup.json';
+const KEY_GDRIVE_FILE     = 'moneytrack_gdrive_file_id';
+const KEY_GDRIVE_CONNECTED = 'moneytrack_gdrive_ok';
 
 let _gTokenClient  = null;
 let _gAccessToken  = null;
 let _gPendingOp    = null;
+let _gIsAutoSync   = false;
+let _driveSyncTimer = null;
 
 function initGDrive() {
   if (!GDRIVE_CLIENT_ID || typeof google === 'undefined' || !google.accounts?.oauth2) return;
+  if (_gTokenClient) return; // already initialised
   _gTokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GDRIVE_CLIENT_ID,
     scope: GDRIVE_SCOPE,
     callback: resp => {
-      if (resp.error) { alert('Google sign-in failed: ' + resp.error); return; }
+      if (resp.error) {
+        if (!_gIsAutoSync) alert('Google sign-in failed: ' + resp.error);
+        _gIsAutoSync = false;
+        _gPendingOp = null;
+        return;
+      }
       _gAccessToken = resp.access_token;
+      _gIsAutoSync = false;
       if (_gPendingOp) { const op = _gPendingOp; _gPendingOp = null; op(); }
     },
   });
@@ -79,7 +82,7 @@ function initGDrive() {
 
 function gWithToken(op) {
   if (!GDRIVE_CLIENT_ID) {
-    alert('Google Drive is not set up yet.\n\nOpen js/app.js, follow the instructions at the top, and paste your Client ID into GDRIVE_CLIENT_ID.');
+    alert('Google Drive is not configured.');
     return;
   }
   if (typeof google === 'undefined' || !google.accounts?.oauth2) {
@@ -159,6 +162,7 @@ function saveToDrive() {
         fileId = await _gCreateFile(json);
         localStorage.setItem(KEY_GDRIVE_FILE, fileId);
       }
+      localStorage.setItem(KEY_GDRIVE_CONNECTED, '1');
       _gSetStatus(`Saved ${new Date().toLocaleTimeString()}`);
     } catch (err) {
       if (err._gStatus === 401) { saveToDrive(); return; }
@@ -196,6 +200,8 @@ function loadFromDrive() {
       }
 
       valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
+      localStorage.setItem(KEY_GDRIVE_CONNECTED, '1');
+      initTheme();
       refreshAccountConfig();
       renderAccountFields();
       renderAccountsTab();
@@ -212,6 +218,83 @@ function loadFromDrive() {
   });
 }
 
+// Silent auto-load on open — no confirm dialog, no alerts on failure
+async function autoLoadFromDrive() {
+  try {
+    _gSetStatus('Syncing…');
+    let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
+    if (!fileId) {
+      fileId = await _gFindFile();
+      if (!fileId) { _gSetStatus(''); return; }
+      localStorage.setItem(KEY_GDRIVE_FILE, fileId);
+    }
+
+    const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+    const parsed = await resp.json();
+
+    if (!parsed.data || typeof parsed.data !== 'object') { _gSetStatus(''); return; }
+    const valid = Object.keys(parsed.data).filter(k => BACKUP_KEYS.includes(k));
+    if (!valid.length) { _gSetStatus(''); return; }
+
+    valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
+    initTheme();
+    refreshAccountConfig();
+    renderAccountFields();
+    renderAccountsTab();
+    populateAccountSelects();
+    renderBudgetCard();
+    renderTracker();
+    _gSetStatus(`Synced ${parsed._exported || ''}`);
+  } catch (err) {
+    if (err._gStatus === 401) { _gAccessToken = null; _gSetStatus(''); return; }
+    _gSetStatus('');
+    console.error('[MoneyTrack Drive auto-sync]', err);
+  }
+}
+
+// Debounced auto-save — queued after every data write (fires 3 s after last change).
+// Does NOT call saveToDrive/gWithToken — intentionally silent so a background save
+// never triggers a Google auth popup.
+function queueDriveSync() {
+  if (!_gAccessToken) return;
+  if (_driveSyncTimer) clearTimeout(_driveSyncTimer);
+  _driveSyncTimer = setTimeout(async () => {
+    _driveSyncTimer = null;
+    if (!_gAccessToken) return;
+    try {
+      const data = {};
+      BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
+      const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
+      let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
+      if (!fileId) {
+        fileId = await _gFindFile();
+        if (fileId) localStorage.setItem(KEY_GDRIVE_FILE, fileId);
+      }
+      if (fileId) { await _gUpdateFile(fileId, json); }
+      else { fileId = await _gCreateFile(json); localStorage.setItem(KEY_GDRIVE_FILE, fileId); }
+      _gSetStatus(`Auto-saved ${new Date().toLocaleTimeString()}`);
+    } catch (err) {
+      if (err._gStatus === 401) { _gAccessToken = null; } // clear stale token silently
+      console.error('[MoneyTrack Drive auto-save]', err);
+    }
+  }, 3000);
+}
+
+// Called on init: if user has previously authorised Drive, silently refresh token and auto-load
+function autoSyncDrive() {
+  if (!localStorage.getItem(KEY_GDRIVE_CONNECTED)) return;
+  function tryAuto() {
+    if (typeof google === 'undefined' || !google.accounts?.oauth2) {
+      setTimeout(tryAuto, 500); return;
+    }
+    if (!_gTokenClient) initGDrive();
+    _gIsAutoSync = true;
+    _gPendingOp = autoLoadFromDrive;
+    _gTokenClient.requestAccessToken({ prompt: '' });
+  }
+  setTimeout(tryAuto, 800);
+}
+
 // ─── Auth ────────────────────────────────────────────────────────
 // Change APP_PASSWORD to your own password before deploying.
 const APP_PASSWORD   = 'moneytrack2025';
@@ -225,6 +308,8 @@ const KEY_BUDGETS   = 'moneytrack_budgets';
 const KEY_DEBT_META = 'moneytrack_debt_meta';
 const KEY_LOANS     = 'moneytrack_loans';
 const KEY_ACCOUNTS  = 'moneytrack_accounts';
+const KEY_BILLS     = 'moneytrack_bills';
+const KEY_GOALS     = 'moneytrack_goals';
 
 // ─── Utilities ───────────────────────────────────────────────────
 function escapeHTML(s) {
@@ -281,6 +366,7 @@ function loadSnapshots() {
 
 function saveSnapshots(arr) {
   try { localStorage.setItem(KEY_SNAPSHOTS, JSON.stringify(arr)); } catch {}
+  queueDriveSync();
 }
 
 function loadTxns() {
@@ -290,6 +376,7 @@ function loadTxns() {
 
 function saveTxns(arr) {
   try { localStorage.setItem(KEY_TXNS, JSON.stringify(arr)); } catch {}
+  queueDriveSync();
 }
 
 function loadBudgets() {
@@ -298,6 +385,7 @@ function loadBudgets() {
 }
 function saveBudgets(obj) {
   try { localStorage.setItem(KEY_BUDGETS, JSON.stringify(obj)); } catch {}
+  queueDriveSync();
 }
 
 function loadDebtMeta() {
@@ -306,6 +394,7 @@ function loadDebtMeta() {
 }
 function saveDebtMeta(obj) {
   try { localStorage.setItem(KEY_DEBT_META, JSON.stringify(obj)); } catch {}
+  queueDriveSync();
 }
 
 function loadLoans() {
@@ -314,6 +403,7 @@ function loadLoans() {
 }
 function saveLoans(arr) {
   try { localStorage.setItem(KEY_LOANS, JSON.stringify(arr)); } catch {}
+  queueDriveSync();
 }
 
 function loadCustomAccounts() {
@@ -322,6 +412,47 @@ function loadCustomAccounts() {
 }
 function saveCustomAccounts(arr) {
   try { localStorage.setItem(KEY_ACCOUNTS, JSON.stringify(arr)); } catch {}
+  queueDriveSync();
+}
+
+function loadBills() {
+  try { return JSON.parse(localStorage.getItem(KEY_BILLS)) || []; }
+  catch { return []; }
+}
+function saveBills(arr) {
+  try { localStorage.setItem(KEY_BILLS, JSON.stringify(arr)); } catch {}
+  queueDriveSync();
+}
+
+// Returns next due Date object for a bill, or null if undetermined
+function getNextDueDate(bill) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  if (bill.frequency === 'monthly' && bill.dayOfMonth) {
+    const d = new Date(today.getFullYear(), today.getMonth(), bill.dayOfMonth);
+    if (d < today) d.setMonth(d.getMonth() + 1);
+    return d;
+  }
+  if ((bill.frequency === 'biweekly' || bill.frequency === 'weekly') && bill.anchorDate) {
+    const interval = bill.frequency === 'biweekly' ? 14 : 7;
+    const anchor = new Date(bill.anchorDate + 'T00:00:00');
+    const diffDays = Math.floor((today - anchor) / (interval * 86400000));
+    let next = new Date(anchor.getTime() + (diffDays + 1) * interval * 86400000);
+    if (next < today) next = new Date(anchor.getTime() + (diffDays + 2) * interval * 86400000);
+    return next;
+  }
+  if (bill.frequency === 'once' && bill.anchorDate) {
+    return new Date(bill.anchorDate + 'T00:00:00');
+  }
+  return null;
+}
+
+function loadGoals() {
+  try { return JSON.parse(localStorage.getItem(KEY_GOALS)) || []; }
+  catch { return []; }
+}
+function saveGoals(arr) {
+  try { localStorage.setItem(KEY_GOALS, JSON.stringify(arr)); } catch {}
+  queueDriveSync();
 }
 
 // ─── Account Select Population ───────────────────────────────────
@@ -769,14 +900,352 @@ function deleteCustomAccount(id) {
   populateAccountSelects();
 }
 
+// ─── Financial Ratios ────────────────────────────────────────────
+function computeSavingsRate3Month() {
+  const today = new Date();
+  const months = [];
+  for (let i = 1; i <= 3; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    months.push({ y: d.getFullYear(), m: d.getMonth() });
+  }
+  const txns = loadTxns();
+  const rates = months.map(({ y, m }) => {
+    const mt = txns.filter(t => {
+      const td = new Date(t.date + 'T00:00:00');
+      return td.getFullYear() === y && td.getMonth() === m;
+    });
+    const income   = mt.filter(t => t.type === 'income').reduce((s, t) => s + safeAmt(t.amount), 0);
+    const expenses = mt.filter(t => t.type === 'expense').reduce((s, t) => s + safeAmt(t.amount), 0);
+    return income > 0 ? (income - expenses) / income : null;
+  });
+  const valid = rates.filter(r => r !== null);
+  return valid.length ? valid.reduce((s, r) => s + r, 0) / valid.length : null;
+}
+
+function renderFinancialRatios() {
+  const el = document.getElementById('financial-ratios-content');
+  if (!el) return;
+  const snap = getLatestSnapshot();
+  const b = snap ? (snap.accounts || {}) : {};
+  const sum = g => roundMoney(ACCOUNTS.filter(a => a.group === g).reduce((s, a) => s + safeAmt(b[a.id]), 0));
+  const savings    = sum('savings');
+  const debt       = sum('debt');
+  const investment = sum('investment');
+  const checking   = sum('checking');
+
+  const txns = loadTxns();
+  const today = new Date();
+  const last3 = [];
+  for (let i = 1; i <= 3; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    last3.push({ y: d.getFullYear(), m: d.getMonth() });
+  }
+  const monthlyExpenses = last3.map(({ y, m }) =>
+    txns.filter(t => {
+      const td = new Date(t.date + 'T00:00:00');
+      return td.getFullYear() === y && td.getMonth() === m && t.type === 'expense';
+    }).reduce((s, t) => s + safeAmt(t.amount), 0)
+  );
+  const activeExpMonths = monthlyExpenses.filter(e => e > 0).length || 1;
+  const avgMonthlyExpense = monthlyExpenses.reduce((s, e) => s + e, 0) / activeExpMonths;
+  const emergencyMonths = avgMonthlyExpense > 0 ? roundMoney(savings / avgMonthlyExpense) : null;
+  const savingsRate = computeSavingsRate3Month();
+
+  const snaps = loadSnapshots();
+  let nwChange = null;
+  if (snaps.length >= 2) {
+    const nw = s => {
+      const sb = s.accounts || {};
+      return roundMoney(
+        ACCOUNTS.filter(a => a.group !== 'debt').reduce((acc, a) => acc + safeAmt(sb[a.id]), 0) -
+        ACCOUNTS.filter(a => a.group === 'debt').reduce((acc, a) => acc + safeAmt(sb[a.id]), 0)
+      );
+    };
+    nwChange = nw(snaps[snaps.length - 1]) - nw(snaps[snaps.length - 2]);
+  }
+
+  const ratios = [
+    {
+      label: 'Emergency Fund',
+      value: emergencyMonths !== null ? emergencyMonths.toFixed(1) + ' mo' : '—',
+      sub:   'Savings ÷ avg monthly expenses',
+      color: emergencyMonths === null ? 'var(--muted)' : emergencyMonths >= 6 ? 'var(--green)' : emergencyMonths >= 3 ? '#fbbf24' : 'var(--red)',
+    },
+    {
+      label: '3-Month Savings Rate',
+      value: savingsRate !== null ? Math.round(savingsRate * 100) + '%' : '—',
+      sub:   'Avg (income − expenses) / income',
+      color: savingsRate === null ? 'var(--muted)' : savingsRate >= 0.2 ? 'var(--green)' : savingsRate >= 0 ? '#fbbf24' : 'var(--red)',
+    },
+    {
+      label: 'Net Worth Change',
+      value: nwChange !== null ? fmt(nwChange) : '—',
+      sub:   'Latest vs previous snapshot',
+      color: nwChange === null ? 'var(--muted)' : nwChange >= 0 ? 'var(--green)' : 'var(--red)',
+    },
+    {
+      label: 'Total Debt',
+      value: fmt(debt),
+      sub:   'All credit card / debt accounts',
+      color: debt === 0 ? 'var(--green)' : 'var(--red)',
+    },
+  ];
+  el.innerHTML = `<div class="ratios-grid">${ratios.map(r =>
+    `<div class="ratio-card">
+      <div class="ratio-label">${escapeHTML(r.label)}</div>
+      <div class="ratio-value" style="color:${r.color}">${escapeHTML(r.value)}</div>
+      <div class="ratio-sub">${escapeHTML(r.sub)}</div>
+    </div>`
+  ).join('')}</div>`;
+}
+
+// ─── Bill Reminders ──────────────────────────────────────────────
+function renderBillReminders() {
+  const el = document.getElementById('bills-content');
+  if (!el) return;
+  const bills = loadBills();
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  const withDue = bills.map(b => {
+    const due = getNextDueDate(b);
+    const daysUntil = due ? Math.round((due - today) / 86400000) : null;
+    return { ...b, due, daysUntil };
+  }).sort((a, b) => {
+    if (a.daysUntil === null) return 1;
+    if (b.daysUntil === null) return -1;
+    return a.daysUntil - b.daysUntil;
+  });
+
+  if (!withDue.length) {
+    el.innerHTML = '<p style="color:var(--muted);font-size:13px">No bills added yet. Click + Add Bill to get started.</p>';
+  } else {
+    el.innerHTML = withDue.map(b => {
+      const urgency  = b.daysUntil === null ? '' : b.daysUntil <= 0 ? 'bill-overdue' : b.daysUntil <= 3 ? 'bill-urgent' : b.daysUntil <= 7 ? 'bill-soon' : '';
+      const dueLabel = b.daysUntil === null ? 'Unknown' : b.daysUntil === 0 ? 'Due today' : b.daysUntil < 0 ? `${Math.abs(b.daysUntil)}d overdue` : `In ${b.daysUntil}d`;
+      const amtLabel = b.amount ? fmt(b.amount) : '—';
+      return `<div class="bill-item ${urgency}">
+        <div class="bill-info">
+          <div class="bill-name">${escapeHTML(b.name)}</div>
+          <div class="bill-meta">${escapeHTML(b.frequency)}${b.account ? ' · ' + escapeHTML(ACCOUNT_LABELS[b.account] || b.account) : ''}</div>
+        </div>
+        <div class="bill-amount">${amtLabel}</div>
+        <div class="bill-due">${escapeHTML(dueLabel)}</div>
+        <button class="btn btn-ghost btn-sm" data-del-bill="${escapeHTML(b.id)}" aria-label="Delete bill">✕</button>
+      </div>`;
+    }).join('');
+  }
+}
+
+function showAddBillForm() {
+  const formEl = document.getElementById('bill-add-form');
+  if (!formEl) return;
+  formEl.style.display = '';
+  formEl.innerHTML = `
+    <div class="add-acct-form">
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="new-bill-name">Bill Name</label>
+          <input type="text" id="new-bill-name" placeholder="e.g. Netflix" maxlength="60" required>
+        </div>
+        <div class="form-group">
+          <label for="new-bill-amount">Amount ($)</label>
+          <input type="number" id="new-bill-amount" min="0" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label for="new-bill-freq">Frequency</label>
+          <select id="new-bill-freq">
+            <option value="monthly">Monthly</option>
+            <option value="biweekly">Biweekly</option>
+            <option value="weekly">Weekly</option>
+            <option value="once">One-time</option>
+          </select>
+        </div>
+        <div class="form-group" id="bill-dom-group">
+          <label for="new-bill-dom">Day of Month</label>
+          <input type="number" id="new-bill-dom" min="1" max="31" placeholder="1–31">
+        </div>
+        <div class="form-group" id="bill-anchor-group" style="display:none">
+          <label for="new-bill-anchor">Next Due Date</label>
+          <input type="date" id="new-bill-anchor">
+        </div>
+        <div class="form-group">
+          <label for="new-bill-account">Account</label>
+          <select id="new-bill-account">
+            <option value="">None</option>
+            ${ACCOUNTS.map(a => `<option value="${a.id}">${escapeHTML(a.label)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="flex gap-8 mt-12">
+        <button class="btn btn-green" id="confirm-add-bill">Add Bill</button>
+        <button class="btn btn-ghost btn-sm" id="cancel-add-bill">Cancel</button>
+      </div>
+    </div>`;
+  const freqSel     = document.getElementById('new-bill-freq');
+  const domGroup    = document.getElementById('bill-dom-group');
+  const anchorGroup = document.getElementById('bill-anchor-group');
+  const toggleFields = () => {
+    const f = freqSel.value;
+    domGroup.style.display    = f === 'monthly' ? '' : 'none';
+    anchorGroup.style.display = (f === 'biweekly' || f === 'weekly' || f === 'once') ? '' : 'none';
+  };
+  freqSel.addEventListener('change', toggleFields);
+  toggleFields();
+}
+
+function addBill() {
+  const name = (document.getElementById('new-bill-name')?.value || '').trim();
+  if (!name) { alert('Please enter a bill name.'); return; }
+  const amount  = parseFloat(document.getElementById('new-bill-amount')?.value) || null;
+  const freq    = document.getElementById('new-bill-freq')?.value || 'monthly';
+  const dom     = parseInt(document.getElementById('new-bill-dom')?.value, 10) || null;
+  const anchor  = document.getElementById('new-bill-anchor')?.value || null;
+  const account = document.getElementById('new-bill-account')?.value || null;
+  const bill = {
+    id:         Date.now().toString(36),
+    name,
+    amount:     amount ? roundMoney(amount) : null,
+    account:    account || null,
+    frequency:  freq,
+    dayOfMonth: freq === 'monthly' ? dom : null,
+    anchorDate: freq !== 'monthly' ? anchor : null,
+  };
+  const bills = loadBills();
+  bills.push(bill);
+  saveBills(bills);
+  const formEl = document.getElementById('bill-add-form');
+  if (formEl) { formEl.innerHTML = ''; formEl.style.display = 'none'; }
+  renderBillReminders();
+}
+
+function deleteBill(id) {
+  const bills = loadBills();
+  const bill  = bills.find(b => b.id === id);
+  if (!bill) return;
+  if (!confirm(`Remove "${bill.name}"?`)) return;
+  saveBills(bills.filter(b => b.id !== id));
+  renderBillReminders();
+}
+
+// ─── Savings Goals ────────────────────────────────────────────────
+function renderSavingsGoals() {
+  const el = document.getElementById('goals-content');
+  if (!el) return;
+  const goals = loadGoals();
+  const snap = getLatestSnapshot();
+  const b = snap ? (snap.accounts || {}) : {};
+
+  if (!goals.length) {
+    el.innerHTML = '<p style="color:var(--muted);font-size:13px">No goals yet. Click + Add Goal to create one.</p>';
+  } else {
+    const txns = loadTxns();
+    const today = new Date();
+    const last3 = [];
+    for (let i = 1; i <= 3; i++) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      last3.push({ y: d.getFullYear(), m: d.getMonth() });
+    }
+    const avgMonthlySavings = (() => {
+      const rates = last3.map(({ y, m }) => {
+        const mt = txns.filter(t => { const td = new Date(t.date + 'T00:00:00'); return td.getFullYear() === y && td.getMonth() === m; });
+        const inc = mt.filter(t => t.type === 'income').reduce((s, t) => s + safeAmt(t.amount), 0);
+        const exp = mt.filter(t => t.type === 'expense').reduce((s, t) => s + safeAmt(t.amount), 0);
+        return inc > 0 ? inc - exp : null;
+      }).filter(r => r !== null);
+      return rates.length ? rates.reduce((s, r) => s + r, 0) / rates.length : 0;
+    })();
+
+    el.innerHTML = goals.map(g => {
+      const trackIds = (g.accounts && g.accounts.length)
+        ? g.accounts
+        : ACCOUNTS.filter(a => a.group === 'savings').map(a => a.id);
+      const current = roundMoney(trackIds.reduce((s, id) => s + safeAmt(b[id]), 0));
+      const pct = g.target > 0 ? Math.min(100, Math.round(current / g.target * 100)) : 0;
+
+      let projection = '';
+      if (current >= g.target) {
+        projection = 'Goal reached! 🎉';
+      } else if (avgMonthlySavings > 0) {
+        const monthsLeft = Math.ceil((g.target - current) / avgMonthlySavings);
+        const projDate = new Date(today.getFullYear(), today.getMonth() + monthsLeft, 1);
+        projection = `Est. ${projDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+      }
+
+      return `<div class="goal-item">
+        <div class="goal-header">
+          <span class="goal-name">${escapeHTML(g.name)}</span>
+          <span class="goal-pct" style="color:${pct >= 100 ? 'var(--green)' : 'var(--muted)'}">${pct}%</span>
+          <button class="btn btn-ghost btn-sm" data-del-goal="${escapeHTML(g.id)}" aria-label="Delete goal">✕</button>
+        </div>
+        <div class="goal-progress-wrap" aria-label="${pct}% complete">
+          <div class="goal-progress-bar" style="width:${pct}%"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px">
+          <span>${fmt(current)} of ${fmt(g.target)}</span>
+          <span>${escapeHTML(projection)}</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+}
+
+function showAddGoalForm() {
+  const formEl = document.getElementById('goal-add-form');
+  if (!formEl) return;
+  formEl.style.display = '';
+  formEl.innerHTML = `
+    <div class="add-acct-form">
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="new-goal-name">Goal Name</label>
+          <input type="text" id="new-goal-name" placeholder="e.g. Emergency Fund" maxlength="60" required>
+        </div>
+        <div class="form-group">
+          <label for="new-goal-target">Target Amount ($)</label>
+          <input type="number" id="new-goal-target" min="0" step="0.01" placeholder="20000.00" required>
+        </div>
+      </div>
+      <p style="font-size:11px;color:var(--muted);margin:4px 0 8px">Progress is tracked from your total savings account balances in the latest snapshot.</p>
+      <div class="flex gap-8 mt-12">
+        <button class="btn btn-green" id="confirm-add-goal">Add Goal</button>
+        <button class="btn btn-ghost btn-sm" id="cancel-add-goal">Cancel</button>
+      </div>
+    </div>`;
+}
+
+function addGoal() {
+  const name   = (document.getElementById('new-goal-name')?.value || '').trim();
+  const target = parseFloat(document.getElementById('new-goal-target')?.value) || 0;
+  if (!name)   { alert('Please enter a goal name.'); return; }
+  if (!target) { alert('Please enter a target amount.'); return; }
+  const goals = loadGoals();
+  goals.push({ id: Date.now().toString(36), name, target: roundMoney(target), accounts: [] });
+  saveGoals(goals);
+  const formEl = document.getElementById('goal-add-form');
+  if (formEl) { formEl.innerHTML = ''; formEl.style.display = 'none'; }
+  renderSavingsGoals();
+}
+
+function deleteGoal(id) {
+  const goals = loadGoals();
+  const goal  = goals.find(g => g.id === id);
+  if (!goal) return;
+  if (!confirm(`Remove goal "${goal.name}"?`)) return;
+  saveGoals(goals.filter(g => g.id !== id));
+  renderSavingsGoals();
+}
+
 function renderAccountsTab() {
   renderAccountKPIs();
   renderNWTrend();
   renderBalanceTrends();
+  renderFinancialRatios();
   renderSnapshotHistory();
   renderDebtDetails();
   renderLoansCard();
   renderManageAccounts();
+  renderBillReminders();
+  renderSavingsGoals();
 }
 
 // ─── Snapshot Actions ────────────────────────────────────────────
@@ -1583,7 +2052,7 @@ function exportSnapshotsPDF() {
       <td class="num">${fmt(r.savings)}</td>
       <td class="num">${fmt(r.checking)}</td>
       <td class="num">${fmt(r.investment)}</td>
-      <td class="num red">${fmt(r.debt)}</td>
+      <td class="num red">${fmt(-r.debt)}</td>
       <td class="num ${netCls}">${fmt(r.net)}</td>
       ${acctCells}
     </tr>`;
@@ -1637,10 +2106,163 @@ function downloadCSV(csv, filename) {
   URL.revokeObjectURL(url);
 }
 
+// ─── Bank CSV Import ─────────────────────────────────────────────
+const BANK_CATEGORY_MAP = {
+  'netflix':       'Streaming',    'spotify':       'Streaming',    'hulu':          'Streaming',
+  'apple music':   'Streaming',    'apple.com':     'Subscriptions','icloud':        'Subscriptions',
+  'chatgpt':       'Subscriptions','openai':        'Subscriptions','google one':    'Subscriptions',
+  'amazon':        'Amazon',       'amzn':          'Amazon',
+  'walmart':       'Groceries',    'publix':        'Groceries',    'kroger':        'Groceries',
+  'whole foods':   'Groceries',    'aldi':          'Groceries',    'trader joe':    'Groceries',
+  'mcdonald':      'Dining Out',   'chick-fil':     'Dining Out',   'chipotle':      'Dining Out',
+  'starbucks':     'Coffee',       'dunkin':        'Coffee',
+  'uber eats':     'Dining Out',   'doordash':      'Dining Out',   'grubhub':       'Dining Out',
+  'uber':          'Rideshare',    'lyft':          'Rideshare',
+  'shell':         'Gas',          'chevron':       'Gas',          'exxon':         'Gas',
+  'wawa':          'Gas',          'bp ':           'Gas',          'speedway':      'Gas',
+  'geico':         'Car Insurance','progressive':   'Car Insurance','allstate':      'Insurance',
+  'payroll':       'Paycheck',     'direct dep':    'Paycheck',     'zelle':         'Transfer In',
+  'planet fitness':'Gym',          'gym':           'Gym',
+  'cvs':           'Pharmacy',     'walgreens':     'Pharmacy',
+  'tithe':         'Tithe',        'church':        'Tithe',
+  'rent':          'Rent',
+};
+
+function mapBankCategory(description) {
+  const d = description.toLowerCase();
+  for (const [key, cat] of Object.entries(BANK_CATEGORY_MAP)) {
+    if (d.includes(key)) return cat;
+  }
+  return 'Miscellaneous';
+}
+
+function parseCSVLine(line) {
+  const fields = [];
+  let cur = ''; let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      if (inQ && line[i+1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (c === ',' && !inQ) { fields.push(cur); cur = ''; }
+    else cur += c;
+  }
+  fields.push(cur);
+  return fields.map(f => f.trim());
+}
+
+function detectCSVFormat(headers) {
+  const h = headers.map(x => x.toLowerCase().replace(/[^a-z.]/g, ' ').trim());
+  if (h.some(x => x.includes('transaction date')) && h.some(x => x.includes('post date'))) return 'chase';
+  if (h.some(x => x.includes('trans. date') || x.includes('trans date'))) return 'discover';
+  return 'generic';
+}
+
+function parseChaseCSV(lines) {
+  // Chase: Transaction Date, Post Date, Description, Category, Type, Amount, Memo
+  const txns = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const f = parseCSVLine(lines[i]);
+    const date = f[0]?.trim(); const desc = f[2]?.trim() || ''; const amount = parseFloat(f[5]);
+    if (!date || isNaN(amount)) continue;
+    const [m, d, y] = date.split('/');
+    const iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+    txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: amount < 0 ? 'expense' : 'income' });
+  }
+  return txns;
+}
+
+function parseDiscoverCSV(lines) {
+  // Discover: Trans. Date, Post Date, Description, Amount, Category
+  const txns = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const f = parseCSVLine(lines[i]);
+    const date = f[0]?.trim(); const desc = f[2]?.trim() || ''; const amount = parseFloat(f[3]);
+    if (!date || isNaN(amount)) continue;
+    const [m, d, y] = date.split('/');
+    const iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+    // Discover: positive = expense, negative = payment/credit
+    txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: amount > 0 ? 'expense' : 'income' });
+  }
+  return txns;
+}
+
+function parseGenericCSV(lines) {
+  const txns = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const f = parseCSVLine(lines[i]);
+    const dateRaw = f[0]?.trim() || '';
+    const desc    = f[1]?.trim() || '';
+    const amtStr  = f[2] || f[3] || f[f.length - 1];
+    const amount  = parseFloat((amtStr || '').replace(/[^0-9.\-]/g, ''));
+    if (!dateRaw || isNaN(amount)) continue;
+    let iso = '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) {
+      iso = dateRaw;
+    } else if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateRaw)) {
+      const [m, d, y] = dateRaw.split('/');
+      iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+    } else continue;
+    txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: amount < 0 ? 'expense' : 'income' });
+  }
+  return txns;
+}
+
+function importBankCSV(file) {
+  if (!file) return;
+  const defaultAccount = ACCOUNTS[0]?.id || '';
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const text   = e.target.result;
+      const lines  = text.split(/\r?\n/);
+      if (lines.length < 2) throw new Error('File appears empty');
+      const headers = parseCSVLine(lines[0]);
+      const format  = detectCSVFormat(headers);
+      let parsed;
+      if (format === 'chase')         parsed = parseChaseCSV(lines);
+      else if (format === 'discover') parsed = parseDiscoverCSV(lines);
+      else                             parsed = parseGenericCSV(lines);
+      if (!parsed.length) throw new Error('No valid transactions found in file');
+
+      const existing = loadTxns();
+      const seen = new Set(existing.map(t => `${t.date}|${t.description}|${t.amount}`));
+      const newTxns = parsed
+        .filter(t => !seen.has(`${t.date}|${t.description}|${t.amount}`))
+        .map(t => ({
+          id:          Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+          date:        t.date,
+          type:        t.type,
+          amount:      roundMoney(t.amount),
+          account:     defaultAccount,
+          description: t.description,
+          category:    mapBankCategory(t.description),
+          recurring:   '',
+        }));
+
+      if (!newTxns.length) {
+        alert(`No new transactions to import (${parsed.length} already exist).`);
+        return;
+      }
+      if (!confirm(`Import ${newTxns.length} new transaction(s) from "${file.name}"?\n\nFormat detected: ${format.toUpperCase()}\n\nNew transactions will be assigned to "${ACCOUNT_LABELS[defaultAccount] || defaultAccount}".`)) return;
+      saveTxns([...existing, ...newTxns].sort((a, b) => b.date.localeCompare(a.date)));
+      renderTracker();
+      alert(`Imported ${newTxns.length} transaction(s) successfully.`);
+    } catch (err) {
+      alert('Failed to import CSV: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
 // ─── JSON Backup / Restore ───────────────────────────────────────
 const BACKUP_KEYS = [
   KEY_SNAPSHOTS, KEY_TXNS, KEY_BUDGETS,
   KEY_DEBT_META, KEY_LOANS, KEY_ACCOUNTS, KEY_THEME,
+  KEY_BILLS, KEY_GOALS,
 ];
 
 function exportBackup() {
@@ -1672,6 +2294,7 @@ function importBackup(file) {
       if (!valid.length) throw new Error('No recognizable data found in file');
       if (!confirm(`Restore backup from ${parsed._exported || 'unknown date'}?\n\nThis will overwrite your current data. Make sure you have a backup of what you have now.`)) return;
       valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
+      initTheme();
       refreshAccountConfig();
       renderAccountFields();
       renderAccountsTab();
@@ -1776,6 +2399,10 @@ function bindEvents() {
     importBackup(e.target.files[0]);
     e.target.value = '';
   });
+  document.getElementById('import-csv-input')?.addEventListener('change', e => {
+    importBankCSV(e.target.files[0]);
+    e.target.value = '';
+  });
 
   // Snapshot history delegation (delete button)
   const snapHist = document.getElementById('snapshot-history');
@@ -1811,6 +2438,40 @@ function bindEvents() {
     const loanDelBtn  = e.target.closest('[data-loan-del]');
     if (loanDelBtn)  deleteLoan(loanDelBtn.dataset.loanDel);
   });
+
+  // Bill Reminders card
+  const billsCard = document.getElementById('bills-card');
+  if (billsCard && !billsCard._delegated) {
+    billsCard._delegated = true;
+    billsCard.addEventListener('click', e => {
+      if (e.target.id === 'show-add-bill')    { showAddBillForm(); return; }
+      if (e.target.id === 'confirm-add-bill') { addBill(); return; }
+      if (e.target.id === 'cancel-add-bill')  {
+        const f = document.getElementById('bill-add-form');
+        if (f) { f.innerHTML = ''; f.style.display = 'none'; }
+        return;
+      }
+      const delBtn = e.target.closest('[data-del-bill]');
+      if (delBtn) deleteBill(delBtn.dataset.delBill);
+    });
+  }
+
+  // Savings Goals card
+  const goalsCard = document.getElementById('goals-card');
+  if (goalsCard && !goalsCard._delegated) {
+    goalsCard._delegated = true;
+    goalsCard.addEventListener('click', e => {
+      if (e.target.id === 'show-add-goal')    { showAddGoalForm(); return; }
+      if (e.target.id === 'confirm-add-goal') { addGoal(); return; }
+      if (e.target.id === 'cancel-add-goal')  {
+        const f = document.getElementById('goal-add-form');
+        if (f) { f.innerHTML = ''; f.style.display = 'none'; }
+        return;
+      }
+      const delBtn = e.target.closest('[data-del-goal]');
+      if (delBtn) deleteGoal(delBtn.dataset.delGoal);
+    });
+  }
 
   // Manage Accounts card
   const mgmtCard = document.getElementById('manage-accounts-card');
@@ -1926,8 +2587,8 @@ function init() {
   updateToAccountVisibility();
   bindEvents();
   renderTracker();
-  // Init Google Drive after a short delay to let the GIS library finish loading
-  setTimeout(initGDrive, 1000);
+  // Auto-sync with Drive if user has previously authorised
+  autoSyncDrive();
 }
 
 // ─── Auth Gate ───────────────────────────────────────────────────
