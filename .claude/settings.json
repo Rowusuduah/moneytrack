@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"/c/Users/Richmond Owusu Duah/OneDrive/Documents/03-projects/claude-code-projects/Finance Tracker\" && git add -A && { git diff --cached --quiet || { git commit -m \"Auto-commit: $(date '+%Y-%m-%d %H:%M:%S')\" && git push; }; }",
-            "timeout": 30,
+            "command": "\"C:/Program Files/Git/bin/bash.exe\" -c \"cd '/c/Users/Richmond Owusu Duah/OneDrive/Documents/03-projects/claude-code-projects/Finance Tracker' && git add -A && { git diff --cached --quiet || { git commit -m \\\"Auto-commit: $(date '+%Y-%m-%d %H:%M:%S')\\\" && git push; }; }\"",
+            "timeout": 60,
             "statusMessage": "Committing and pushing changes..."
           }
         ]
