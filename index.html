@@ -130,11 +130,19 @@
           <span style="font-weight:400;font-size:11px;color:var(--muted)">Export or import all data</span>
         </div>
         <div class="flex gap-8" style="flex-wrap:wrap">
-          <button class="btn btn-ghost btn-sm" id="export-backup">Export JSON Backup</button>
+          <button class="btn btn-ghost btn-sm" id="export-backup">Export JSON</button>
           <label class="btn btn-ghost btn-sm" style="cursor:pointer">
-            Import Backup
+            Import JSON
             <input type="file" id="import-backup-input" accept=".json" style="display:none">
           </label>
+        </div>
+        <div class="gdrive-sync">
+          <div class="gdrive-label">Google Drive Sync</div>
+          <div class="flex gap-8" style="flex-wrap:wrap;align-items:center">
+            <button class="btn btn-ghost btn-sm" id="gdrive-save">&#8593; Save to Drive</button>
+            <button class="btn btn-ghost btn-sm" id="gdrive-load">&#8595; Load from Drive</button>
+            <span id="gdrive-status" class="gdrive-status"></span>
+          </div>
         </div>
       </div>
 
@@ -427,6 +435,7 @@
     </section>
   </main>
 
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="js/app.js" defer></script>
 </body>
 </html>

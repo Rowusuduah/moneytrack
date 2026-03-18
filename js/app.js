@@ -47,6 +47,171 @@ const CATEGORY_COLORS = {
   'Education':       '#fbbf24', 'Personal Care': '#a78bfa', 'Miscellaneous':'#8a8aa6',
 };
 
+// ─── Google Drive Sync ───────────────────────────────────────────
+// SETUP: paste your OAuth 2.0 Client ID here (see instructions below).
+// 1. Go to https://console.cloud.google.com → New Project
+// 2. APIs & Services → Enable "Google Drive API"
+// 3. OAuth consent screen → External → add your Gmail as test user
+// 4. Credentials → Create → OAuth client ID → Web application
+// 5. Authorized JS origins → add: https://rowusuduah.github.io
+// 6. Copy the Client ID and paste it below, then push to GitHub.
+const GDRIVE_CLIENT_ID = '394124622094-3cj4ho2ipp3m6pm0un09tg9knelhfqtu.apps.googleusercontent.com';
+const GDRIVE_SCOPE     = 'https://www.googleapis.com/auth/drive.file';
+const GDRIVE_FILENAME  = 'MoneyTrack_Backup.json';
+const KEY_GDRIVE_FILE  = 'moneytrack_gdrive_file_id';
+
+let _gTokenClient  = null;
+let _gAccessToken  = null;
+let _gPendingOp    = null;
+
+function initGDrive() {
+  if (!GDRIVE_CLIENT_ID || typeof google === 'undefined' || !google.accounts?.oauth2) return;
+  _gTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GDRIVE_CLIENT_ID,
+    scope: GDRIVE_SCOPE,
+    callback: resp => {
+      if (resp.error) { alert('Google sign-in failed: ' + resp.error); return; }
+      _gAccessToken = resp.access_token;
+      if (_gPendingOp) { const op = _gPendingOp; _gPendingOp = null; op(); }
+    },
+  });
+}
+
+function gWithToken(op) {
+  if (!GDRIVE_CLIENT_ID) {
+    alert('Google Drive is not set up yet.\n\nOpen js/app.js, follow the instructions at the top, and paste your Client ID into GDRIVE_CLIENT_ID.');
+    return;
+  }
+  if (typeof google === 'undefined' || !google.accounts?.oauth2) {
+    alert('Google library not loaded — check your internet connection and reload the page.');
+    return;
+  }
+  if (!_gTokenClient) initGDrive();
+  if (_gAccessToken) { op(); }
+  else { _gPendingOp = op; _gTokenClient.requestAccessToken({ prompt: '' }); }
+}
+
+async function _gFetch(url, options = {}) {
+  const resp = await fetch(url, {
+    ...options,
+    headers: { Authorization: `Bearer ${_gAccessToken}`, ...(options.headers || {}) },
+  });
+  if (resp.status === 401) { _gAccessToken = null; throw { _gStatus: 401 }; }
+  return resp;
+}
+
+async function _gFindFile() {
+  const q = encodeURIComponent(`name='${GDRIVE_FILENAME}' and trashed=false`);
+  const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id)`);
+  const data = await resp.json();
+  return data.files?.[0]?.id || null;
+}
+
+async function _gCreateFile(content) {
+  const meta = { name: GDRIVE_FILENAME, mimeType: 'application/json' };
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+  form.append('file',     new Blob([content],             { type: 'application/json' }));
+  const resp = await _gFetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+    { method: 'POST', body: form }
+  );
+  const data = await resp.json();
+  if (!data.id) throw new Error('Drive create failed: ' + JSON.stringify(data));
+  return data.id;
+}
+
+async function _gUpdateFile(fileId, content) {
+  const resp = await _gFetch(
+    `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
+    { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: content }
+  );
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Drive update failed (${resp.status}): ${text}`);
+  }
+}
+
+function _gSetStatus(msg, isError) {
+  const el = document.getElementById('gdrive-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--red)' : 'var(--muted)';
+}
+
+function saveToDrive() {
+  gWithToken(async () => {
+    try {
+      _gSetStatus('Saving…');
+      const data = {};
+      BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
+      const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
+
+      let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
+      if (!fileId) {
+        fileId = await _gFindFile();
+        if (fileId) localStorage.setItem(KEY_GDRIVE_FILE, fileId);
+      }
+
+      if (fileId) {
+        await _gUpdateFile(fileId, json);
+      } else {
+        fileId = await _gCreateFile(json);
+        localStorage.setItem(KEY_GDRIVE_FILE, fileId);
+      }
+      _gSetStatus(`Saved ${new Date().toLocaleTimeString()}`);
+    } catch (err) {
+      if (err._gStatus === 401) { saveToDrive(); return; }
+      _gSetStatus('Save failed', true);
+      console.error('[MoneyTrack Drive]', err);
+      alert('Save to Drive failed — check the console for details.');
+    }
+  });
+}
+
+function loadFromDrive() {
+  gWithToken(async () => {
+    try {
+      _gSetStatus('Loading…');
+      let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
+      if (!fileId) {
+        fileId = await _gFindFile();
+        if (!fileId) {
+          _gSetStatus('');
+          alert('No MoneyTrack backup found in your Google Drive.\n\nSave from your PC first, then load on your phone.');
+          return;
+        }
+        localStorage.setItem(KEY_GDRIVE_FILE, fileId);
+      }
+
+      const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+      const parsed = await resp.json();
+
+      if (!parsed.data || typeof parsed.data !== 'object') throw new Error('Invalid backup format');
+      const valid = Object.keys(parsed.data).filter(k => BACKUP_KEYS.includes(k));
+      if (!valid.length) throw new Error('No recognisable data found in file');
+
+      if (!confirm(`Load backup from ${parsed._exported || 'Google Drive'}?\n\nThis will replace all current data on this device.`)) {
+        _gSetStatus(''); return;
+      }
+
+      valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
+      refreshAccountConfig();
+      renderAccountFields();
+      renderAccountsTab();
+      populateAccountSelects();
+      renderBudgetCard();
+      renderTracker();
+      _gSetStatus(`Loaded ${parsed._exported || ''}`);
+    } catch (err) {
+      if (err._gStatus === 401) { loadFromDrive(); return; }
+      _gSetStatus('Load failed', true);
+      console.error('[MoneyTrack Drive]', err);
+      alert('Load from Drive failed — check the console for details.');
+    }
+  });
+}
+
 // ─── Auth ────────────────────────────────────────────────────────
 // Change APP_PASSWORD to your own password before deploying.
 const APP_PASSWORD   = 'moneytrack2025';
@@ -1605,6 +1770,8 @@ function bindEvents() {
   document.getElementById('export-snapshots')?.addEventListener('click', exportSnapshots);
   document.getElementById('export-snapshots-pdf')?.addEventListener('click', exportSnapshotsPDF);
   document.getElementById('export-backup')?.addEventListener('click', exportBackup);
+  document.getElementById('gdrive-save')?.addEventListener('click', saveToDrive);
+  document.getElementById('gdrive-load')?.addEventListener('click', loadFromDrive);
   document.getElementById('import-backup-input')?.addEventListener('change', e => {
     importBackup(e.target.files[0]);
     e.target.value = '';
@@ -1759,6 +1926,8 @@ function init() {
   updateToAccountVisibility();
   bindEvents();
   renderTracker();
+  // Init Google Drive after a short delay to let the GIS library finish loading
+  setTimeout(initGDrive, 1000);
 }
 
 // ─── Auth Gate ───────────────────────────────────────────────────
