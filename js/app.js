@@ -749,7 +749,7 @@ function renderLoansCard() {
   const outstanding = loans.filter(l => l.status === 'outstanding');
   const paid        = loans.filter(l => l.status === 'paid');
 
-  const outstandingTotal = roundMoney(outstanding.reduce((s, l) => s + l.amount, 0));
+  const outstandingTotal = roundMoney(outstanding.reduce((s, l) => s + safeAmt(l.amount), 0));
 
   const outstandingHtml = outstanding.length
     ? outstanding.map(l => `
@@ -1142,7 +1142,7 @@ function addBill() {
   const anchor  = document.getElementById('new-bill-anchor')?.value || null;
   const account = document.getElementById('new-bill-account')?.value || null;
   const bill = {
-    id:         Date.now().toString(36),
+    id:         crypto.randomUUID(),
     name,
     amount:     amount ? roundMoney(amount) : null,
     account:    account || null,
@@ -1256,10 +1256,10 @@ function showAddGoalForm() {
 function addGoal() {
   const name   = (document.getElementById('new-goal-name')?.value || '').trim();
   const target = parseFloat(document.getElementById('new-goal-target')?.value) || 0;
-  if (!name)   { alert('Please enter a goal name.'); return; }
-  if (!target) { alert('Please enter a target amount.'); return; }
+  if (!name)        { alert('Please enter a goal name.'); return; }
+  if (target <= 0)  { alert('Please enter a target amount greater than zero.'); return; }
   const goals = loadGoals();
-  goals.push({ id: Date.now().toString(36), name, target: roundMoney(target), accounts: [] });
+  goals.push({ id: crypto.randomUUID(), name, target: roundMoney(target), accounts: [] });
   saveGoals(goals);
   const formEl = document.getElementById('goal-add-form');
   if (formEl) { formEl.innerHTML = ''; formEl.style.display = 'none'; }
@@ -1344,8 +1344,9 @@ function clearBalanceForms() {
   ACCOUNTS.forEach(a => { const inp = document.getElementById('bal-' + a.id); if (inp) inp.value = ''; });
   const noteEl = document.getElementById('snapshot-note');
   if (noteEl) noteEl.value = '';
-  const btn = document.getElementById('save-snapshot');
-  if (btn) btn.textContent = 'Save Snapshot';
+  const dateEl = document.getElementById('snapshot-date');
+  if (dateEl) dateEl.value = todayISO();
+  prefillSnapshotForm(todayISO());
 }
 
 function exportSnapshots() {
@@ -1551,7 +1552,7 @@ function renderDailyChart(txns) {
 
   expenses.forEach(t => {
     const bucket = days.find(d => d.iso === t.date);
-    if (bucket) bucket.total += t.amount;
+    if (bucket) bucket.total += safeAmt(t.amount);
   });
 
   const max = Math.max(...days.map(d => d.total), 1);
@@ -2019,12 +2020,13 @@ function resetTxnForm() {
   document.getElementById('txn-desc').value     = '';
   document.getElementById('txn-date').value     = todayISO();
   document.getElementById('txn-type').value     = 'expense';
-  document.getElementById('txn-account').value  = ACCOUNTS[0].id;
+  const defaultAcct = (ACCOUNTS.find(a => a.group === 'checking') || ACCOUNTS[0])?.id || '';
+  document.getElementById('txn-account').value  = defaultAcct;
   document.getElementById('txn-category').value = 'Miscellaneous';
   const recEl = document.getElementById('txn-recurring');
   if (recEl) recEl.value = '';
   const toAcctEl = document.getElementById('txn-to-account');
-  if (toAcctEl) toAcctEl.value = ACCOUNTS[0].id;
+  if (toAcctEl) toAcctEl.value = defaultAcct;
   updateToAccountVisibility();
 }
 
