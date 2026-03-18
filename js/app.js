@@ -517,6 +517,23 @@ function renderAccountFields() {
   });
 }
 
+function prefillSnapshotForm(dateISO) {
+  const existing = loadSnapshots().find(s => s.date === dateISO);
+  const btn = document.getElementById('save-snapshot');
+  if (existing) {
+    const b = existing.accounts || {};
+    ACCOUNTS.forEach(a => {
+      const inp = document.getElementById('bal-' + a.id);
+      if (inp) inp.value = b[a.id] != null ? b[a.id] : '';
+    });
+    const noteEl = document.getElementById('snapshot-note');
+    if (noteEl) noteEl.value = existing.note || '';
+    if (btn) btn.textContent = 'Update Snapshot';
+  } else {
+    if (btn) btn.textContent = 'Save Snapshot';
+  }
+}
+
 function getLatestSnapshot() {
   const snaps = loadSnapshots();
   if (!snaps.length) return null;
@@ -653,7 +670,10 @@ function renderSnapshotHistory() {
       <td style="color:var(--blue);font-weight:700">${fmt(checking)}</td>
       <td style="color:var(--purple);font-weight:700">${fmt(investment)}</td>
       <td style="color:${net >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${fmt(net)}</td>
-      <td><button class="txn-btn del" data-del-snap="${idx}" aria-label="Delete snapshot">✕</button></td>
+      <td style="white-space:nowrap">
+        <button class="txn-btn" data-edit-snap="${idx}" aria-label="Edit snapshot" style="margin-right:4px">✎</button>
+        <button class="txn-btn del" data-del-snap="${idx}" aria-label="Delete snapshot">✕</button>
+      </td>
     </tr>`;
   });
 
@@ -1284,10 +1304,7 @@ function saveSnapshot() {
   const selectedDate = document.getElementById('snapshot-date')?.value || todayISO();
   const snaps = loadSnapshots();
   const dupIdx = snaps.findIndex(s => s.date === selectedDate);
-  if (dupIdx !== -1) {
-    if (!confirm(`A snapshot for ${fmtDate(selectedDate)} already exists. Replace it?`)) return;
-    snaps.splice(dupIdx, 1);
-  }
+  if (dupIdx !== -1) snaps.splice(dupIdx, 1);
   snaps.push({ date: selectedDate, note, accounts: balances });
   // Keep array sorted by date ascending
   snaps.sort((a, b) => a.date.localeCompare(b.date));
@@ -1301,6 +1318,8 @@ function saveSnapshot() {
   if (dateEl) dateEl.value = todayISO();
 
   renderAccountsTab();
+  // After re-render, check if today has a snapshot and reflect that in button/form
+  prefillSnapshotForm(todayISO());
 }
 
 function deleteSnapshot(idx) {
@@ -1314,6 +1333,8 @@ function clearBalanceForms() {
   ACCOUNTS.forEach(a => { const inp = document.getElementById('bal-' + a.id); if (inp) inp.value = ''; });
   const noteEl = document.getElementById('snapshot-note');
   if (noteEl) noteEl.value = '';
+  const btn = document.getElementById('save-snapshot');
+  if (btn) btn.textContent = 'Save Snapshot';
 }
 
 function exportSnapshots() {
@@ -1910,6 +1931,10 @@ function saveTransaction() {
     alert('Please fill in date, description, and a positive amount.');
     return;
   }
+  if (type === 'transfer' && !toAcct) {
+    alert('Please select a destination account for the transfer.');
+    return;
+  }
 
   const txns = loadTxns();
 
@@ -2023,23 +2048,26 @@ const PDF_STYLES = `
   body{font-family:system-ui,sans-serif;font-size:12px;color:#111;padding:24px}
   h1{font-size:16px;font-weight:700;margin-bottom:4px}
   .sub{font-size:11px;color:#555;margin-bottom:16px}
-  table{width:100%;border-collapse:collapse;font-size:11px}
+  table{width:100%;border-collapse:collapse;font-size:11px;table-layout:auto}
+  thead{display:table-header-group}
   th{background:#f0f0f0;text-align:left;padding:5px 8px;border:1px solid #ccc;font-weight:600}
-  td{padding:5px 8px;border:1px solid #ddd;vertical-align:top}
+  td{padding:5px 8px;border:1px solid #ddd;vertical-align:top;word-break:break-word;max-width:200px}
+  tr{page-break-inside:avoid}
   tr:nth-child(even) td{background:#fafafa}
   .num{text-align:right}
   .green{color:#16a34a}
   .red{color:#dc2626}
   @media print{
-    @page{margin:16mm}
+    @page{margin:12mm}
     body{padding:0}
   }
 `;
+const PDF_STYLES_LANDSCAPE = PDF_STYLES + `@media print{@page{size:landscape;margin:12mm}}`;
 
-function openPrintWindow(title, subtitle, html) {
+function openPrintWindow(title, subtitle, html, styles) {
   const w = window.open('', '_blank', 'width=900,height=700');
   if (!w) { alert('Pop-up blocked. Please allow pop-ups for this page and try again.'); return; }
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>${PDF_STYLES}</style></head><body><h1>${title}</h1><div class="sub">${subtitle}</div>${html}</body></html>`);
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>${styles || PDF_STYLES}</style></head><body><h1>${title}</h1><div class="sub">${subtitle}</div>${html}</body></html>`);
   w.document.close();
   // Use setTimeout instead of w.onload — Chrome fires load synchronously at
   // document.close(), before the onload assignment, so the callback never runs.
@@ -2088,7 +2116,8 @@ function exportSnapshotsPDF() {
   openPrintWindow(
     'MoneyTrack — Balance History',
     `Exported ${todayISO()} · ${snaps.length} snapshot${snaps.length !== 1 ? 's' : ''}`,
-    `<table><thead>${header}</thead><tbody>${bodyRows}</tbody></table>`
+    `<table><thead>${header}</thead><tbody>${bodyRows}</tbody></table>`,
+    PDF_STYLES_LANDSCAPE
   );
 }
 
@@ -2337,7 +2366,7 @@ function thingsTrendDirection(values) {
   const first = values.slice(0, mid), second = values.slice(mid);
   const avgFirst  = first.reduce((s,v) => s+v, 0) / first.length;
   const avgSecond = second.reduce((s,v) => s+v, 0) / second.length;
-  const pct = ((avgSecond - avgFirst) / avgFirst) * 100;
+  const pct = avgFirst !== 0 ? ((avgSecond - avgFirst) / avgFirst) * 100 : 0;
   if (pct > 2) return 'up';
   if (pct < -2) return 'down';
   return 'flat';
@@ -2914,13 +2943,29 @@ function bindEvents() {
   if (snapHist && !snapHist._delegated) {
     snapHist._delegated = true;
     snapHist.addEventListener('click', e => {
-      const btn = e.target.closest('[data-del-snap]');
-      if (btn) {
-        const idx = parseInt(btn.dataset.delSnap, 10);
+      const editBtn = e.target.closest('[data-edit-snap]');
+      if (editBtn) {
+        const snaps = loadSnapshots();
+        const idx = parseInt(editBtn.dataset.editSnap, 10);
+        const snap = snaps[idx];
+        if (!snap) return;
+        const dateEl = document.getElementById('snapshot-date');
+        if (dateEl) dateEl.value = snap.date;
+        prefillSnapshotForm(snap.date);
+        document.getElementById('snapshot-date')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      const delBtn = e.target.closest('[data-del-snap]');
+      if (delBtn) {
+        const idx = parseInt(delBtn.dataset.delSnap, 10);
         if (confirm('Delete this snapshot?')) deleteSnapshot(idx);
       }
     });
   }
+
+  document.getElementById('snapshot-date')?.addEventListener('change', e => {
+    prefillSnapshotForm(e.target.value);
+  });
 
   // Tracker form
   document.getElementById('save-txn')?.addEventListener('click', saveTransaction);
@@ -3116,6 +3161,7 @@ function init() {
   if (dateInput) { dateInput.value = today; dateInput.max = today; }
   const snapDateInput = document.getElementById('snapshot-date');
   if (snapDateInput) { snapDateInput.value = today; snapDateInput.max = today; }
+  prefillSnapshotForm(today);
 
   updateCustomRangeVisibility();
   updateToAccountVisibility();
