@@ -104,10 +104,27 @@
         </div>
       </div>
 
+      <!-- Backup / Restore -->
+      <div class="card">
+        <div class="card-title">Backup &amp; Restore
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">Export or import all data</span>
+        </div>
+        <div class="flex gap-8" style="flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" id="export-backup">Export JSON Backup</button>
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer">
+            Import Backup
+            <input type="file" id="import-backup-input" accept=".json" style="display:none">
+          </label>
+        </div>
+      </div>
+
       <!-- Balance History -->
       <div class="card">
         <div class="card-title">Balance History
-          <button class="btn btn-ghost btn-sm" id="export-snapshots">Export CSV</button>
+          <div class="flex gap-8">
+            <button class="btn btn-ghost btn-sm" id="export-snapshots">Export CSV</button>
+            <button class="btn btn-ghost btn-sm" id="export-snapshots-pdf">Export PDF</button>
+          </div>
         </div>
         <div id="snapshot-history" style="overflow-x:auto">
           <!-- Rendered by JS -->
@@ -375,7 +392,10 @@
       <!-- Transaction Log -->
       <div class="card">
         <div class="card-title">Transactions
-          <span id="txn-count" style="font-weight:400;font-size:11px;color:var(--muted)"></span>
+          <div class="flex gap-8" style="align-items:center">
+            <span id="txn-count" style="font-weight:400;font-size:11px;color:var(--muted)"></span>
+            <button class="btn btn-ghost btn-sm" id="export-txns-pdf">Export PDF</button>
+          </div>
         </div>
         <input type="text" id="txn-search" class="txn-search acct-input"
                placeholder="Search transactions..." aria-label="Search transactions">

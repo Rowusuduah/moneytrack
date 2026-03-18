@@ -444,7 +444,7 @@ function renderLoansCard() {
       </div>
       <div class="form-group">
         <label for="loan-date">Date Loaned</label>
-        <input type="date" id="loan-date" class="acct-input" value="${todayISO()}">
+        <input type="date" id="loan-date" class="acct-input" value="${todayISO()}" max="${todayISO()}">
       </div>
       <div class="form-group">
         <label for="loan-note">What For (optional)</label>
@@ -920,7 +920,7 @@ function renderTransactionLog(txns) {
   }
 
   // Sort newest first
-  const sorted = [...txns].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+  const sorted = [...txns].sort((a, b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
 
   el.innerHTML = sorted.map(t => {
     const color = t.type === 'income' ? 'var(--green)' : t.type === 'transfer' ? 'var(--blue)' : 'var(--red)';
@@ -1351,6 +1351,110 @@ function exportTransactions() {
   downloadCSV(csv, `MoneyTrack_Transactions_${todayISO()}.csv`);
 }
 
+// ─── PDF Export ──────────────────────────────────────────────────
+const PDF_STYLES = `
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,sans-serif;font-size:12px;color:#111;padding:24px}
+  h1{font-size:16px;font-weight:700;margin-bottom:4px}
+  .sub{font-size:11px;color:#555;margin-bottom:16px}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th{background:#f0f0f0;text-align:left;padding:5px 8px;border:1px solid #ccc;font-weight:600}
+  td{padding:5px 8px;border:1px solid #ddd;vertical-align:top}
+  tr:nth-child(even) td{background:#fafafa}
+  .num{text-align:right}
+  .green{color:#16a34a}
+  .red{color:#dc2626}
+  @media print{
+    @page{margin:16mm}
+    body{padding:0}
+  }
+`;
+
+function openPrintWindow(title, subtitle, html) {
+  const w = window.open('', '_blank', 'width=900,height=700');
+  if (!w) { alert('Pop-up blocked. Please allow pop-ups for this page and try again.'); return; }
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>${PDF_STYLES}</style></head><body><h1>${title}</h1><div class="sub">${subtitle}</div>${html}</body></html>`);
+  w.document.close();
+  // Use setTimeout instead of w.onload — Chrome fires load synchronously at
+  // document.close(), before the onload assignment, so the callback never runs.
+  setTimeout(() => { w.focus(); w.print(); }, 250);
+}
+
+function exportSnapshotsPDF() {
+  const snaps = loadSnapshots();
+  if (!snaps.length) { alert('No snapshots to export.'); return; }
+
+  const cols = ACCOUNTS;
+  const allLoansForPDF = loadLoans();
+  const rows = snaps.map(s => {
+    const b = s.accounts || {};
+    const savings    = roundMoney(ACCOUNTS.filter(a => a.group === 'savings').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
+    const checking   = roundMoney(ACCOUNTS.filter(a => a.group === 'checking').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
+    const investment = roundMoney(ACCOUNTS.filter(a => a.group === 'investment').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
+    const debt       = roundMoney(ACCOUNTS.filter(a => a.group === 'debt').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
+    const loansOut   = roundMoney(allLoansForPDF
+      .filter(l => l.date <= s.date && (l.status === 'outstanding' || l.paidDate > s.date))
+      .reduce((sum, l) => sum + safeAmt(l.amount), 0));
+    const net        = roundMoney(savings + checking + investment + loansOut - debt);
+    return { date: s.date, note: s.note || '', savings, checking, investment, debt, net };
+  });
+
+  const thCols = cols.map(a => `<th class="num">${escapeHTML(a.label)}</th>`).join('');
+  const header = `<tr><th>Date</th><th>Note</th><th class="num">Savings</th><th class="num">Checking</th><th class="num">Investment</th><th class="num">Debt</th><th class="num">Net Worth</th>${thCols}</tr>`;
+
+  const bodyRows = snaps.map((s, i) => {
+    const r = rows[i];
+    const b = s.accounts || {};
+    const netCls = r.net >= 0 ? 'green' : 'red';
+    const acctCells = cols.map(a => `<td class="num">${fmt(a.group === 'debt' ? -(b[a.id]||0) : (b[a.id]||0))}</td>`).join('');
+    return `<tr>
+      <td>${escapeHTML(s.date)}</td>
+      <td>${escapeHTML(r.note)}</td>
+      <td class="num">${fmt(r.savings)}</td>
+      <td class="num">${fmt(r.checking)}</td>
+      <td class="num">${fmt(r.investment)}</td>
+      <td class="num red">${fmt(r.debt)}</td>
+      <td class="num ${netCls}">${fmt(r.net)}</td>
+      ${acctCells}
+    </tr>`;
+  }).join('');
+
+  openPrintWindow(
+    'MoneyTrack — Balance History',
+    `Exported ${todayISO()} · ${snaps.length} snapshot${snaps.length !== 1 ? 's' : ''}`,
+    `<table><thead>${header}</thead><tbody>${bodyRows}</tbody></table>`
+  );
+}
+
+function exportTransactionsPDF() {
+  const txns = getFilteredTxns();
+  if (!txns.length) { alert('No transactions to export for this filter.'); return; }
+
+  const sorted = [...txns].sort((a, b) => a.date.localeCompare(b.date));
+
+  const header = `<tr><th>Date</th><th>Description</th><th>Type</th><th>Category</th><th>Account</th><th class="num">Amount</th></tr>`;
+
+  const bodyRows = sorted.map(t => {
+    const amt = t.type === 'expense' ? -t.amount : t.amount;
+    const amtCls = amt >= 0 ? 'green' : 'red';
+    const sign = t.type === 'income' ? '+' : t.type === 'transfer' ? '' : '-';
+    return `<tr>
+      <td>${escapeHTML(t.date)}</td>
+      <td>${escapeHTML(t.description || '')}${t.toAccount ? ` → ${escapeHTML(ACCOUNT_LABELS[t.toAccount] || t.toAccount)}` : ''}</td>
+      <td>${escapeHTML(t.type)}</td>
+      <td>${escapeHTML(t.category)}</td>
+      <td>${escapeHTML(ACCOUNT_LABELS[t.account] || t.account)}</td>
+      <td class="num ${amtCls}">${sign}${fmt(Math.abs(t.amount))}</td>
+    </tr>`;
+  }).join('');
+
+  openPrintWindow(
+    'MoneyTrack — Transactions',
+    `Exported ${todayISO()} · ${sorted.length} transaction${sorted.length !== 1 ? 's' : ''}`,
+    `<table><thead>${header}</thead><tbody>${bodyRows}</tbody></table>`
+  );
+}
+
 // ─── CSV Download ────────────────────────────────────────────────
 function downloadCSV(csv, filename) {
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -1361,6 +1465,55 @@ function downloadCSV(csv, filename) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// ─── JSON Backup / Restore ───────────────────────────────────────
+const BACKUP_KEYS = [
+  KEY_SNAPSHOTS, KEY_TXNS, KEY_BUDGETS,
+  KEY_DEBT_META, KEY_LOANS, KEY_ACCOUNTS, KEY_THEME,
+];
+
+function exportBackup() {
+  const data = {};
+  BACKUP_KEYS.forEach(k => {
+    const v = localStorage.getItem(k);
+    if (v !== null) data[k] = v;
+  });
+  const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = `MoneyTrack_Backup_${todayISO()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function importBackup(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      if (!parsed.data || typeof parsed.data !== 'object') throw new Error('Invalid backup format');
+      const keys = Object.keys(parsed.data);
+      const valid = keys.filter(k => BACKUP_KEYS.includes(k));
+      if (!valid.length) throw new Error('No recognizable data found in file');
+      if (!confirm(`Restore backup from ${parsed._exported || 'unknown date'}?\n\nThis will overwrite your current data. Make sure you have a backup of what you have now.`)) return;
+      valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
+      refreshAccountConfig();
+      renderAccountFields();
+      renderAccountsTab();
+      populateAccountSelects();
+      renderBudgetCard();
+      renderTracker();
+      alert('Backup restored successfully.');
+    } catch (err) {
+      alert('Failed to restore backup: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
 }
 
 // ─── Tab Switching ────────────────────────────────────────────────
@@ -1445,6 +1598,12 @@ function bindEvents() {
   document.getElementById('save-snapshot')?.addEventListener('click', saveSnapshot);
   document.getElementById('clear-balances')?.addEventListener('click', clearBalanceForms);
   document.getElementById('export-snapshots')?.addEventListener('click', exportSnapshots);
+  document.getElementById('export-snapshots-pdf')?.addEventListener('click', exportSnapshotsPDF);
+  document.getElementById('export-backup')?.addEventListener('click', exportBackup);
+  document.getElementById('import-backup-input')?.addEventListener('change', e => {
+    importBackup(e.target.files[0]);
+    e.target.value = '';
+  });
 
   // Snapshot history delegation (delete button)
   const snapHist = document.getElementById('snapshot-history');
@@ -1463,6 +1622,7 @@ function bindEvents() {
   document.getElementById('save-txn')?.addEventListener('click', saveTransaction);
   document.getElementById('cancel-edit')?.addEventListener('click', cancelEdit);
   document.getElementById('export-txns')?.addEventListener('click', exportTransactions);
+  document.getElementById('export-txns-pdf')?.addEventListener('click', exportTransactionsPDF);
 
   // Show/hide to-account when type changes
   document.getElementById('txn-type')?.addEventListener('change', updateToAccountVisibility);
@@ -1583,11 +1743,12 @@ function init() {
   renderAccountsTab();
   renderBudgetCard();
 
-  // Pre-fill today's date in transaction form and snapshot date picker
+  // Pre-fill today's date and set max=today on date inputs
+  const today = todayISO();
   const dateInput = document.getElementById('txn-date');
-  if (dateInput) dateInput.value = todayISO();
+  if (dateInput) { dateInput.value = today; dateInput.max = today; }
   const snapDateInput = document.getElementById('snapshot-date');
-  if (snapDateInput) snapDateInput.value = todayISO();
+  if (snapDateInput) { snapDateInput.value = today; snapDateInput.max = today; }
 
   updateCustomRangeVisibility();
   updateToAccountVisibility();
