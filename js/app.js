@@ -69,6 +69,8 @@ let _gAccessToken  = null;
 let _gPendingOp    = null;
 let _gIsAutoSync   = false;
 let _driveSyncTimer = null;
+let _driveRetries  = 0;
+let _driveLoadRetries = 0;
 
 function initGDrive() {
   if (!GDRIVE_CLIENT_ID || typeof google === 'undefined' || !google.accounts?.oauth2) return;
@@ -173,9 +175,15 @@ function saveToDrive() {
         localStorage.setItem(KEY_GDRIVE_FILE, fileId);
       }
       localStorage.setItem(KEY_GDRIVE_CONNECTED, '1');
+      _driveRetries = 0;
       _gSetStatus(`Saved ${new Date().toLocaleTimeString()}`);
     } catch (err) {
-      if (err._gStatus === 401) { saveToDrive(); return; }
+      if (err._gStatus === 401) {
+        _driveRetries++;
+        if (_driveRetries <= 1) { saveToDrive(); return; }
+        _driveRetries = 0;
+        showToast('Google Drive authentication failed after retry.', 'error');
+      }
       _gSetStatus('Save failed', true);
       console.error('[MoneyTrack Drive]', err);
       showToast('Save to Drive failed — check the console for details.', 'error');
@@ -219,9 +227,15 @@ function loadFromDrive() {
       populateAccountSelects();
       renderBudgetCard();
       renderTracker();
+      _driveLoadRetries = 0;
       _gSetStatus(`Loaded ${parsed._exported || ''}`);
     } catch (err) {
-      if (err._gStatus === 401) { loadFromDrive(); return; }
+      if (err._gStatus === 401) {
+        _driveLoadRetries++;
+        if (_driveLoadRetries <= 1) { loadFromDrive(); return; }
+        _driveLoadRetries = 0;
+        showToast('Google Drive authentication failed after retry.', 'error');
+      }
       _gSetStatus('Load failed', true);
       console.error('[MoneyTrack Drive]', err);
       showToast('Load from Drive failed — check the console for details.', 'error');
@@ -295,8 +309,11 @@ function queueDriveSync() {
 // Called on init: if user has previously authorised Drive, silently refresh token and auto-load
 function autoSyncDrive() {
   if (!localStorage.getItem(KEY_GDRIVE_CONNECTED)) return;
+  let _tryAutoAttempts = 0;
   function tryAuto() {
     if (typeof google === 'undefined' || !google.accounts?.oauth2) {
+      _tryAutoAttempts++;
+      if (_tryAutoAttempts >= 20) { console.warn('[MoneyTrack] Google library not loaded after 10 s — giving up auto-sync.'); return; }
       setTimeout(tryAuto, 500); return;
     }
     if (!_gTokenClient) initGDrive();
@@ -414,6 +431,16 @@ function fmtShort(n) {
 function csvField(v) {
   const s = String(v == null ? '' : v).replace(/"/g, '""');
   return `"${s}"`;
+}
+
+function calcNetWorth(snap, loans, atDate) {
+  const b = snap.accounts || {};
+  const assets = roundMoney(ACCOUNTS.filter(a => a.group !== 'debt').reduce((s, a) => s + safeAmt(b[a.id]), 0));
+  const debt   = roundMoney(ACCOUNTS.filter(a => a.group === 'debt').reduce((s, a) => s + safeAmt(b[a.id]), 0));
+  const loansOut = roundMoney((loans || [])
+    .filter(l => atDate ? (l.date <= atDate && (l.status === 'outstanding' || l.paidDate > atDate)) : l.status === 'outstanding')
+    .reduce((s, l) => s + safeAmt(l.amount), 0));
+  return roundMoney(assets + loansOut - debt);
 }
 
 // ─── Data Layer ──────────────────────────────────────────────────
@@ -612,9 +639,10 @@ function renderAccountKPIs() {
   const savings          = sum('savings');
   const investment       = sum('investment');
   const debt             = sum('debt');
-  const outstandingLoans = loadLoans().filter(l => l.status === 'outstanding');
+  const allLoansKPI      = loadLoans();
+  const outstandingLoans = allLoansKPI.filter(l => l.status === 'outstanding');
   const loansOut         = roundMoney(outstandingLoans.reduce((s, l) => s + safeAmt(l.amount), 0));
-  const net              = roundMoney(checking + savings + investment + loansOut - debt);
+  const net              = snap ? calcNetWorth(snap, allLoansKPI) : 0;
 
   const loansSub = outstandingLoans.length
     ? `${outstandingLoans.length} loan${outstandingLoans.length > 1 ? 's' : ''} outstanding`
@@ -657,15 +685,7 @@ function renderNWTrend() {
 
   const last12 = snaps.slice(-12);
   const allLoans = loadLoans();
-  const nwVals = last12.map(s => {
-    const b = s.accounts || {};
-    const assets = ACCOUNTS.filter(a => a.group !== 'debt').reduce((sum, a) => sum + safeAmt(b[a.id]), 0);
-    const liab   = ACCOUNTS.filter(a => a.group === 'debt').reduce((sum, a) => sum + safeAmt(b[a.id]), 0);
-    const loansAtDate = roundMoney(allLoans
-      .filter(l => l.date <= s.date && (l.status === 'outstanding' || l.paidDate > s.date))
-      .reduce((sum, l) => sum + safeAmt(l.amount), 0));
-    return roundMoney(assets + loansAtDate - liab);
-  });
+  const nwVals = last12.map(s => calcNetWorth(s, allLoans, s.date));
 
   const maxV = Math.max(...nwVals.map(Math.abs), 1);
 
@@ -711,11 +731,7 @@ function renderSnapshotHistory() {
     const savings    = roundMoney(ACCOUNTS.filter(a => a.group === 'savings').reduce((s, a) => s + safeAmt(b[a.id]), 0));
     const checking   = roundMoney(ACCOUNTS.filter(a => a.group === 'checking').reduce((s, a) => s + safeAmt(b[a.id]), 0));
     const investment = roundMoney(ACCOUNTS.filter(a => a.group === 'investment').reduce((s, a) => s + safeAmt(b[a.id]), 0));
-    const debt       = roundMoney(ACCOUNTS.filter(a => a.group === 'debt').reduce((s, a) => s + safeAmt(b[a.id]), 0));
-    const loansAtDate = roundMoney(allLoansForHistory
-      .filter(l => l.date <= s.date && (l.status === 'outstanding' || l.paidDate > s.date))
-      .reduce((sum, l) => sum + safeAmt(l.amount), 0));
-    const net        = roundMoney(savings + checking + investment + loansAtDate - debt);
+    const net        = calcNetWorth(s, allLoansForHistory, s.date);
 
     html += `<tr>
       <td><strong>${escapeHTML(fmtDate(s.date))}</strong></td>
@@ -1053,14 +1069,7 @@ function renderFinancialRatios() {
   const snaps = loadSnapshots();
   let nwChange = null;
   if (snaps.length >= 2) {
-    const nw = s => {
-      const sb = s.accounts || {};
-      return roundMoney(
-        ACCOUNTS.filter(a => a.group !== 'debt').reduce((acc, a) => acc + safeAmt(sb[a.id]), 0) -
-        ACCOUNTS.filter(a => a.group === 'debt').reduce((acc, a) => acc + safeAmt(sb[a.id]), 0)
-      );
-    };
-    nwChange = nw(snaps[snaps.length - 1]) - nw(snaps[snaps.length - 2]);
+    nwChange = calcNetWorth(snaps[snaps.length - 1], []) - calcNetWorth(snaps[snaps.length - 2], []);
   }
 
   const ratios = [
@@ -1421,11 +1430,10 @@ function exportSnapshots() {
     const savings    = roundMoney(ACCOUNTS.filter(a => a.group === 'savings').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
     const checking   = roundMoney(ACCOUNTS.filter(a => a.group === 'checking').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
     const investment = roundMoney(ACCOUNTS.filter(a => a.group === 'investment').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
-    const debt       = roundMoney(ACCOUNTS.filter(a => a.group === 'debt').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
     const loansOut   = roundMoney(allLoansForExport
       .filter(l => l.date <= s.date && (l.status === 'outstanding' || l.paidDate > s.date))
       .reduce((sum, l) => sum + safeAmt(l.amount), 0));
-    const net        = roundMoney(savings + checking + investment + loansOut - debt);
+    const net        = calcNetWorth(s, allLoansForExport, s.date);
     return [
       s.date, s.note || '',
       ...cols.map(a => (a.group === 'debt' ? -(b[a.id]||0) : (b[a.id]||0))),
@@ -1946,15 +1954,7 @@ function renderBalanceTrends() {
     // Net Worth line
     series.push({
       label: 'Net Worth', color: '#2dd4bf',
-      values: last12.map(s => {
-        const b = s.accounts || {};
-        const assets = ACCOUNTS.filter(a => a.group !== 'debt').reduce((sum, a) => sum + safeAmt(b[a.id]), 0);
-        const liab   = ACCOUNTS.filter(a => a.group === 'debt').reduce((sum, a) => sum + safeAmt(b[a.id]), 0);
-        const loansAt = roundMoney(allLoans
-          .filter(l => l.date <= s.date && (l.status === 'outstanding' || l.paidDate > s.date))
-          .reduce((sum, l) => sum + safeAmt(l.amount), 0));
-        return roundMoney(assets + loansAt - liab);
-      }),
+      values: last12.map(s => calcNetWorth(s, allLoans, s.date)),
     });
   } else {
     ACCOUNTS.filter(a => a.group === balTrendGroup).forEach(a => {
@@ -2033,12 +2033,13 @@ function editTransaction(id) {
   if (!t) return;
 
   editingId = id;
-  document.getElementById('txn-date').value     = t.date;
-  document.getElementById('txn-type').value     = t.type;
-  document.getElementById('txn-amount').value   = t.amount;
-  document.getElementById('txn-account').value  = t.account;
-  document.getElementById('txn-category').value = t.category;
-  document.getElementById('txn-desc').value     = t.description;
+  const _ed = id => document.getElementById(id);
+  if (_ed('txn-date'))     _ed('txn-date').value     = t.date;
+  if (_ed('txn-type'))     _ed('txn-type').value     = t.type;
+  if (_ed('txn-amount'))   _ed('txn-amount').value   = t.amount;
+  if (_ed('txn-account'))  _ed('txn-account').value  = t.account;
+  if (_ed('txn-category')) _ed('txn-category').value = t.category;
+  if (_ed('txn-desc'))     _ed('txn-desc').value     = t.description;
   const recEl = document.getElementById('txn-recurring');
   if (recEl) recEl.value = t.recurring || '';
   const toAcctEl = document.getElementById('txn-to-account');
@@ -2076,13 +2077,14 @@ function deleteTransaction(id) {
 }
 
 function resetTxnForm() {
-  document.getElementById('txn-amount').value   = '';
-  document.getElementById('txn-desc').value     = '';
-  document.getElementById('txn-date').value     = todayISO();
-  document.getElementById('txn-type').value     = 'expense';
+  const _el = id => document.getElementById(id);
+  if (_el('txn-amount'))   _el('txn-amount').value   = '';
+  if (_el('txn-desc'))     _el('txn-desc').value     = '';
+  if (_el('txn-date'))     _el('txn-date').value     = todayISO();
+  if (_el('txn-type'))     _el('txn-type').value     = 'expense';
   const defaultAcct = (ACCOUNTS.find(a => a.group === 'checking') || ACCOUNTS[0])?.id || '';
-  document.getElementById('txn-account').value  = defaultAcct;
-  document.getElementById('txn-category').value = 'Miscellaneous';
+  if (_el('txn-account'))  _el('txn-account').value  = defaultAcct;
+  if (_el('txn-category')) _el('txn-category').value = 'Miscellaneous';
   const recEl = document.getElementById('txn-recurring');
   if (recEl) recEl.value = '';
   const toAcctEl = document.getElementById('txn-to-account');
@@ -2165,10 +2167,7 @@ function exportSnapshotsPDF() {
     const checking   = roundMoney(ACCOUNTS.filter(a => a.group === 'checking').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
     const investment = roundMoney(ACCOUNTS.filter(a => a.group === 'investment').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
     const debt       = roundMoney(ACCOUNTS.filter(a => a.group === 'debt').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
-    const loansOut   = roundMoney(allLoansForPDF
-      .filter(l => l.date <= s.date && (l.status === 'outstanding' || l.paidDate > s.date))
-      .reduce((sum, l) => sum + safeAmt(l.amount), 0));
-    const net        = roundMoney(savings + checking + investment + loansOut - debt);
+    const net        = calcNetWorth(s, allLoansForPDF, s.date);
     return { date: s.date, note: s.note || '', savings, checking, investment, debt, net };
   });
 
@@ -3364,3 +3363,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('login-pass')?.focus();
   }
 });
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(err => console.warn('[sw] Registration failed:', err));
+  });
+}
