@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'moneytrack-v2';
+const CACHE_NAME = 'moneytrack-v3';
 const APP_SHELL  = [
   './index.html',
   './css/styles.css',
@@ -38,7 +38,7 @@ self.addEventListener('fetch', e => {
     caches.match(e.request).then(cached => {
       if (cached) return cached;
       return fetch(e.request).then(response => {
-        if (!response || response.status !== 200) return response;
+        if (!response || response.status !== 200 || response.type !== 'basic') return response;
         const clone = response.clone();
         caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
         return response;
