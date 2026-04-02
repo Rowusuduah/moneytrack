@@ -204,6 +204,7 @@ function loadFromDrive() {
       if (!parsed.data || typeof parsed.data !== 'object') throw new Error('Invalid backup format');
       const valid = Object.keys(parsed.data).filter(k => BACKUP_KEYS.includes(k));
       if (!valid.length) throw new Error('No recognisable data found in file');
+      _validateRestoreData(valid, parsed);
 
       if (!confirm(`Load backup from ${parsed._exported || 'Google Drive'}?\n\nThis will replace all current data on this device.`)) {
         _gSetStatus(''); return;
@@ -245,6 +246,7 @@ async function autoLoadFromDrive() {
     if (!parsed.data || typeof parsed.data !== 'object') { _gSetStatus(''); return; }
     const valid = Object.keys(parsed.data).filter(k => BACKUP_KEYS.includes(k));
     if (!valid.length) { _gSetStatus(''); return; }
+    try { _validateRestoreData(valid, parsed); } catch { _gSetStatus(''); return; }
 
     valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
     initTheme();
@@ -306,9 +308,20 @@ function autoSyncDrive() {
 }
 
 // ─── Auth ────────────────────────────────────────────────────────
-// Change APP_PASSWORD to your own password before deploying.
-const APP_PASSWORD   = 'moneytrack2025';
-const SESSION_KEY    = 'moneytrack_auth';
+// SHA-256 hash of the password — never store the plain password in source.
+const AUTH_HASH   = '404c4a02b589a67a51a7ffde6e3937d2313a67d3a8e8da0b442289dfff782315';
+const SESSION_KEY = 'moneytrack_auth';
+
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Rate-limiting (sessionStorage so it resets when the tab closes)
+let _loginAttempts    = parseInt(sessionStorage.getItem('mt_login_attempts') || '0', 10);
+let _loginLockoutUntil = parseInt(sessionStorage.getItem('mt_login_lockout') || '0', 10);
+const LOGIN_MAX_ATTEMPTS  = 5;
+const LOGIN_BASE_DELAY_MS = 1000;
 
 // ─── Storage Keys ────────────────────────────────────────────────
 const KEY_SNAPSHOTS = 'moneytrack_snapshots';
@@ -372,68 +385,82 @@ function csvField(v) {
 }
 
 // ─── Data Layer ──────────────────────────────────────────────────
+function _safeParseJSON(raw, fallback) {
+  if (raw === null) return fallback;
+  return JSON.parse(raw, (k, v) => k === '__proto__' ? undefined : v);
+}
+
+function _safeSave(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    console.error('[storage] Save failed:', key, e);
+    if (e.name === 'QuotaExceededError') alert('Storage is full. Please export a backup and clear old data.');
+  }
+}
+
 function loadSnapshots() {
-  try { return JSON.parse(localStorage.getItem(KEY_SNAPSHOTS)) || []; }
-  catch { return []; }
+  try { return _safeParseJSON(localStorage.getItem(KEY_SNAPSHOTS), []); }
+  catch (e) { console.error('[storage] Parse failed: snapshots', e); return []; }
 }
 
 function saveSnapshots(arr) {
-  try { localStorage.setItem(KEY_SNAPSHOTS, JSON.stringify(arr)); } catch {}
+  _safeSave(KEY_SNAPSHOTS, arr);
   queueDriveSync();
 }
 
 function loadTxns() {
-  try { return JSON.parse(localStorage.getItem(KEY_TXNS)) || []; }
-  catch { return []; }
+  try { return _safeParseJSON(localStorage.getItem(KEY_TXNS), []); }
+  catch (e) { console.error('[storage] Parse failed: txns', e); return []; }
 }
 
 function saveTxns(arr) {
-  try { localStorage.setItem(KEY_TXNS, JSON.stringify(arr)); } catch {}
+  _safeSave(KEY_TXNS, arr);
   queueDriveSync();
 }
 
 function loadBudgets() {
-  try { return JSON.parse(localStorage.getItem(KEY_BUDGETS)) || {}; }
-  catch { return {}; }
+  try { return _safeParseJSON(localStorage.getItem(KEY_BUDGETS), {}); }
+  catch (e) { console.error('[storage] Parse failed: budgets', e); return {}; }
 }
 function saveBudgets(obj) {
-  try { localStorage.setItem(KEY_BUDGETS, JSON.stringify(obj)); } catch {}
+  _safeSave(KEY_BUDGETS, obj);
   queueDriveSync();
 }
 
 function loadDebtMeta() {
-  try { return JSON.parse(localStorage.getItem(KEY_DEBT_META)) || {}; }
-  catch { return {}; }
+  try { return _safeParseJSON(localStorage.getItem(KEY_DEBT_META), {}); }
+  catch (e) { console.error('[storage] Parse failed: debt_meta', e); return {}; }
 }
 function saveDebtMeta(obj) {
-  try { localStorage.setItem(KEY_DEBT_META, JSON.stringify(obj)); } catch {}
+  _safeSave(KEY_DEBT_META, obj);
   queueDriveSync();
 }
 
 function loadLoans() {
-  try { return JSON.parse(localStorage.getItem(KEY_LOANS)) || []; }
-  catch { return []; }
+  try { return _safeParseJSON(localStorage.getItem(KEY_LOANS), []); }
+  catch (e) { console.error('[storage] Parse failed: loans', e); return []; }
 }
 function saveLoans(arr) {
-  try { localStorage.setItem(KEY_LOANS, JSON.stringify(arr)); } catch {}
+  _safeSave(KEY_LOANS, arr);
   queueDriveSync();
 }
 
 function loadCustomAccounts() {
-  try { return JSON.parse(localStorage.getItem(KEY_ACCOUNTS)) || []; }
-  catch { return []; }
+  try { return _safeParseJSON(localStorage.getItem(KEY_ACCOUNTS), []); }
+  catch (e) { console.error('[storage] Parse failed: accounts', e); return []; }
 }
 function saveCustomAccounts(arr) {
-  try { localStorage.setItem(KEY_ACCOUNTS, JSON.stringify(arr)); } catch {}
+  _safeSave(KEY_ACCOUNTS, arr);
   queueDriveSync();
 }
 
 function loadBills() {
-  try { return JSON.parse(localStorage.getItem(KEY_BILLS)) || []; }
-  catch { return []; }
+  try { return _safeParseJSON(localStorage.getItem(KEY_BILLS), []); }
+  catch (e) { console.error('[storage] Parse failed: bills', e); return []; }
 }
 function saveBills(arr) {
-  try { localStorage.setItem(KEY_BILLS, JSON.stringify(arr)); } catch {}
+  _safeSave(KEY_BILLS, arr);
   queueDriveSync();
 }
 
@@ -460,20 +487,20 @@ function getNextDueDate(bill) {
 }
 
 function loadGoals() {
-  try { return JSON.parse(localStorage.getItem(KEY_GOALS)) || []; }
-  catch { return []; }
+  try { return _safeParseJSON(localStorage.getItem(KEY_GOALS), []); }
+  catch (e) { console.error('[storage] Parse failed: goals', e); return []; }
 }
 function saveGoals(arr) {
-  try { localStorage.setItem(KEY_GOALS, JSON.stringify(arr)); } catch {}
+  _safeSave(KEY_GOALS, arr);
   queueDriveSync();
 }
 
-function loadThingsItems()   { try { return JSON.parse(localStorage.getItem(KEY_THINGS_ITEMS)) || []; }   catch { return []; } }
-function saveThingsItems(a)  { try { localStorage.setItem(KEY_THINGS_ITEMS, JSON.stringify(a)); }   catch {} queueDriveSync(); }
-function loadThingsEntries() { try { return JSON.parse(localStorage.getItem(KEY_THINGS_ENTRIES)) || []; } catch { return []; } }
-function saveThingsEntries(a){ try { localStorage.setItem(KEY_THINGS_ENTRIES, JSON.stringify(a)); } catch {} queueDriveSync(); }
-function loadThingsCustomCats()  { try { return JSON.parse(localStorage.getItem(KEY_THINGS_CATS)) || []; } catch { return []; } }
-function saveThingsCustomCats(a) { try { localStorage.setItem(KEY_THINGS_CATS, JSON.stringify(a)); } catch {} }
+function loadThingsItems()   { try { return _safeParseJSON(localStorage.getItem(KEY_THINGS_ITEMS), []); }   catch (e) { console.error('[storage] Parse failed: things_items', e); return []; } }
+function saveThingsItems(a)  { _safeSave(KEY_THINGS_ITEMS, a); queueDriveSync(); }
+function loadThingsEntries() { try { return _safeParseJSON(localStorage.getItem(KEY_THINGS_ENTRIES), []); } catch (e) { console.error('[storage] Parse failed: things_entries', e); return []; } }
+function saveThingsEntries(a){ _safeSave(KEY_THINGS_ENTRIES, a); queueDriveSync(); }
+function loadThingsCustomCats()  { try { return _safeParseJSON(localStorage.getItem(KEY_THINGS_CATS), []); } catch (e) { console.error('[storage] Parse failed: things_cats', e); return []; } }
+function saveThingsCustomCats(a) { _safeSave(KEY_THINGS_CATS, a); }
 function getThingsCats()     { return [...new Set([...DEFAULT_THINGS_CATS, ...loadThingsCustomCats()])]; }
 function getItemEntries(id)  { return loadThingsEntries().filter(e => e.itemId === id).sort((a,b) => a.date.localeCompare(b.date)); }
 
@@ -1294,6 +1321,7 @@ function saveSnapshot() {
   const selectedDate = document.getElementById('snapshot-date')?.value || todayISO();
   const snaps = loadSnapshots();
   const dupIdx = snaps.findIndex(s => s.date === selectedDate);
+  if (dupIdx !== -1 && !confirm(`A snapshot for ${selectedDate} already exists. Overwrite it?`)) return;
 
   // If updating an existing snapshot, carry over any fields the user left blank
   // so that editing just one account doesn't wipe out all the others.
@@ -2080,7 +2108,7 @@ const PDF_STYLES_LANDSCAPE = PDF_STYLES + `@media print{@page{size:landscape;mar
 function openPrintWindow(title, subtitle, html, styles) {
   const w = window.open('', '_blank', 'width=900,height=700');
   if (!w) { alert('Pop-up blocked. Please allow pop-ups for this page and try again.'); return; }
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>${styles || PDF_STYLES}</style></head><body><h1>${title}</h1><div class="sub">${subtitle}</div>${html}</body></html>`);
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHTML(title)}</title><style>${styles || PDF_STYLES}</style></head><body><h1>${escapeHTML(title)}</h1><div class="sub">${escapeHTML(subtitle)}</div>${html}</body></html>`);
   w.document.close();
   // Use setTimeout instead of w.onload — Chrome fires load synchronously at
   // document.close(), before the onload assignment, so the callback never runs.
@@ -2289,12 +2317,14 @@ function importBankCSV(file) {
   if (!file) return;
   const defaultAccount = ACCOUNTS[0]?.id || '';
   const reader = new FileReader();
+  reader.onerror = () => alert('Failed to read CSV file.');
   reader.onload = e => {
     try {
       const text   = e.target.result;
       const lines  = text.split(/\r?\n/);
       if (lines.length < 2) throw new Error('File appears empty');
       const headers = parseCSVLine(lines[0]);
+      if (headers.length < 3) throw new Error('CSV must have at least 3 columns (date, description, amount)');
       const format  = detectCSVFormat(headers);
       let parsed;
       if (format === 'chase')         parsed = parseChaseCSV(lines);
@@ -2827,16 +2857,31 @@ function exportBackup() {
   URL.revokeObjectURL(url);
 }
 
+function _validateRestoreData(valid, parsed) {
+  const MAX_VALUE_SIZE = 1024 * 1024; // 1MB per key
+  valid.forEach(k => {
+    const v = parsed.data[k];
+    if (typeof v !== 'string') throw new Error(`Invalid value for key "${k}" — expected string.`);
+    if (v.length > MAX_VALUE_SIZE) throw new Error(`Value for "${k}" exceeds 1MB limit.`);
+    if (k !== KEY_THEME) {
+      JSON.parse(v, (key, val) => key === '__proto__' ? undefined : val); // validate JSON + sanitize
+    }
+  });
+}
+
 function importBackup(file) {
   if (!file) return;
+  if (file.size > 10 * 1024 * 1024) { alert('Backup file too large (max 10MB).'); return; }
   const reader = new FileReader();
+  reader.onerror = () => alert('Failed to read backup file.');
   reader.onload = e => {
     try {
-      const parsed = JSON.parse(e.target.result);
+      const parsed = JSON.parse(e.target.result, (k, v) => k === '__proto__' ? undefined : v);
       if (!parsed.data || typeof parsed.data !== 'object') throw new Error('Invalid backup format');
       const keys = Object.keys(parsed.data);
       const valid = keys.filter(k => BACKUP_KEYS.includes(k));
       if (!valid.length) throw new Error('No recognizable data found in file');
+      _validateRestoreData(valid, parsed);
       if (!confirm(`Restore backup from ${parsed._exported || 'unknown date'}?\n\nThis will overwrite your current data. Make sure you have a backup of what you have now.`)) return;
       valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
       initTheme();
@@ -3207,14 +3252,36 @@ function bindLoginForm() {
   const errorEl = document.getElementById('login-error');
   if (!form) return;
 
-  form.addEventListener('submit', e => {
+  form.addEventListener('submit', async e => {
     e.preventDefault();
-    if ((input?.value || '') === APP_PASSWORD) {
+
+    // Rate-limit check
+    const now = Date.now();
+    if (_loginLockoutUntil && now < _loginLockoutUntil) {
+      const secs = Math.ceil((_loginLockoutUntil - now) / 1000);
+      if (errorEl) errorEl.textContent = `Too many attempts. Try again in ${secs}s.`;
+      return;
+    }
+
+    const hash = await sha256(input?.value || '');
+    if (hash === AUTH_HASH) {
+      _loginAttempts = 0;
+      sessionStorage.removeItem('mt_login_attempts');
+      sessionStorage.removeItem('mt_login_lockout');
       sessionStorage.setItem(SESSION_KEY, '1');
       showApp();
     } else {
-      if (errorEl) errorEl.textContent = 'Incorrect password. Please try again.';
-      if (input)   { input.value = ''; input.focus(); }
+      _loginAttempts++;
+      sessionStorage.setItem('mt_login_attempts', String(_loginAttempts));
+      if (_loginAttempts >= LOGIN_MAX_ATTEMPTS) {
+        const delay = Math.min(LOGIN_BASE_DELAY_MS * Math.pow(2, _loginAttempts - LOGIN_MAX_ATTEMPTS), 60000);
+        _loginLockoutUntil = now + delay;
+        sessionStorage.setItem('mt_login_lockout', String(_loginLockoutUntil));
+        if (errorEl) errorEl.textContent = `Too many attempts. Locked for ${Math.ceil(delay / 1000)}s.`;
+      } else {
+        if (errorEl) errorEl.textContent = 'Incorrect password. Please try again.';
+      }
+      if (input) { input.value = ''; input.focus(); }
     }
   });
 }
