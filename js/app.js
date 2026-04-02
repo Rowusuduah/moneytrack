@@ -78,7 +78,7 @@ function initGDrive() {
     scope: GDRIVE_SCOPE,
     callback: resp => {
       if (resp.error) {
-        if (!_gIsAutoSync) alert('Google sign-in failed: ' + resp.error);
+        if (!_gIsAutoSync) showToast('Google sign-in failed: ' + resp.error, 'error');
         _gIsAutoSync = false;
         _gPendingOp = null;
         return;
@@ -92,11 +92,11 @@ function initGDrive() {
 
 function gWithToken(op) {
   if (!GDRIVE_CLIENT_ID) {
-    alert('Google Drive is not configured.');
+    showToast('Google Drive is not configured.', 'error');
     return;
   }
   if (typeof google === 'undefined' || !google.accounts?.oauth2) {
-    alert('Google library not loaded — check your internet connection and reload the page.');
+    showToast('Google library not loaded — check your internet connection and reload the page.', 'error');
     return;
   }
   if (!_gTokenClient) initGDrive();
@@ -178,7 +178,7 @@ function saveToDrive() {
       if (err._gStatus === 401) { saveToDrive(); return; }
       _gSetStatus('Save failed', true);
       console.error('[MoneyTrack Drive]', err);
-      alert('Save to Drive failed — check the console for details.');
+      showToast('Save to Drive failed — check the console for details.', 'error');
     }
   });
 }
@@ -192,7 +192,7 @@ function loadFromDrive() {
         fileId = await _gFindFile();
         if (!fileId) {
           _gSetStatus('');
-          alert('No MoneyTrack backup found in your Google Drive.\n\nSave from your PC first, then load on your phone.');
+          showToast('No MoneyTrack backup found in your Google Drive. Save from your PC first, then load on your phone.', 'info');
           return;
         }
         localStorage.setItem(KEY_GDRIVE_FILE, fileId);
@@ -224,7 +224,7 @@ function loadFromDrive() {
       if (err._gStatus === 401) { loadFromDrive(); return; }
       _gSetStatus('Load failed', true);
       console.error('[MoneyTrack Drive]', err);
-      alert('Load from Drive failed — check the console for details.');
+      showToast('Load from Drive failed — check the console for details.', 'error');
     }
   });
 }
@@ -322,6 +322,23 @@ let _loginAttempts    = parseInt(sessionStorage.getItem('mt_login_attempts') || 
 let _loginLockoutUntil = parseInt(sessionStorage.getItem('mt_login_lockout') || '0', 10);
 const LOGIN_MAX_ATTEMPTS  = 5;
 const LOGIN_BASE_DELAY_MS = 1000;
+
+// ─── Toast Notifications ─────────────────────────────────────────
+function showToast(message, type = 'info') {
+  let el = document.getElementById('toast-msg');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast-msg';
+    el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:8px;font-size:.88rem;z-index:9999;transition:opacity .3s;pointer-events:none;';
+    document.body.appendChild(el);
+  }
+  el.style.background = type === 'error' ? '#ef4444' : type === 'success' ? '#22c55e' : '#3b82f6';
+  el.style.color = '#fff';
+  el.textContent = message;
+  el.style.opacity = '1';
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.style.opacity = '0'; }, 3500);
+}
 
 // ─── Storage Keys ────────────────────────────────────────────────
 const KEY_SNAPSHOTS = 'moneytrack_snapshots';
@@ -1394,7 +1411,7 @@ function clearBalanceForms() {
 
 function exportSnapshots() {
   const snaps = loadSnapshots();
-  if (!snaps.length) { alert('No snapshots to export.'); return; }
+  if (!snaps.length) { showToast('No snapshots to export.', 'info'); return; }
 
   const cols = ACCOUNTS;
   const allLoansForExport = loadLoans();
@@ -2081,7 +2098,7 @@ function updateToAccountVisibility() {
 
 function exportTransactions() {
   const txns = getFilteredTxns();
-  if (!txns.length) { alert('No transactions to export for this filter.'); return; }
+  if (!txns.length) { showToast('No transactions to export for this filter.', 'info'); return; }
 
   const sorted = [...txns].sort((a, b) => a.date.localeCompare(b.date));
   const header = ['Date', 'Description', 'Type', 'Amount', 'Account', 'To Account', 'Category', 'Recurring'];
@@ -2122,7 +2139,7 @@ const PDF_STYLES_LANDSCAPE = PDF_STYLES + `@media print{@page{size:landscape;mar
 
 function openPrintWindow(title, subtitle, html, styles) {
   const w = window.open('', '_blank', 'width=900,height=700');
-  if (!w) { alert('Pop-up blocked. Please allow pop-ups for this page and try again.'); return; }
+  if (!w) { showToast('Pop-up blocked. Please allow pop-ups for this page and try again.', 'error'); return; }
   const doc = w.document;
   doc.open();
   doc.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + escapeHTML(title) + '</title>' +
@@ -2138,7 +2155,7 @@ function openPrintWindow(title, subtitle, html, styles) {
 
 function exportSnapshotsPDF() {
   const snaps = loadSnapshots();
-  if (!snaps.length) { alert('No snapshots to export.'); return; }
+  if (!snaps.length) { showToast('No snapshots to export.', 'info'); return; }
 
   const cols = ACCOUNTS;
   const allLoansForPDF = loadLoans();
@@ -2185,7 +2202,7 @@ function exportSnapshotsPDF() {
 
 function exportTransactionsPDF() {
   const txns = getFilteredTxns();
-  if (!txns.length) { alert('No transactions to export for this filter.'); return; }
+  if (!txns.length) { showToast('No transactions to export for this filter.', 'info'); return; }
 
   const sorted = [...txns].sort((a, b) => a.date.localeCompare(b.date));
 
@@ -2314,6 +2331,7 @@ function parseDiscoverCSV(lines) {
 
 function parseGenericCSV(lines) {
   const txns = [];
+  let skipped = 0;
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
     const f = parseCSVLine(lines[i]);
@@ -2328,17 +2346,17 @@ function parseGenericCSV(lines) {
     } else if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateRaw)) {
       const [m, d, y] = dateRaw.split('/');
       iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
-    } else continue;
+    } else { skipped++; continue; }
     txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: amount < 0 ? 'expense' : 'income' });
   }
-  return txns;
+  return { txns, skipped };
 }
 
 function importBankCSV(file) {
   if (!file) return;
   const defaultAccount = ACCOUNTS[0]?.id || '';
   const reader = new FileReader();
-  reader.onerror = () => alert('Failed to read CSV file.');
+  reader.onerror = () => showToast('Failed to read CSV file.', 'error');
   reader.onload = e => {
     try {
       const text   = e.target.result;
@@ -2347,10 +2365,13 @@ function importBankCSV(file) {
       const headers = parseCSVLine(lines[0]);
       if (headers.length < 3) throw new Error('CSV must have at least 3 columns (date, description, amount)');
       const format  = detectCSVFormat(headers);
-      let parsed;
+      let parsed; let skippedRows = 0;
       if (format === 'chase')         parsed = parseChaseCSV(lines);
       else if (format === 'discover') parsed = parseDiscoverCSV(lines);
-      else                             parsed = parseGenericCSV(lines);
+      else {
+        const result = parseGenericCSV(lines);
+        parsed = result.txns; skippedRows = result.skipped;
+      }
       if (!parsed.length) throw new Error('No valid transactions found in file');
 
       const existing = loadTxns();
@@ -2369,15 +2390,18 @@ function importBankCSV(file) {
         }));
 
       if (!newTxns.length) {
-        alert(`No new transactions to import (${parsed.length} already exist).`);
+        showToast(`No new transactions to import (${parsed.length} already exist).`, 'info');
         return;
       }
       if (!confirm(`Import ${newTxns.length} new transaction(s) from "${file.name}"?\n\nFormat detected: ${format.toUpperCase()}\n\nNew transactions will be assigned to "${ACCOUNT_LABELS[defaultAccount] || defaultAccount}".`)) return;
       saveTxns([...existing, ...newTxns].sort((a, b) => b.date.localeCompare(a.date)));
       renderTracker();
-      alert(`Imported ${newTxns.length} transaction(s) successfully.`);
+      showToast(`Imported ${newTxns.length} transaction(s) successfully.`, 'success');
+      if (skippedRows > 0) {
+        setTimeout(() => showToast(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped (unrecognized date format).`, 'info'), 3800);
+      }
     } catch (err) {
-      alert('Failed to import CSV: ' + err.message);
+      showToast('Failed to import CSV: ' + err.message, 'error');
     }
   };
   reader.readAsText(file);
@@ -2892,9 +2916,9 @@ function _validateRestoreData(valid, parsed) {
 
 function importBackup(file) {
   if (!file) return;
-  if (file.size > 10 * 1024 * 1024) { alert('Backup file too large (max 10MB).'); return; }
+  if (file.size > 10 * 1024 * 1024) { showToast('Backup file too large (max 10MB).', 'error'); return; }
   const reader = new FileReader();
-  reader.onerror = () => alert('Failed to read backup file.');
+  reader.onerror = () => showToast('Failed to read backup file.', 'error');
   reader.onload = e => {
     try {
       const parsed = JSON.parse(e.target.result, (k, v) => k === '__proto__' ? undefined : v);
@@ -2912,9 +2936,9 @@ function importBackup(file) {
       populateAccountSelects();
       renderBudgetCard();
       renderTracker();
-      alert('Backup restored successfully.');
+      showToast('Backup restored successfully.', 'success');
     } catch (err) {
-      alert('Failed to restore backup: ' + err.message);
+      showToast('Failed to restore backup: ' + err.message, 'error');
     }
   };
   reader.readAsText(file);
@@ -3306,6 +3330,31 @@ function bindLoginForm() {
     }
   });
 }
+
+// ─── Cross-tab Sync ──────────────────────────────────────────────
+window.addEventListener('storage', (e) => {
+  if (e.key && (e.key.startsWith('moneytrack_') || BACKUP_KEYS.includes(e.key))) {
+    // Another tab changed data — refresh
+    location.reload();
+  }
+});
+
+// ─── Idle Session Timeout ────────────────────────────────────────
+let _lastActivity = Date.now();
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+function resetIdleTimer() { _lastActivity = Date.now(); }
+
+['mousemove', 'keydown', 'click', 'touchstart'].forEach(evt => {
+  document.addEventListener(evt, resetIdleTimer, { passive: true });
+});
+
+setInterval(() => {
+  if (isAuthenticated() && Date.now() - _lastActivity > IDLE_TIMEOUT_MS) {
+    sessionStorage.removeItem(SESSION_KEY);
+    location.reload();
+  }
+}, 60000);
 
 document.addEventListener('DOMContentLoaded', () => {
   if (isAuthenticated()) {
