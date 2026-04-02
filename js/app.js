@@ -346,6 +346,21 @@ function escapeHTML(s) {
 
 function roundMoney(n) { return Math.round(n * 100) / 100; }
 
+function isValidColor(c) {
+  return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c);
+}
+function safeColor(c, fallback) {
+  return isValidColor(c) ? c : (fallback || '#888888');
+}
+
+function debounce(fn, ms) {
+  let timer;
+  return function(...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), ms);
+  };
+}
+
 // Coerces a stored value to a safe, non-negative, finite dollar amount.
 // Guards against corrupt localStorage data (strings, NaN, Infinity, negatives).
 function safeAmt(v) {
@@ -534,7 +549,7 @@ function renderAccountFields() {
     el.innerHTML = groups[g].map(a => `
       <div class="account-field-group">
         <label class="acct-label" for="bal-${a.id}">
-          <span class="acct-badge" style="background:${a.color}"></span>
+          <span class="acct-badge" style="background:${safeColor(a.color)}"></span>
           ${escapeHTML(a.label)}
         </label>
         <input type="number" id="bal-${a.id}" class="acct-input ${a.group === 'debt' ? 'debt-input' : ''}"
@@ -730,7 +745,7 @@ function renderDebtDetails() {
     if (balance > 0 && m.minPayment > 0 && monthlyRate > 0 && m.minPayment > monthlyInterest) {
       payoffMonths = Math.ceil(-Math.log(1 - (balance * monthlyRate) / m.minPayment) / Math.log(1 + monthlyRate));
       let bal = balance, paid = 0;
-      for (let i = 0; i < Math.min(payoffMonths, 600); i++) { bal = bal * (1 + monthlyRate) - m.minPayment; paid += m.minPayment; }
+      for (let i = 0; i < Math.min(payoffMonths, 600); i++) { bal = roundMoney(bal * (1 + monthlyRate) - m.minPayment); paid += m.minPayment; }
       totalInterest = roundMoney(paid - balance);
     }
 
@@ -745,7 +760,7 @@ function renderDebtDetails() {
 
     return `<div class="debt-card">
       <div class="debt-card-header">
-        <span class="acct-badge" style="background:${a.color}"></span>
+        <span class="acct-badge" style="background:${safeColor(a.color)}"></span>
         <strong>${escapeHTML(a.label)}</strong>
         <span class="debt-balance text-red">${fmt(-balance)}</span>
       </div>
@@ -883,7 +898,7 @@ function renderManageAccounts() {
 
   listEl.innerHTML = custom.map(a => `
     <div class="acct-mgmt-item">
-      <span class="acct-color-swatch" style="background:${escapeHTML(a.color)}"></span>
+      <span class="acct-color-swatch" style="background:${safeColor(a.color)}"></span>
       <span class="acct-mgmt-name">${escapeHTML(a.label)}</span>
       <span class="acct-mgmt-group">${escapeHTML(groupLabels[a.group] || a.group)}</span>
       <button class="txn-btn del" data-del-acct="${escapeHTML(a.id)}" aria-label="Remove ${escapeHTML(a.label)}">✕</button>
@@ -1515,7 +1530,7 @@ function renderCategoryBreakdown(txns) {
   el.innerHTML = sorted.map(([cat, amt]) => {
     const pct   = total > 0 ? Math.round(amt / total * 100) : 0;
     const barW  = Math.round(amt / max * 100);
-    const color = CATEGORY_COLORS[cat] || '#8a8aa6';
+    const color = safeColor(CATEGORY_COLORS[cat], '#8a8aa6');
     const budget = budgets[cat] || 0;
 
     let budgetRow = '';
@@ -1615,7 +1630,7 @@ function renderAccountBreakdown(txns) {
   el.innerHTML = `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px">By Account</div>` +
     sorted.map(([acctId, amt]) => {
       const label = ACCOUNT_LABELS[acctId] || acctId;
-      const color = ACCOUNT_COLORS[acctId] || '#8a8aa6';
+      const color = safeColor(ACCOUNT_COLORS[acctId], '#8a8aa6');
       const pct   = total > 0 ? Math.round(amt / total * 100) : 0;
       const barW  = Math.round(amt / max * 100);
       return `<div class="cat-row" style="margin-bottom:7px">
@@ -1646,7 +1661,7 @@ function renderTransactionLog(txns) {
     const color = t.type === 'income' ? 'var(--green)' : t.type === 'transfer' ? 'var(--blue)' : 'var(--red)';
     const sign  = t.type === 'income' ? '+' : t.type === 'transfer' ? '→' : '-';
     const acctLabel = ACCOUNT_LABELS[t.account] || t.account;
-    const catColor = CATEGORY_COLORS[t.category] || '#8a8aa6';
+    const catColor = safeColor(CATEGORY_COLORS[t.category], '#8a8aa6');
     return `<div class="txn-item" role="listitem" data-id="${t.id}">
       <div class="txn-dot" style="background:${color}"></div>
       <div class="txn-info">
@@ -1729,7 +1744,7 @@ function renderBudgetCard() {
     'Education','Personal Care','Miscellaneous',
   ];
   el.innerHTML = `<div class="budget-grid">${expenseCats.map(cat => {
-    const color = CATEGORY_COLORS[cat] || '#8a8aa6';
+    const color = safeColor(CATEGORY_COLORS[cat], '#8a8aa6');
     const safeId = cat.replace(/\s+/g, '_');
     return `<div class="budget-field-group">
       <label class="acct-label" for="bgt-${safeId}">
@@ -1798,7 +1813,7 @@ function renderRecurringCard() {
     <span style="font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">Monthly Fixed Expenses</span>
     <span style="font-size:18px;font-weight:800;color:var(--red)">${fmt(total)}/mo</span>
   </div>${unique.map(t => {
-    const color = CATEGORY_COLORS[t.category] || '#8a8aa6';
+    const color = safeColor(CATEGORY_COLORS[t.category], '#8a8aa6');
     return `<div class="cat-row" style="margin-bottom:6px">
       <div class="cat-label">${escapeHTML(t.description)}</div>
       <div style="flex:1"></div>
@@ -1927,7 +1942,7 @@ function renderBalanceTrends() {
   } else {
     ACCOUNTS.filter(a => a.group === balTrendGroup).forEach(a => {
       series.push({
-        label: a.label, color: a.color,
+        label: a.label, color: safeColor(a.color),
         values: last12.map(s => {
           const v = safeAmt((s.accounts || {})[a.id]);
           return a.group === 'debt' ? -v : v;
@@ -2108,11 +2123,17 @@ const PDF_STYLES_LANDSCAPE = PDF_STYLES + `@media print{@page{size:landscape;mar
 function openPrintWindow(title, subtitle, html, styles) {
   const w = window.open('', '_blank', 'width=900,height=700');
   if (!w) { alert('Pop-up blocked. Please allow pop-ups for this page and try again.'); return; }
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHTML(title)}</title><style>${styles || PDF_STYLES}</style></head><body><h1>${escapeHTML(title)}</h1><div class="sub">${escapeHTML(subtitle)}</div>${html}</body></html>`);
-  w.document.close();
-  // Use setTimeout instead of w.onload — Chrome fires load synchronously at
-  // document.close(), before the onload assignment, so the callback never runs.
-  setTimeout(() => { w.focus(); w.print(); }, 250);
+  const doc = w.document;
+  doc.open();
+  doc.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + escapeHTML(title) + '</title>' +
+    '<style>' + (styles || PDF_STYLES) + '</style></head><body>' +
+    '<h1>' + escapeHTML(title) + '</h1><div class="sub">' + escapeHTML(subtitle) + '</div></body></html>');
+  doc.close();
+  // Inject the pre-rendered HTML safely via DOM rather than document.write
+  const container = doc.createElement('div');
+  container.innerHTML = html;
+  doc.body.appendChild(container);
+  setTimeout(() => { w.focus(); w.print(); }, 300);
 }
 
 function exportSnapshotsPDF() {
