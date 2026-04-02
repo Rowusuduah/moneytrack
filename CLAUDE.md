@@ -41,7 +41,7 @@ The `ACCOUNTS` array in `js/app.js` (line 10) is the **only** place account defi
 - No `eval()`, no `innerHTML` with raw user strings
 
 ### IDs
-- Transaction IDs are generated with `Date.now()` — use `crypto.randomUUID()` if collision safety is needed
+- All entity IDs (transactions, loans, bills, goals, things) use `crypto.randomUUID()`
 
 ## Coding Conventions
 
@@ -50,16 +50,6 @@ The `ACCOUNTS` array in `js/app.js` (line 10) is the **only** place account defi
 - Dates: stored as ISO `YYYY-MM-DD` strings; use `todayISO()` for the current date; parse with `new Date(iso + 'T00:00:00')` to avoid UTC offset issues
 - CSS: use existing design tokens (`var(--green)`, `var(--surf2)`, etc.) — do not hardcode color hex values in new code
 - Inline styles in HTML: avoid adding new ones; prefer CSS classes
-
-## Known Issues (Pending Fixes)
-
-1. `#txn-account` and `#filter-account` options are hardcoded in HTML instead of being generated from `ACCOUNTS`
-2. `renderAccountKPIs`, `renderNWTrend`, and `exportSnapshots` hardcode account IDs instead of using `ACCOUNTS`
-3. `renderDailyChart` always shows 30-day buckets regardless of the active filter period
-4. `analysis-grid` uses hardcoded inline `grid-template-columns:1fr 1fr` — not responsive on mobile
-5. `resetTxnForm` hardcodes `'chase_checking'` as default — should use `ACCOUNTS[0].id`
-6. `editTransaction` uses `childNodes[0].textContent` which is fragile — needs a dedicated `<span>` for the title text
-7. No duplicate-date guard in `saveSnapshot`
 
 ## Accessibility Requirements
 
