@@ -2687,7 +2687,7 @@ function renderThingsItemGrid() {
       <div class="things-item-card">
         <div class="things-item-name">${escapeHTML(item.name)}</div>
         <span class="things-cat-badge">${escapeHTML(item.category)}</span>
-        <div class="things-unit-cost">${lastUC != null ? fmt(lastUC) + '<small style="font-size:11px;font-weight:400;color:var(--muted)">/${escapeHTML(stats.lastEntry.unit)}</small>' : '<span style="color:var(--muted);font-size:13px">No entries yet</span>'}</div>
+        <div class="things-unit-cost">${lastUC != null ? fmt(lastUC) + '<small style="font-size:11px;font-weight:400;color:var(--muted)">/' + escapeHTML(stats.lastEntry.unit) + '</small>' : '<span style="color:var(--muted);font-size:13px">No entries yet</span>'}</div>
         <div style="font-size:11px;color:var(--muted);display:flex;gap:8px;align-items:center">
           <span class="${trendClass}">${trendIcon}</span>
           <span>${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}</span>
