@@ -316,15 +316,38 @@ async function autoLoadFromDrive() {
   }
 }
 
+// Silently refresh the Google token without a popup.
+// Returns true if a fresh token is available, false otherwise.
+function _silentTokenRefresh() {
+  return new Promise(resolve => {
+    if (!_gTokenClient) { resolve(false); return; }
+    const prevCallback = _gTokenClient.callback;
+    _gTokenClient.callback = resp => {
+      _gTokenClient.callback = prevCallback;
+      if (resp.error) { resolve(false); return; }
+      _gAccessToken = resp.access_token;
+      resolve(true);
+    };
+    _gTokenClient.requestAccessToken({ prompt: '' });
+  });
+}
+
 // Debounced auto-save — queued after every data write (fires 3 s after last change).
-// Does NOT call saveToDrive/gWithToken — intentionally silent so a background save
-// never triggers a Google auth popup.
+// Silently refreshes token if expired — never triggers a visible auth popup.
+let _autoSaveRetrying = false;
 function queueDriveSync() {
-  if (!_gAccessToken) return;
+  if (!localStorage.getItem(KEY_GDRIVE_CONNECTED)) return;
   if (_driveSyncTimer) clearTimeout(_driveSyncTimer);
   _driveSyncTimer = setTimeout(async () => {
     _driveSyncTimer = null;
-    if (!_gAccessToken) return;
+    // If no token, try to silently get one
+    if (!_gAccessToken) {
+      if (!_gTokenClient) initGDrive();
+      if (_gTokenClient) {
+        const ok = await _silentTokenRefresh();
+        if (!ok) { _gSetStatus('Drive disconnected', true); return; }
+      } else { return; }
+    }
     try {
       const data = {};
       BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
@@ -337,8 +360,17 @@ function queueDriveSync() {
       if (fileId) { await _gUpdateFile(fileId, json); }
       else { fileId = await _gCreateFile(json); localStorage.setItem(KEY_GDRIVE_FILE, fileId); }
       _gSetStatus(`Auto-saved ${new Date().toLocaleTimeString()}`);
+      _autoSaveRetrying = false;
     } catch (err) {
-      if (err._gStatus === 401) { _gAccessToken = null; } // clear stale token silently
+      if (err._gStatus === 401 && !_autoSaveRetrying) {
+        // Token expired mid-request — refresh and retry once
+        _gAccessToken = null;
+        _autoSaveRetrying = true;
+        const ok = await _silentTokenRefresh();
+        if (ok) { queueDriveSync(); return; }
+        _gSetStatus('Drive disconnected', true);
+      }
+      _autoSaveRetrying = false;
       console.error('[MoneyTrack Drive auto-save]', err);
     }
   }, 3000);
