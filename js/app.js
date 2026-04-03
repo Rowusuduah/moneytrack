@@ -134,8 +134,9 @@ async function _gCreateFile(content) {
     'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
     { method: 'POST', body: form }
   );
+  if (!resp.ok) { const text = await resp.text(); throw new Error(`Drive create failed (${resp.status}): ${text}`); }
   const data = await resp.json();
-  if (!data.id) throw new Error('Drive create failed: ' + JSON.stringify(data));
+  if (!data.id) throw new Error('Drive create failed: no file ID returned');
   return data.id;
 }
 
@@ -2413,7 +2414,7 @@ function parseChaseCSV(lines) {
     if (!lines[i].trim()) continue;
     const f = parseCSVLine(lines[i]);
     const date = f[0]?.trim(); const desc = f[2]?.trim() || ''; const amount = parseFloat(f[5]);
-    if (!date || isNaN(amount)) continue;
+    if (!date || isNaN(amount) || !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(date)) continue;
     const [m, d, y] = date.split('/');
     const iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
     txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: amount < 0 ? 'expense' : 'income' });
@@ -2428,7 +2429,7 @@ function parseDiscoverCSV(lines) {
     if (!lines[i].trim()) continue;
     const f = parseCSVLine(lines[i]);
     const date = f[0]?.trim(); const desc = f[2]?.trim() || ''; const amount = parseFloat(f[3]);
-    if (!date || isNaN(amount)) continue;
+    if (!date || isNaN(amount) || !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(date)) continue;
     const [m, d, y] = date.split('/');
     const iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
     // Discover: positive = expense, negative = payment/credit
