@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'moneytrack-v11';
+const CACHE_NAME = 'moneytrack-v12';
 const APP_SHELL  = [
   './index.html',
   './css/styles.css',
@@ -27,38 +27,21 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
-// Network-first for navigation; stale-while-revalidate for assets; skip Google APIs
+// Network-first for everything; fall back to cache when offline
 self.addEventListener('fetch', e => {
   const url = e.request.url;
-  // Never intercept Google auth / Drive API calls
   if (url.includes('googleapis.com') || url.includes('accounts.google.com')) return;
   if (e.request.method !== 'GET') return;
 
-  // Navigation requests (HTML): always try network first
-  if (e.request.mode === 'navigate') {
-    e.respondWith(
-      fetch(e.request)
-        .then(response => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
-          return response;
-        })
-        .catch(() => caches.match('./index.html'))
-    );
-    return;
-  }
-
-  // Assets (CSS, JS, icons): serve cached, update in background
   e.respondWith(
-    caches.match(e.request).then(cached => {
-      const networkFetch = fetch(e.request).then(response => {
+    fetch(e.request)
+      .then(response => {
         if (response && response.status === 200 && response.type === 'basic') {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
         }
         return response;
-      });
-      return cached || networkFetch;
-    })
+      })
+      .catch(() => caches.match(e.request).then(cached => cached || caches.match('./index.html')))
   );
 });
