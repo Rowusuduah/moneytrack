@@ -147,6 +147,19 @@ async function _gUpdateFile(fileId, content) {
   }
 }
 
+// Returns the most recent date string from local snapshots/transactions
+function _getLocalDataDate() {
+  try {
+    const snaps = JSON.parse(localStorage.getItem(KEY_SNAPSHOTS) || '[]');
+    const txns  = JSON.parse(localStorage.getItem(KEY_TXNS) || '[]');
+    const dates = [
+      ...snaps.map(s => s.date),
+      ...txns.map(t => t.date),
+    ].filter(Boolean).sort();
+    return dates.length ? dates[dates.length - 1] : null;
+  } catch { return null; }
+}
+
 function _gSetStatus(msg, isError) {
   const el = document.getElementById('gdrive-status');
   if (!el) return;
@@ -214,7 +227,12 @@ function loadFromDrive() {
       if (!valid.length) throw new Error('No recognisable data found in file');
       _validateRestoreData(valid, parsed);
 
-      if (!confirm(`Load backup from ${parsed._exported || 'Google Drive'}?\n\nThis will replace all current data on this device.`)) {
+      const localDate = _getLocalDataDate();
+      const driveDate = parsed._exported || '';
+      const newerWarning = (localDate && driveDate && localDate > driveDate)
+        ? `\n\n⚠️ WARNING: Your local data (${localDate}) is NEWER than the Drive backup (${driveDate}). Loading will overwrite your recent changes!`
+        : '';
+      if (!confirm(`Load backup from ${driveDate || 'Google Drive'}?${newerWarning}\n\nThis will replace all current data on this device.`)) {
         _gSetStatus(''); return;
       }
 
@@ -243,7 +261,7 @@ function loadFromDrive() {
   });
 }
 
-// Silent auto-load on open — no confirm dialog, no alerts on failure
+// Silent auto-load on open — only loads if Drive data is newer than local data
 async function autoLoadFromDrive() {
   try {
     _gSetStatus('Syncing…');
@@ -261,6 +279,26 @@ async function autoLoadFromDrive() {
     const valid = Object.keys(parsed.data).filter(k => BACKUP_KEYS.includes(k));
     if (!valid.length) { _gSetStatus(''); return; }
     try { _validateRestoreData(valid, parsed); } catch { _gSetStatus(''); return; }
+
+    // Compare Drive backup date with local data freshness
+    const driveDate = parsed._exported || '';
+    const localDate = _getLocalDataDate();
+    if (localDate && driveDate && localDate > driveDate) {
+      // Local data is newer — push local to Drive instead of overwriting
+      _gSetStatus('Local data is newer — uploading…');
+      try {
+        const data = {};
+        BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
+        const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
+        if (fileId) { await _gUpdateFile(fileId, json); }
+        else { fileId = await _gCreateFile(json); localStorage.setItem(KEY_GDRIVE_FILE, fileId); }
+        _gSetStatus(`Uploaded local data ${new Date().toLocaleTimeString()}`);
+      } catch (upErr) {
+        console.error('[MoneyTrack Drive auto-upload]', upErr);
+        _gSetStatus('Upload failed');
+      }
+      return;
+    }
 
     valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
     initTheme();
