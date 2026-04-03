@@ -147,6 +147,40 @@ async function _gUpdateFile(fileId, content) {
   }
 }
 
+// Safety backup — saves current localStorage to a recovery key before any overwrite.
+// Keeps up to 3 rolling backups so data is always recoverable.
+const KEY_SAFETY_BACKUP = 'moneytrack_safety_backup';
+function _saveLocalSafetyBackup() {
+  try {
+    const data = {};
+    let hasData = false;
+    BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) { data[k] = v; hasData = true; } });
+    if (!hasData) return;
+    const backup = { _saved: new Date().toISOString(), data };
+    const existing = JSON.parse(localStorage.getItem(KEY_SAFETY_BACKUP) || '[]');
+    existing.unshift(backup);
+    // Keep only 3 most recent safety backups
+    while (existing.length > 3) existing.pop();
+    localStorage.setItem(KEY_SAFETY_BACKUP, JSON.stringify(existing));
+  } catch (e) { console.warn('[MoneyTrack] Safety backup failed:', e); }
+}
+
+// Restore from safety backup (called manually from console if needed)
+// Usage: restoreSafetyBackup(0) for most recent, 1 for second, etc.
+function restoreSafetyBackup(index = 0) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(KEY_SAFETY_BACKUP) || '[]');
+    if (!existing[index]) { console.error('No safety backup at index', index); return false; }
+    const backup = existing[index];
+    console.log('Restoring safety backup from:', backup._saved);
+    Object.entries(backup.data).forEach(([k, v]) => localStorage.setItem(k, v));
+    location.reload();
+    return true;
+  } catch (e) { console.error('Safety restore failed:', e); return false; }
+}
+// Expose globally so it can be called from browser console
+window.restoreSafetyBackup = restoreSafetyBackup;
+
 // Returns the most recent date string from local snapshots/transactions
 function _getLocalDataDate() {
   try {
@@ -236,6 +270,7 @@ function loadFromDrive() {
         _gSetStatus(''); return;
       }
 
+      _saveLocalSafetyBackup();
       valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
       localStorage.setItem(KEY_GDRIVE_CONNECTED, '1');
       initTheme();
@@ -300,6 +335,7 @@ async function autoLoadFromDrive() {
       return;
     }
 
+    _saveLocalSafetyBackup();
     valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
     initTheme();
     refreshAccountConfig();
@@ -2997,6 +3033,7 @@ function importBackup(file) {
       if (!valid.length) throw new Error('No recognizable data found in file');
       _validateRestoreData(valid, parsed);
       if (!confirm(`Restore backup from ${parsed._exported || 'unknown date'}?\n\nThis will overwrite your current data. Make sure you have a backup of what you have now.`)) return;
+      _saveLocalSafetyBackup();
       valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
       initTheme();
       refreshAccountConfig();
