@@ -57,6 +57,9 @@ const CATEGORY_COLORS = {
   'Education':       '#fbbf24', 'Personal Care': '#a78bfa', 'Miscellaneous':'#8a8aa6',
 };
 
+// Categories that move money between accounts — not real spending
+const NON_EXPENSE_CATS = new Set(['Savings Transfer', 'Investment', 'Loan Payment']);
+
 // ─── Google Drive Sync ───────────────────────────────────────────
 const GDRIVE_CLIENT_ID    = '394124622094-3cj4ho2ipp3m6pm0un09tg9knelhfqtu.apps.googleusercontent.com';
 const GDRIVE_SCOPE        = 'https://www.googleapis.com/auth/drive.file';
@@ -1138,7 +1141,7 @@ function computeSavingsRate3Month() {
       return td.getFullYear() === y && td.getMonth() === m;
     });
     const income   = mt.filter(t => t.type === 'income').reduce((s, t) => s + safeAmt(t.amount), 0);
-    const expenses = mt.filter(t => t.type === 'expense').reduce((s, t) => s + safeAmt(t.amount), 0);
+    const expenses = mt.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category)).reduce((s, t) => s + safeAmt(t.amount), 0);
     return income > 0 ? (income - expenses) / income : null;
   });
   const valid = rates.filter(r => r !== null);
@@ -1164,7 +1167,7 @@ function renderFinancialRatios() {
   const monthlyExpenses = last3.map(({ y, m }) =>
     txns.filter(t => {
       const td = new Date(t.date + 'T00:00:00');
-      return td.getFullYear() === y && td.getMonth() === m && t.type === 'expense';
+      return td.getFullYear() === y && td.getMonth() === m && t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category);
     }).reduce((s, t) => s + safeAmt(t.amount), 0)
   );
   const activeExpMonths = monthlyExpenses.filter(e => e > 0).length || 1;
@@ -1363,7 +1366,7 @@ function renderSavingsGoals() {
       const rates = last3.map(({ y, m }) => {
         const mt = txns.filter(t => { const td = new Date(t.date + 'T00:00:00'); return td.getFullYear() === y && td.getMonth() === m; });
         const inc = mt.filter(t => t.type === 'income').reduce((s, t) => s + safeAmt(t.amount), 0);
-        const exp = mt.filter(t => t.type === 'expense').reduce((s, t) => s + safeAmt(t.amount), 0);
+        const exp = mt.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category)).reduce((s, t) => s + safeAmt(t.amount), 0);
         return inc > 0 ? inc - exp : null;
       }).filter(r => r !== null);
       return rates.length ? rates.reduce((s, r) => s + r, 0) / rates.length : 0;
@@ -1605,7 +1608,7 @@ function renderTrackerSummary(txns) {
   txns.forEach(t => {
     // Transfers excluded — internal moves don't affect income or expense totals
     if (t.type === 'income')       income  += safeAmt(t.amount);
-    else if (t.type === 'expense') expense += safeAmt(t.amount);
+    else if (t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category)) expense += safeAmt(t.amount);
   });
   income  = roundMoney(income);
   expense = roundMoney(expense);
@@ -1636,8 +1639,8 @@ function renderCategoryBreakdown(txns) {
   const el = document.getElementById('cat-breakdown');
   if (!el) return;
 
-  // Only expenses
-  const expenses = txns.filter(t => t.type === 'expense');
+  // Only real expenses (exclude savings/investment/loan transfers)
+  const expenses = txns.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category));
   if (!expenses.length) {
     el.innerHTML = `<div class="empty-state" style="padding:20px 0"><div style="font-size:24px">📂</div><div>No expense data for this period.</div></div>`;
     return;
@@ -1689,7 +1692,7 @@ function renderDailyChart(txns) {
   const labelEl = document.getElementById('daily-period-label');
   if (!el) return;
 
-  const expenses = txns.filter(t => t.type === 'expense');
+  const expenses = txns.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category));
 
   // Build day buckets aligned to the active filter period
   const today = new Date(); today.setHours(0,0,0,0);
@@ -1746,7 +1749,7 @@ function renderAccountBreakdown(txns) {
   const el = document.getElementById('account-breakdown');
   if (!el) return;
 
-  const expenses = txns.filter(t => t.type === 'expense');
+  const expenses = txns.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category));
   if (!expenses.length) { el.innerHTML = ''; return; }
 
   const totals = {};
@@ -1833,7 +1836,7 @@ function renderMonthlyTrends() {
     const bucket = months.find(m => m.year === d.getFullYear() && m.month === d.getMonth());
     if (!bucket) return;
     if (t.type === 'income')       bucket.income  += safeAmt(t.amount);
-    else if (t.type === 'expense') bucket.expense += safeAmt(t.amount);
+    else if (t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category)) bucket.expense += safeAmt(t.amount);
   });
 
   el.innerHTML = `<div style="overflow-x:auto"><table class="history-table">
