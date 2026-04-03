@@ -52,13 +52,13 @@ const CATEGORY_COLORS = {
   'Clothing':        '#a78bfa', 'Electronics':   '#a78bfa', 'Amazon':      '#a78bfa',
   'Streaming':       '#2dd4bf', 'Events':        '#2dd4bf', 'Hobbies':     '#2dd4bf',
   'Tithe':           '#e879f9', 'Family Support':'#e879f9', 'Donations':   '#e879f9',
-  'Savings Transfer':'#4ade80', 'Investment':    '#4ade80', 'Loan Payment':'#f87171',
+  'Savings Transfer':'#4ade80', 'Bill Reserve':'#60a5fa', 'Investment':'#4ade80', 'Loan Payment':'#f87171',
   'Bank Fee':        '#f87171', 'Subscriptions': '#fb923c',
   'Education':       '#fbbf24', 'Personal Care': '#a78bfa', 'Miscellaneous':'#8a8aa6',
 };
 
 // Categories that move money between accounts — not real spending
-const NON_EXPENSE_CATS = new Set(['Savings Transfer', 'Investment', 'Loan Payment']);
+const NON_EXPENSE_CATS = new Set(['Savings Transfer', 'Bill Reserve', 'Investment', 'Loan Payment']);
 
 // ─── Google Drive Sync ───────────────────────────────────────────
 const GDRIVE_CLIENT_ID    = '394124622094-3cj4ho2ipp3m6pm0un09tg9knelhfqtu.apps.googleusercontent.com';
