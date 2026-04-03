@@ -1924,7 +1924,7 @@ function renderRecurringCard() {
   const el = document.getElementById('recurring-summary');
   if (!el) return;
   const all = loadTxns();
-  const recExpenses = all.filter(t => t.type === 'expense' && t.recurring === 'monthly' && safeAmt(t.amount) > 0);
+  const recExpenses = all.filter(t => t.type === 'expense' && t.recurring === 'monthly' && safeAmt(t.amount) > 0 && !NON_EXPENSE_CATS.has(t.category));
   const card = document.getElementById('recurring-card');
   if (!recExpenses.length) {
     el.innerHTML = '';
