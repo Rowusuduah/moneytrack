@@ -54,6 +54,10 @@
               aria-controls="sec-tracker" tabindex="-1">
         Tracker
       </button>
+      <button role="tab" id="tab-analysis" aria-selected="false"
+              aria-controls="sec-analysis" tabindex="-1">
+        Analysis
+      </button>
       <button role="tab" id="tab-things" aria-selected="false"
               aria-controls="sec-things" tabindex="-1">
         Things
@@ -501,6 +505,67 @@
         <div id="txn-list" class="txn-list" role="list" aria-live="polite">
           <!-- Rendered by JS -->
         </div>
+      </div>
+
+    </section>
+
+    <!-- ══ ANALYSIS TAB ══════════════════════════════════════════ -->
+    <section id="sec-analysis" role="tabpanel"
+             aria-labelledby="tab-analysis" class="sec">
+
+      <h1 class="section-title">Analysis</h1>
+      <p class="section-sub">Insights across your accounts and spending, week by week, month by month, year by year.</p>
+
+      <!-- Period controls -->
+      <div class="an-controls">
+        <div class="an-modes" role="group" aria-label="Analysis period type">
+          <button class="an-mode" data-mode="week">Week</button>
+          <button class="an-mode on" data-mode="month">Month</button>
+          <button class="an-mode" data-mode="year">Year</button>
+        </div>
+        <div class="an-nav">
+          <button class="an-arrow" id="an-prev" aria-label="Previous period">‹</button>
+          <span class="an-period-label" id="an-period-label" aria-live="polite"></span>
+          <button class="an-arrow" id="an-next" aria-label="Next period">›</button>
+        </div>
+      </div>
+
+      <!-- Scorecard -->
+      <div class="tracker-summary" id="an-scorecard" aria-live="polite">
+        <!-- Rendered by JS -->
+      </div>
+
+      <div class="analysis-grid">
+        <div class="card">
+          <div class="card-title">Spending Rhythm
+            <span id="an-rhythm-label" style="font-weight:400;font-size:11px;color:var(--muted)"></span>
+          </div>
+          <div class="daily-chart an-rhythm" id="an-rhythm" aria-hidden="true"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Category Movers
+            <span style="font-weight:400;font-size:11px;color:var(--muted)">vs previous period</span>
+          </div>
+          <div id="an-movers"></div>
+        </div>
+      </div>
+
+      <div class="analysis-grid">
+        <div class="card">
+          <div class="card-title">Biggest Expenses</div>
+          <div id="an-biggest"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Accounts Pulse
+            <span style="font-weight:400;font-size:11px;color:var(--muted)">from snapshots</span>
+          </div>
+          <div id="an-pulse"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Smart Insights</div>
+        <div id="an-insights" aria-live="polite"></div>
       </div>
 
     </section>
