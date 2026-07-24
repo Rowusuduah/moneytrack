@@ -518,6 +518,10 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 .an-pulse-row:last-child { border-bottom: none; }
 .an-pulse-label { font-size: 12px; color: var(--muted); font-weight: 600; }
 .an-pulse-value { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.an-pulse-value .an-delta { margin-right: 6px; font-size: 10px; }
+.an-pulse-net { border-top: 1px solid var(--brig); }
+.an-pulse-net .an-pulse-label { color: var(--text); }
+.an-pulse-net .an-pulse-value { font-size: 16px; }
 
 .an-insight {
   display: flex; gap: 10px; align-items: flex-start;

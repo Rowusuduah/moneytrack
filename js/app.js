@@ -3146,12 +3146,33 @@ function renderAnalysisTab() {
   document.querySelectorAll('.an-mode').forEach(b =>
     b.classList.toggle('on', b.dataset.mode === analysisState.mode));
 
+  const snaps = loadSnapshots().slice().sort((a, b) => a.date.localeCompare(b.date));
+  const loans = loadLoans();
+  const snapPair = anSnapPair(snaps, curP.start, curP.end);
+
   renderAnalysisScorecard(cur, prev);
   renderAnalysisRhythm(cur, curP.start, curP.end);
   renderAnalysisMovers(cur, prev);
   renderAnalysisBiggest(cur);
-  renderAnalysisPulse(curP.start, curP.end, cur);
-  renderAnalysisInsights(cur, prev, curP.start, curP.end);
+  renderAnalysisPulse(snapPair, loans, cur);
+  renderAnalysisInsights(cur, prev, curP.start, curP.end, snapPair);
+}
+
+// Latest snapshot at/just before the period start, and latest within the period.
+function anSnapPair(snaps, start, end) {
+  const s = anISO(start), e = anISO(end);
+  const before = snaps.filter(x => x.date < s);
+  const inP    = snaps.filter(x => x.date >= s && x.date <= e);
+  const startSnap = before.length ? before[before.length - 1] : (inP.length ? inP[0] : null);
+  const endSnap   = inP.length ? inP[inP.length - 1] : startSnap;
+  return { startSnap, endSnap };
+}
+
+// Sum a snapshot's balances by account group.
+function anGroupTotals(snap) {
+  const b = (snap && snap.accounts) || {};
+  const sum = g => roundMoney(ACCOUNTS.filter(a => a.group === g).reduce((s, a) => s + safeAmt(b[a.id]), 0));
+  return { checking: sum('checking'), savings: sum('savings'), investment: sum('investment'), debt: sum('debt') };
 }
 
 function renderAnalysisScorecard(cur, prev) {
@@ -3281,16 +3302,10 @@ function renderAnalysisBiggest(cur) {
   </div>`).join('');
 }
 
-function renderAnalysisPulse(start, end, cur) {
+function renderAnalysisPulse(snapPair, loans, cur) {
   const el = document.getElementById('an-pulse');
   if (!el) return;
-  const snaps = loadSnapshots().slice().sort((a, b) => a.date.localeCompare(b.date));
-  const loans = loadLoans();
-  const s = anISO(start), e = anISO(end);
-  const before = snaps.filter(x => x.date < s);
-  const inP    = snaps.filter(x => x.date >= s && x.date <= e);
-  const startSnap = before.length ? before[before.length - 1] : (inP.length ? inP[0] : null);
-  const endSnap   = inP.length ? inP[inP.length - 1] : startSnap;
+  const { startSnap, endSnap } = snapPair;
 
   const savedMoved = roundMoney(cur
     .filter(t => t.type === 'expense' && (t.category === 'Savings Transfer' || t.category === 'Investment'))
@@ -3305,28 +3320,49 @@ function renderAnalysisPulse(start, end, cur) {
   const nwEnd   = calcNetWorth(endSnap, loans, endSnap.date);
   const diff    = roundMoney(nwEnd - nwStart);
   const sameSnap = startSnap.date === endSnap.date;
+  const gStart = anGroupTotals(startSnap);
+  const gEnd   = anGroupTotals(endSnap);
 
-  const rows = [
-    { label: `Net worth (${fmtDate(endSnap.date)})`, value: fmt(nwEnd), color: 'var(--text)' },
-    sameSnap ? null : {
-      label: `Change since ${fmtDate(startSnap.date)}`,
-      value: (diff >= 0 ? '+' : '') + fmt(diff),
-      color: diff >= 0 ? 'var(--green)' : 'var(--red)',
-    },
-    { label: 'Moved to savings & investments', value: fmt(savedMoved), color: savedMoved > 0 ? 'var(--green)' : 'var(--muted)' },
-  ].filter(Boolean);
+  // Per-group rows: end balance + change over the period (debt down = good)
+  const groups = [
+    { key: 'checking',   label: 'Checking',    goodWhenUp: true },
+    { key: 'savings',    label: 'Savings',     goodWhenUp: true },
+    { key: 'investment', label: 'Investments', goodWhenUp: true },
+    { key: 'debt',       label: 'Debt',        goodWhenUp: false },
+  ];
+  const groupRows = groups.map(g => {
+    const endVal = gEnd[g.key];
+    const change = roundMoney(endVal - gStart[g.key]);
+    let badge = '';
+    if (!sameSnap && change !== 0) {
+      const good = (change > 0) === g.goodWhenUp;
+      badge = `<span class="an-delta ${good ? 'good' : 'bad'}">${change > 0 ? '▲' : '▼'} ${fmt(Math.abs(change))}</span>`;
+    }
+    if (g.key === 'debt' && endVal === 0 && gStart[g.key] === 0) return '';
+    return `<div class="an-pulse-row">
+      <div class="an-pulse-label">${g.label}</div>
+      <div class="an-pulse-value">${badge} ${fmt(endVal)}</div>
+    </div>`;
+  }).join('');
+
+  const nwRows = `<div class="an-pulse-row an-pulse-net">
+    <div class="an-pulse-label">Net worth (${fmtDate(endSnap.date)})</div>
+    <div class="an-pulse-value">${sameSnap ? '' : `<span class="an-delta ${diff >= 0 ? 'good' : 'bad'}">${diff >= 0 ? '▲' : '▼'} ${fmt(Math.abs(diff))}</span>`} ${fmt(nwEnd)}</div>
+  </div>`;
+
+  const movedRow = `<div class="an-pulse-row">
+    <div class="an-pulse-label">Moved to savings &amp; investments</div>
+    <div class="an-pulse-value" style="color:${savedMoved > 0 ? 'var(--green)' : 'var(--muted)'}">${fmt(savedMoved)}</div>
+  </div>`;
 
   const note = sameSnap
     ? '<div style="font-size:11px;color:var(--muted);margin-top:8px">Only one snapshot in range — save snapshots regularly to see change over time.</div>'
-    : '';
+    : `<div style="font-size:11px;color:var(--muted);margin-top:8px">Change measured between your ${fmtDate(startSnap.date)} and ${fmtDate(endSnap.date)} snapshots.</div>`;
 
-  el.innerHTML = rows.map(r => `<div class="an-pulse-row">
-    <div class="an-pulse-label">${r.label}</div>
-    <div class="an-pulse-value" style="color:${r.color}">${r.value}</div>
-  </div>`).join('') + note;
+  el.innerHTML = groupRows + nwRows + movedRow + note;
 }
 
-function renderAnalysisInsights(cur, prev, start, end) {
+function renderAnalysisInsights(cur, prev, start, end, snapPair) {
   const el = document.getElementById('an-insights');
   if (!el) return;
   if (!cur.length) { el.innerHTML = anEmpty('No transactions this period yet.'); return; }
@@ -3389,6 +3425,47 @@ function renderAnalysisInsights(cur, prev, start, end) {
     insights.push({ icon: '🏦', html: `You moved <b>${fmt(saved)}</b> into savings & investments — ${Math.round(saved / c.income * 100)}% of your income.` });
   }
 
+  // Account growth from snapshots (only when the period has two distinct snapshots)
+  if (snapPair && snapPair.startSnap && snapPair.endSnap && snapPair.startSnap.date !== snapPair.endSnap.date) {
+    const gs = anGroupTotals(snapPair.startSnap);
+    const ge = anGroupTotals(snapPair.endSnap);
+
+    const savGrowth = roundMoney(ge.savings - gs.savings);
+    if (savGrowth > 0) {
+      const pct = gs.savings > 0 ? ` (+${Math.round(savGrowth / gs.savings * 100)}%)` : '';
+      insights.push({ icon: '💰', html: `Your savings balance grew <b>${fmt(savGrowth)}</b>${pct} this ${mode}.` });
+    } else if (savGrowth < 0) {
+      insights.push({ icon: '📉', html: `Your savings balance dropped <b>${fmt(Math.abs(savGrowth))}</b> this ${mode}.` });
+    }
+
+    const invGrowth = roundMoney(ge.investment - gs.investment);
+    if (invGrowth > 0) {
+      const pct = gs.investment > 0 ? ` (+${Math.round(invGrowth / gs.investment * 100)}%)` : '';
+      insights.push({ icon: '📊', html: `Investments grew <b>${fmt(invGrowth)}</b>${pct} this ${mode}.` });
+    }
+
+    const debtChange = roundMoney(ge.debt - gs.debt);
+    if (debtChange < 0) {
+      insights.push({ icon: '🎯', html: `You paid down <b>${fmt(Math.abs(debtChange))}</b> of debt this ${mode}.` });
+    } else if (debtChange > 0) {
+      insights.push({ icon: '⚠️', html: `Debt increased by <b>${fmt(debtChange)}</b> this ${mode}.` });
+    }
+
+    // Which single account moved the most
+    const bs = snapPair.startSnap.accounts || {}, be = snapPair.endSnap.accounts || {};
+    let topAcct = null, topMove = 0;
+    ACCOUNTS.forEach(a => {
+      if (a.group === 'debt') return;
+      const mv = roundMoney(safeAmt(be[a.id]) - safeAmt(bs[a.id]));
+      if (Math.abs(mv) > Math.abs(topMove)) { topMove = mv; topAcct = a; }
+    });
+    if (topAcct && Math.abs(topMove) >= 50) {
+      insights.push(topMove > 0
+        ? { icon: '🚀', html: `<b>${escapeHTML(topAcct.label)}</b> grew the most — up ${fmt(topMove)}.` }
+        : { icon: '🔻', html: `<b>${escapeHTML(topAcct.label)}</b> dropped the most — down ${fmt(Math.abs(topMove))}.` });
+    }
+  }
+
   // Subscriptions total
   const subs = expenses.filter(t => t.category === 'Subscriptions');
   if (subs.length >= 2) {
@@ -3431,7 +3508,7 @@ function renderAnalysisInsights(cur, prev, start, end) {
   }
 
   el.innerHTML = insights.length
-    ? insights.slice(0, 7).map(i => `<div class="an-insight"><span class="an-insight-icon" aria-hidden="true">${i.icon}</span><div>${i.html}</div></div>`).join('')
+    ? insights.slice(0, 9).map(i => `<div class="an-insight"><span class="an-insight-icon" aria-hidden="true">${i.icon}</span><div>${i.html}</div></div>`).join('')
     : anEmpty('Not enough data for insights yet — add more transactions.');
 }
 
