@@ -3062,10 +3062,384 @@ function importBackup(file) {
   reader.readAsText(file);
 }
 
+// ─── Analysis Tab ─────────────────────────────────────────────────
+const analysisState = { mode: 'month', offset: 0 };
+
+function anISO(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function anEmpty(msg) {
+  return `<div class="empty-state" style="padding:16px 0"><div style="font-size:24px">📊</div><div>${escapeHTML(msg)}</div></div>`;
+}
+
+// offset 0 = current period, -1 = previous, etc. Weeks start Sunday.
+function analysisPeriod(mode, offset) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let start, end, label;
+  if (mode === 'week') {
+    start = new Date(today);
+    start.setDate(today.getDate() - today.getDay() + offset * 7);
+    end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    const f = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    label = `${f(start)} – ${f(end)}, ${end.getFullYear()}`;
+  } else if (mode === 'year') {
+    const y = today.getFullYear() + offset;
+    start = new Date(y, 0, 1);
+    end   = new Date(y, 11, 31);
+    label = String(y);
+  } else {
+    start = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    end   = new Date(start.getFullYear(), start.getMonth() + 1, 0);
+    label = start.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+  return { start, end, label };
+}
+
+function anTxnsBetween(txns, start, end) {
+  const s = anISO(start), e = anISO(end);
+  return txns.filter(t => t.date >= s && t.date <= e);
+}
+
+function anRealExpenses(txns) {
+  return txns.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category));
+}
+
+function anPeriodTotals(txns) {
+  let income = 0, expense = 0;
+  txns.forEach(t => {
+    if (t.type === 'income') income += safeAmt(t.amount);
+    else if (t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category)) expense += safeAmt(t.amount);
+  });
+  income  = roundMoney(income);
+  expense = roundMoney(expense);
+  const net  = roundMoney(income - expense);
+  const rate = income > 0 ? Math.round(net / income * 100) : null;
+  return { income, expense, net, rate };
+}
+
+function anPctDelta(cur, prev) {
+  if (!(prev > 0)) return null;
+  return Math.round((cur - prev) / prev * 100);
+}
+
+function anDeltaBadge(delta, goodWhenUp, suffix = '%') {
+  if (delta === null || !isFinite(delta)) return '<span class="an-delta muted">—</span>';
+  if (delta === 0) return `<span class="an-delta muted">· 0${suffix}</span>`;
+  const up  = delta > 0;
+  const cls = (up === goodWhenUp) ? 'good' : 'bad';
+  return `<span class="an-delta ${cls}">${up ? '▲' : '▼'} ${Math.abs(delta)}${suffix}</span>`;
+}
+
+function renderAnalysisTab() {
+  const allTxns = loadTxns();
+  const curP  = analysisPeriod(analysisState.mode, analysisState.offset);
+  const prevP = analysisPeriod(analysisState.mode, analysisState.offset - 1);
+  const cur   = anTxnsBetween(allTxns, curP.start, curP.end);
+  const prev  = anTxnsBetween(allTxns, prevP.start, prevP.end);
+
+  const lbl = document.getElementById('an-period-label');
+  if (lbl) lbl.textContent = curP.label;
+  const nextBtn = document.getElementById('an-next');
+  if (nextBtn) nextBtn.disabled = analysisState.offset >= 0;
+  document.querySelectorAll('.an-mode').forEach(b =>
+    b.classList.toggle('on', b.dataset.mode === analysisState.mode));
+
+  renderAnalysisScorecard(cur, prev);
+  renderAnalysisRhythm(cur, curP.start, curP.end);
+  renderAnalysisMovers(cur, prev);
+  renderAnalysisBiggest(cur);
+  renderAnalysisPulse(curP.start, curP.end, cur);
+  renderAnalysisInsights(cur, prev, curP.start, curP.end);
+}
+
+function renderAnalysisScorecard(cur, prev) {
+  const el = document.getElementById('an-scorecard');
+  if (!el) return;
+  const c = anPeriodTotals(cur), p = anPeriodTotals(prev);
+  const rateDelta = (c.rate !== null && p.rate !== null) ? c.rate - p.rate : null;
+  const cards = [
+    { label: 'Money In',  value: fmt(c.income),  color: 'var(--green)',
+      badge: anDeltaBadge(anPctDelta(c.income, p.income), true) },
+    { label: 'Money Out', value: fmt(c.expense), color: 'var(--red)',
+      badge: anDeltaBadge(anPctDelta(c.expense, p.expense), false) },
+    { label: 'Net',       value: fmt(c.net),
+      color: c.net >= 0 ? 'var(--green)' : 'var(--red)',
+      badge: anDeltaBadge(anPctDelta(c.net, p.net), true) },
+    { label: 'Saved',     value: c.rate === null ? '—' : c.rate + '%',
+      color: c.rate === null ? 'var(--muted)' : c.rate >= 20 ? 'var(--green)' : c.rate >= 0 ? 'var(--gold)' : 'var(--red)',
+      badge: anDeltaBadge(rateDelta, true, ' pts') },
+  ];
+  el.innerHTML = cards.map(k => `<div class="ts-card">
+    <div class="ts-label">${k.label}</div>
+    <div class="ts-value" style="color:${k.color}">${k.value}</div>
+    <div class="an-badge-row">${k.badge}</div>
+  </div>`).join('');
+}
+
+function renderAnalysisRhythm(cur, start, end) {
+  const el  = document.getElementById('an-rhythm');
+  const cap = document.getElementById('an-rhythm-label');
+  if (!el) return;
+  const mode = analysisState.mode;
+  const expenses = anRealExpenses(cur);
+  const buckets = [];
+
+  if (mode === 'week') {
+    const d = new Date(start);
+    while (d <= end) {
+      buckets.push({ key: anISO(d), label: d.toLocaleDateString('en-US', { weekday: 'short' }), total: 0 });
+      d.setDate(d.getDate() + 1);
+    }
+    expenses.forEach(t => {
+      const b = buckets.find(x => x.key === t.date);
+      if (b) b.total += safeAmt(t.amount);
+    });
+    if (cap) cap.textContent = 'day by day';
+  } else if (mode === 'month') {
+    let ws = new Date(start), i = 1;
+    while (ws <= end) {
+      const we = new Date(ws);
+      we.setDate(ws.getDate() + (6 - ws.getDay()));
+      if (we > end) we.setTime(end.getTime());
+      buckets.push({ from: anISO(ws), to: anISO(we), label: 'W' + i, total: 0 });
+      ws = new Date(we);
+      ws.setDate(we.getDate() + 1);
+      i++;
+    }
+    expenses.forEach(t => {
+      const b = buckets.find(x => t.date >= x.from && t.date <= x.to);
+      if (b) b.total += safeAmt(t.amount);
+    });
+    if (cap) cap.textContent = 'week by week';
+  } else {
+    const y = start.getFullYear();
+    for (let m = 0; m < 12; m++) {
+      buckets.push({ label: new Date(y, m, 1).toLocaleDateString('en-US', { month: 'short' }), total: 0 });
+    }
+    expenses.forEach(t => {
+      const m = parseInt(t.date.slice(5, 7), 10) - 1;
+      if (buckets[m]) buckets[m].total += safeAmt(t.amount);
+    });
+    if (cap) cap.textContent = 'month by month';
+  }
+
+  const max = Math.max(...buckets.map(b => b.total), 1);
+  el.innerHTML = buckets.map(b => {
+    const h = Math.max(2, Math.round(b.total / max * 60));
+    return `<div class="day-col" title="${escapeHTML(b.label)}: ${fmt(b.total)}">
+      <div class="an-bar-amt">${b.total > 0 ? fmtShort(b.total) : ''}</div>
+      <div class="day-bar" style="height:${h}px;opacity:${b.total > 0 ? '.85' : '.2'}"></div>
+      <div class="day-lbl">${escapeHTML(b.label)}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderAnalysisMovers(cur, prev) {
+  const el = document.getElementById('an-movers');
+  if (!el) return;
+  const sums = txs => {
+    const m = {};
+    anRealExpenses(txs).forEach(t => { m[t.category] = (m[t.category] || 0) + safeAmt(t.amount); });
+    return m;
+  };
+  const c = sums(cur), p = sums(prev);
+  const entries = Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  if (!entries.length) { el.innerHTML = anEmpty('No spending this period.'); return; }
+  const max = entries[0][1] || 1;
+  el.innerHTML = entries.map(([cat, amt]) => {
+    const prevAmt = p[cat] || 0;
+    const badge = prevAmt === 0
+      ? '<span class="an-delta muted">new</span>'
+      : anDeltaBadge(anPctDelta(amt, prevAmt), false);
+    const color = safeColor(CATEGORY_COLORS[cat], '#8a8aa6');
+    return `<div class="cat-row">
+      <div class="cat-label">${escapeHTML(cat)}</div>
+      <div class="cat-bar-wrap"><div class="cat-bar" style="width:${Math.round(amt / max * 100)}%;background:${color}"></div></div>
+      <div class="cat-amount">${fmt(amt)}</div>
+      <div class="an-delta-cell">${badge}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderAnalysisBiggest(cur) {
+  const el = document.getElementById('an-biggest');
+  if (!el) return;
+  const top = anRealExpenses(cur)
+    .slice()
+    .sort((a, b) => safeAmt(b.amount) - safeAmt(a.amount))
+    .slice(0, 5);
+  if (!top.length) { el.innerHTML = anEmpty('No expenses this period.'); return; }
+  el.innerHTML = top.map((t, i) => `<div class="an-big-row">
+    <div class="an-big-rank">${i + 1}</div>
+    <div class="an-big-main">
+      <div class="an-big-desc">${escapeHTML(t.description)}</div>
+      <div class="an-big-meta">${fmtDate(t.date)} · ${escapeHTML(t.category)}</div>
+    </div>
+    <div class="an-big-amt">${fmt(safeAmt(t.amount))}</div>
+  </div>`).join('');
+}
+
+function renderAnalysisPulse(start, end, cur) {
+  const el = document.getElementById('an-pulse');
+  if (!el) return;
+  const snaps = loadSnapshots().slice().sort((a, b) => a.date.localeCompare(b.date));
+  const loans = loadLoans();
+  const s = anISO(start), e = anISO(end);
+  const before = snaps.filter(x => x.date < s);
+  const inP    = snaps.filter(x => x.date >= s && x.date <= e);
+  const startSnap = before.length ? before[before.length - 1] : (inP.length ? inP[0] : null);
+  const endSnap   = inP.length ? inP[inP.length - 1] : startSnap;
+
+  const savedMoved = roundMoney(cur
+    .filter(t => t.type === 'expense' && (t.category === 'Savings Transfer' || t.category === 'Investment'))
+    .reduce((sum, t) => sum + safeAmt(t.amount), 0));
+
+  if (!endSnap) {
+    el.innerHTML = anEmpty('No account snapshots yet — save one on the Accounts tab.');
+    return;
+  }
+
+  const nwStart = calcNetWorth(startSnap, loans, startSnap.date);
+  const nwEnd   = calcNetWorth(endSnap, loans, endSnap.date);
+  const diff    = roundMoney(nwEnd - nwStart);
+  const sameSnap = startSnap.date === endSnap.date;
+
+  const rows = [
+    { label: `Net worth (${fmtDate(endSnap.date)})`, value: fmt(nwEnd), color: 'var(--text)' },
+    sameSnap ? null : {
+      label: `Change since ${fmtDate(startSnap.date)}`,
+      value: (diff >= 0 ? '+' : '') + fmt(diff),
+      color: diff >= 0 ? 'var(--green)' : 'var(--red)',
+    },
+    { label: 'Moved to savings & investments', value: fmt(savedMoved), color: savedMoved > 0 ? 'var(--green)' : 'var(--muted)' },
+  ].filter(Boolean);
+
+  const note = sameSnap
+    ? '<div style="font-size:11px;color:var(--muted);margin-top:8px">Only one snapshot in range — save snapshots regularly to see change over time.</div>'
+    : '';
+
+  el.innerHTML = rows.map(r => `<div class="an-pulse-row">
+    <div class="an-pulse-label">${r.label}</div>
+    <div class="an-pulse-value" style="color:${r.color}">${r.value}</div>
+  </div>`).join('') + note;
+}
+
+function renderAnalysisInsights(cur, prev, start, end) {
+  const el = document.getElementById('an-insights');
+  if (!el) return;
+  if (!cur.length) { el.innerHTML = anEmpty('No transactions this period yet.'); return; }
+
+  const mode = analysisState.mode;
+  const c = anPeriodTotals(cur), p = anPeriodTotals(prev);
+  const expenses = anRealExpenses(cur);
+  const insights = [];
+
+  // Top category share
+  const catTotals = {};
+  expenses.forEach(t => { catTotals[t.category] = (catTotals[t.category] || 0) + safeAmt(t.amount); });
+  const sortedCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
+  if (sortedCats.length && c.expense > 0) {
+    const [cat, amt] = sortedCats[0];
+    insights.push({ icon: '🏆', html: `<b>${escapeHTML(cat)}</b> was your biggest spending category — ${fmt(roundMoney(amt))} (${Math.round(amt / c.expense * 100)}% of the total).` });
+  }
+
+  // Fastest-growing category vs previous period (needs ≥ $20 baseline)
+  const prevCatTotals = {};
+  anRealExpenses(prev).forEach(t => { prevCatTotals[t.category] = (prevCatTotals[t.category] || 0) + safeAmt(t.amount); });
+  let growCat = null, growPct = 0;
+  Object.entries(catTotals).forEach(([cat, amt]) => {
+    const pa = prevCatTotals[cat] || 0;
+    if (pa >= 20 && amt > pa) {
+      const g = (amt - pa) / pa * 100;
+      if (g > growPct) { growPct = g; growCat = cat; }
+    }
+  });
+  if (growCat && growPct >= 15) {
+    insights.push({ icon: '📈', html: `<b>${escapeHTML(growCat)}</b> is growing fastest — up ${Math.round(growPct)}% vs the previous ${mode}.` });
+  }
+
+  // Spending pace projection (only for the current, unfinished month/year)
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (analysisState.offset === 0 && mode !== 'week' && today >= start && today <= end && c.expense > 0) {
+    const daysSoFar = Math.floor((today - start) / 86400000) + 1;
+    const daysTotal = Math.floor((end - start) / 86400000) + 1;
+    if (daysSoFar >= 3 && daysSoFar < daysTotal) {
+      const projected = roundMoney(c.expense / daysSoFar * daysTotal);
+      insights.push({ icon: '⏱️', html: `You're on pace to spend <b>${fmt(projected)}</b> this ${mode} (${fmt(roundMoney(c.expense / daysSoFar))}/day so far).` });
+    }
+  }
+
+  // Savings rate vs previous period
+  if (c.rate !== null && p.rate !== null && c.rate !== p.rate) {
+    const d = c.rate - p.rate;
+    insights.push(d > 0
+      ? { icon: '💪', html: `Savings rate of <b>${c.rate}%</b> beat the previous ${mode} by ${d} points.` }
+      : { icon: '⚠️', html: `Savings rate slipped to <b>${c.rate}%</b> — down ${Math.abs(d)} points from the previous ${mode}.` });
+  } else if (c.rate !== null && c.rate >= 20) {
+    insights.push({ icon: '💪', html: `You kept <b>${c.rate}%</b> of your income this ${mode} — above the 20% guideline.` });
+  }
+
+  // Money moved to savings & investments
+  const saved = roundMoney(cur
+    .filter(t => t.type === 'expense' && (t.category === 'Savings Transfer' || t.category === 'Investment'))
+    .reduce((sum, t) => sum + safeAmt(t.amount), 0));
+  if (saved > 0 && c.income > 0) {
+    insights.push({ icon: '🏦', html: `You moved <b>${fmt(saved)}</b> into savings & investments — ${Math.round(saved / c.income * 100)}% of your income.` });
+  }
+
+  // Subscriptions total
+  const subs = expenses.filter(t => t.category === 'Subscriptions');
+  if (subs.length >= 2) {
+    const subTotal = roundMoney(subs.reduce((sum, t) => sum + safeAmt(t.amount), 0));
+    insights.push({ icon: '🔁', html: `Subscriptions cost <b>${fmt(subTotal)}</b> across ${subs.length} charges this ${mode}.` });
+  }
+
+  // Highest-spend day of week
+  if (mode !== 'week' && expenses.length >= 5) {
+    const dow = [0, 0, 0, 0, 0, 0, 0];
+    expenses.forEach(t => { dow[new Date(t.date + 'T00:00:00').getDay()] += safeAmt(t.amount); });
+    const maxI = dow.indexOf(Math.max(...dow));
+    const names = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
+    if (dow[maxI] > 0) {
+      insights.push({ icon: '📅', html: `You spend the most on <b>${names[maxI]}</b> (${fmt(roundMoney(dow[maxI]))} this ${mode}).` });
+    }
+  }
+
+  // Eating out vs groceries
+  const eatOut = roundMoney(expenses
+    .filter(t => t.category === 'Dining Out' || t.category === 'Fast Food' || t.category === 'Food Delivery')
+    .reduce((sum, t) => sum + safeAmt(t.amount), 0));
+  const groceries = roundMoney(expenses
+    .filter(t => t.category === 'Groceries')
+    .reduce((sum, t) => sum + safeAmt(t.amount), 0));
+  if (eatOut > 0 && groceries > 0 && eatOut > groceries) {
+    insights.push({ icon: '🍔', html: `Eating out cost <b>${fmt(eatOut)}</b> vs ${fmt(groceries)} on groceries — ${(eatOut / groceries).toFixed(1)}× more.` });
+  }
+
+  // No-spend days (week/month, capped at today for the current period)
+  if (mode !== 'year') {
+    const endCap = (analysisState.offset === 0 && today >= start && today < end) ? today : end;
+    const spendDays = new Set(expenses.map(t => t.date));
+    let totalDays = 0;
+    for (let d = new Date(start); d <= endCap; d.setDate(d.getDate() + 1)) totalDays++;
+    const zero = totalDays - spendDays.size;
+    if (totalDays > 0 && zero > 0) {
+      insights.push({ icon: '🧘', html: `<b>${zero} of ${totalDays}</b> days so far were no-spend days.` });
+    }
+  }
+
+  el.innerHTML = insights.length
+    ? insights.slice(0, 7).map(i => `<div class="an-insight"><span class="an-insight-icon" aria-hidden="true">${i.icon}</span><div>${i.html}</div></div>`).join('')
+    : anEmpty('Not enough data for insights yet — add more transactions.');
+}
+
 // ─── Tab Switching ────────────────────────────────────────────────
 const TABS = [
   { tabId: 'tab-accounts', secId: 'sec-accounts' },
   { tabId: 'tab-tracker',  secId: 'sec-tracker'  },
+  { tabId: 'tab-analysis', secId: 'sec-analysis' },
   { tabId: 'tab-things',   secId: 'sec-things'   },
 ];
 
@@ -3082,6 +3456,7 @@ function switchTab(targetTabId) {
 
   if (targetTabId === 'tab-accounts') renderAccountsTab();
   if (targetTabId === 'tab-tracker')  renderTracker();
+  if (targetTabId === 'tab-analysis') renderAnalysisTab();
   if (targetTabId === 'tab-things')   renderThingsTab();
 }
 
@@ -3141,6 +3516,30 @@ function bindEvents() {
 
   // Theme toggle
   document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
+
+  // Analysis tab period controls
+  const anControls = document.querySelector('#sec-analysis .an-controls');
+  if (anControls && !anControls._delegated) {
+    anControls._delegated = true;
+    anControls.addEventListener('click', e => {
+      const modeBtn = e.target.closest('.an-mode');
+      if (modeBtn) {
+        analysisState.mode = modeBtn.dataset.mode;
+        analysisState.offset = 0;
+        renderAnalysisTab();
+        return;
+      }
+      if (e.target.closest('#an-prev')) {
+        analysisState.offset--;
+        renderAnalysisTab();
+        return;
+      }
+      if (e.target.closest('#an-next') && analysisState.offset < 0) {
+        analysisState.offset++;
+        renderAnalysisTab();
+      }
+    });
+  }
 
   // Accounts tab
   document.getElementById('save-snapshot')?.addEventListener('click', saveSnapshot);

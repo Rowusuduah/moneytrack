@@ -461,6 +461,72 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
   margin-bottom: 16px;
 }
 
+/* ─── Analysis Tab ───────────────────────────────────────────── */
+.an-controls {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.an-modes {
+  display: flex; gap: 2px; padding: 3px;
+  background: var(--surf2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.an-mode {
+  border: none; background: transparent; color: var(--muted);
+  font-size: 12px; font-weight: 700; padding: 6px 16px; border-radius: 6px;
+}
+.an-mode.on { background: var(--surf); color: var(--text); box-shadow: var(--shadow); }
+.an-nav { display: flex; align-items: center; gap: 10px; }
+.an-arrow {
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surf2);
+  color: var(--text); font-size: 16px; line-height: 1;
+}
+.an-arrow:disabled { opacity: .35; cursor: default; }
+.an-period-label { font-size: 13px; font-weight: 700; min-width: 150px; text-align: center; }
+
+.an-badge-row { margin-top: 4px; min-height: 14px; }
+.an-delta { font-size: 10px; font-weight: 700; white-space: nowrap; }
+.an-delta.good  { color: var(--green); }
+.an-delta.bad   { color: var(--red); }
+.an-delta.muted { color: var(--muted); }
+.an-delta-cell  { min-width: 52px; text-align: right; }
+
+.an-rhythm { height: 96px; }
+.an-bar-amt { font-size: 8px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.an-big-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.an-big-row:last-child { border-bottom: none; }
+.an-big-rank {
+  width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+  background: var(--surf2); color: var(--muted);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800;
+}
+.an-big-main { flex: 1; min-width: 0; }
+.an-big-desc { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.an-big-meta { font-size: 10px; color: var(--muted); }
+.an-big-amt { font-size: 13px; font-weight: 800; color: var(--red); font-variant-numeric: tabular-nums; }
+
+.an-pulse-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.an-pulse-row:last-child { border-bottom: none; }
+.an-pulse-label { font-size: 12px; color: var(--muted); font-weight: 600; }
+.an-pulse-value { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+.an-insight {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 9px 0; border-bottom: 1px solid var(--border);
+  font-size: 12.5px; line-height: 1.55;
+}
+.an-insight:last-child { border-bottom: none; }
+.an-insight-icon { font-size: 15px; flex-shrink: 0; }
+
 /* ─── Budget vs Actual ───────────────────────────────────────── */
 .budget-row {
   display: flex; align-items: center; gap: 8px;
