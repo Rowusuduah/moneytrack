@@ -292,6 +292,7 @@ function loadFromDrive() {
       populateAccountSelects();
       renderBudgetCard();
       renderTracker();
+      renderAnalysisTab();
       _driveLoadRetries = 0;
       _gSetStatus(`Loaded ${parsed._exported || ''}`);
     } catch (err) {
@@ -356,6 +357,7 @@ async function autoLoadFromDrive() {
     populateAccountSelects();
     renderBudgetCard();
     renderTracker();
+    renderAnalysisTab();
     _gSetStatus(`Synced ${parsed._exported || ''}`);
   } catch (err) {
     if (err._gStatus === 401) { _gAccessToken = null; _gSetStatus(''); return; }
@@ -3054,6 +3056,7 @@ function importBackup(file) {
       populateAccountSelects();
       renderBudgetCard();
       renderTracker();
+      renderAnalysisTab();
       showToast('Backup restored successfully.', 'success');
     } catch (err) {
       showToast('Failed to restore backup: ' + err.message, 'error');
