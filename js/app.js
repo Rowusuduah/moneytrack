@@ -57,8 +57,9 @@ const CATEGORY_COLORS = {
   'Education':       '#fbbf24', 'Personal Care': '#a78bfa', 'Miscellaneous':'#8a8aa6',
 };
 
-// Categories that move money between accounts — not real spending
-const NON_EXPENSE_CATS = new Set(['Savings Transfer', 'Bill Reserve', 'Investment', 'Loan Payment']);
+// Categories excluded from expense totals. Savings Transfer and Investment
+// deliberately count as money out (user preference) — only these two stay excluded.
+const NON_EXPENSE_CATS = new Set(['Bill Reserve', 'Loan Payment']);
 
 // ─── Google Drive Sync ───────────────────────────────────────────
 const GDRIVE_CLIENT_ID    = '394124622094-3cj4ho2ipp3m6pm0un09tg9knelhfqtu.apps.googleusercontent.com';
