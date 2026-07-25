@@ -62,6 +62,10 @@
               aria-controls="sec-things" tabindex="-1">
         Things
       </button>
+      <button role="tab" id="tab-wealth" aria-selected="false"
+              aria-controls="sec-wealth" tabindex="-1">
+        Wealth
+      </button>
     </div>
 
     <button id="theme-toggle" aria-label="Toggle light/dark theme">☀️</button>
@@ -604,9 +608,69 @@
       <datalist id="things-unit-list"></datalist>
 
     </section>
+
+    <!-- ══ WEALTH TAB ═══════════════════════════════════════ -->
+    <section id="sec-wealth" role="tabpanel"
+             aria-labelledby="tab-wealth" class="sec">
+
+      <h1 class="section-title">Wealth</h1>
+      <p class="section-sub" id="wl-month-sub"></p>
+
+      <div class="card" id="wl-header" aria-live="polite"><!-- Rendered by JS --></div>
+
+      <div class="card">
+        <div class="card-title">Allocation status
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">this month, from your transactions</span>
+        </div>
+        <div id="wl-board" aria-live="polite"><!-- Rendered by JS --></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Savings this month</div>
+        <div id="wl-savings" aria-live="polite"><!-- Rendered by JS --></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Milestones
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">from your latest snapshot</span>
+        </div>
+        <div id="wl-ladder"><!-- Rendered by JS --></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Savings studio
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">what-if only — the live target stays in the plan</span>
+        </div>
+        <div class="wl-studio-read">
+          <span id="wl-st-grade" class="wl-grade" aria-live="polite"></span>
+          <div>
+            <div id="wl-st-title" style="font-weight:600"></div>
+            <p id="wl-st-verdict" class="wl-sub"></p>
+          </div>
+        </div>
+        <label class="wl-sl-lab" for="wl-sl-save">Monthly savings <span id="wl-st-save"></span></label>
+        <input type="range" id="wl-sl-save" min="600" max="3200" step="25" value="3000">
+        <div class="wl-corr" id="wl-corr" aria-hidden="true"></div>
+        <div class="wl-corr-key" id="wl-corr-key"></div>
+        <div class="wl-proj-head">
+          <div><div class="wl-proj-val" id="wl-proj-total"></div><div class="wl-sub" id="wl-proj-cap"></div></div>
+          <div class="wl-sub" style="text-align:right">You contribute<br><b id="wl-proj-contrib"></b></div>
+        </div>
+        <svg id="wl-chart" viewBox="0 0 620 210" style="width:100%;height:auto;display:block" aria-hidden="true"></svg>
+        <div class="wl-ctrl-grid">
+          <label class="wl-sl-lab" for="wl-sl-ret">Real return <span id="wl-st-ret"></span></label>
+          <label class="wl-sl-lab" for="wl-sl-yrs">Years <span id="wl-st-yrs"></span></label>
+          <input type="range" id="wl-sl-ret" min="3" max="10" step="0.5" value="6.7">
+          <input type="range" id="wl-sl-yrs" min="5" max="35" step="1" value="30">
+        </div>
+      </div>
+
+      <div class="card" id="wl-footer"><!-- Rendered by JS --></div>
+    </section>
   </main>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="js/app.js" defer></script>
+  <script src="js/wealth.js"></script>
 </body>
 </html>

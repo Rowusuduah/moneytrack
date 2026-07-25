@@ -3521,6 +3521,7 @@ const TABS = [
   { tabId: 'tab-tracker',  secId: 'sec-tracker'  },
   { tabId: 'tab-analysis', secId: 'sec-analysis' },
   { tabId: 'tab-things',   secId: 'sec-things'   },
+  { tabId: 'tab-wealth',   secId: 'sec-wealth'   },
 ];
 
 function switchTab(targetTabId) {
@@ -3538,6 +3539,7 @@ function switchTab(targetTabId) {
   if (targetTabId === 'tab-tracker')  renderTracker();
   if (targetTabId === 'tab-analysis') renderAnalysisTab();
   if (targetTabId === 'tab-things')   renderThingsTab();
+  if (targetTabId === 'tab-wealth')   renderWealthTab();
 }
 
 // ─── Theme Toggle ────────────────────────────────────────────────

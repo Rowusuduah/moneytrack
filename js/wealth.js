@@ -188,3 +188,54 @@ function wlProject(savMo, retPct, years) {
   const contrib = savMo * n + PLAN.kMo * n;
   return { total, contrib, growth: total - contrib, fundM };
 }
+
+/* ── Renderers (browser only — app.js globals allowed from here down) ── */
+
+const WL_MONTHS = ['January','February','March','April','May','June',
+  'July','August','September','October','November','December'];
+
+function renderWealthTab() {
+  const txns  = loadTxns();
+  const today = todayISO();
+  const agg   = wlAggregate(txns, today);
+  const pay   = wlPaydays(PLAN.payAnchor, today);
+  renderWlHeader(agg, pay, today);
+  renderWlBoard(agg);
+  renderWlSavings(agg, pay);
+  renderWlLadder();
+  bindWlStudio();
+  renderWlStudio();
+  renderWlFooter(agg);
+}
+
+function renderWlHeader(agg, pay, today) {
+  const d = new Date(today + 'T00:00:00');
+  const sub = document.getElementById('wl-month-sub');
+  if (sub) sub.textContent = WL_MONTHS[d.getMonth()] + ' ' + d.getFullYear() +
+    ' · plan target ' + fmt(PLAN.savingsTargetMo) + '/mo saved';
+  const el = document.getElementById('wl-header');
+  if (!el) return;
+  let html =
+    '<div class="wl-head-line"><b>' + agg.paychecksLanded + ' of ' + pay.expected +
+    '</b> paychecks landed · <b>' + fmt(agg.netLanded) + '</b> net so far</div>';
+  if (pay.expected === 3) {
+    html += '<div class="wl-callout">Third-paycheck month — an extra ' +
+      fmt(PLAN.netPerCheck) + ' lands on top of the plan. The plan says sweep it to savings.</div>';
+  }
+  if (agg.paychecksLanded < pay.dueByToday) {
+    html += '<div class="wl-callout">Heads up: ' + pay.dueByToday +
+      ' payday(s) have passed this month but only ' + agg.paychecksLanded +
+      ' Paycheck transaction(s) are logged.</div>';
+  }
+  el.innerHTML = html;
+}
+
+// Filled in Task 4
+function renderWlBoard(agg) {}
+function renderWlSavings(agg, pay) {}
+// Filled in Task 5
+function renderWlLadder() {}
+function renderWlFooter(agg) {}
+// Filled in Task 6
+function bindWlStudio() {}
+function renderWlStudio() {}
