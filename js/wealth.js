@@ -413,10 +413,139 @@ function renderWlSavings(agg, pay, bounds) {
   el.innerHTML = wlRowHTML('Saved (Savings Transfer + Investment)', target, saved, '') +
     '<p class="wl-sub" style="margin-top:8px">' + escapeHTML(note) + '</p>';
 }
-// Filled in v2 Task 3
-function renderWlPace(txns, bounds) {}
-function renderWlVariance(agg, bounds) {}
-function renderWlSavingsTrend(txns, today) {}
+// Spending pace. Week/Month/Year: cumulative actual (green under pace, red
+// over) vs a dashed straight budget-pace line. Day: last 14 days as daily
+// columns vs the daily budget line (txns carry no time of day).
+function renderWlPace(txns, bounds) {
+  const svg = document.getElementById('wl-pace');
+  const cap = document.getElementById('wl-pace-cap');
+  if (!svg) return;
+  const W = 620, H = 180, L = 46, R = 12, T = 12, B = 22;
+  const kFmt = n => n >= 1000 ? '$' + (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : '$' + Math.round(n);
+  let g = '';
+
+  if (bounds.mode === 'day') {
+    const endD = new Date(bounds.endIso + 'T00:00:00');
+    const startD = new Date(endD); startD.setDate(endD.getDate() - 13);
+    const series = wlPaceSeries(txns, { startIso: wlIsoLocal(startD), endIso: bounds.endIso });
+    const budget = wlSpendBudget('day');
+    const max = Math.max(budget * 1.5, ...series.days.map(d => d.total)) || 1;
+    const n = series.days.length;
+    const bw = (W - L - R) / n;
+    const Y = v => H - B - (v / max) * (H - T - B);
+    series.days.forEach((d2, i) => {
+      const x = L + i * bw;
+      const over = d2.total > budget;
+      if (d2.total > 0) {
+        g += '<rect x="' + (x + 2).toFixed(1) + '" y="' + Y(d2.total).toFixed(1) +
+          '" width="' + (bw - 4).toFixed(1) + '" height="' + (H - B - Y(d2.total)).toFixed(1) +
+          '" class="wl-ch-col' + (over ? ' over' : '') + '"/>';
+      }
+      if (i % 2 === 1) {
+        const dd = new Date(d2.iso + 'T00:00:00');
+        g += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) +
+          '" fill="currentColor" opacity="0.55" font-size="9" text-anchor="middle">' +
+          WL_MON3[dd.getMonth()] + ' ' + dd.getDate() + '</text>';
+      }
+    });
+    g += '<line x1="' + L + '" y1="' + Y(budget).toFixed(1) + '" x2="' + (W - R) +
+      '" y2="' + Y(budget).toFixed(1) + '" class="wl-ch-target"/>';
+    const spentToday = series.days[n - 1].total;
+    if (cap) cap.textContent = 'Last 14 days · today ' + fmt(spentToday) + ' vs ' +
+      fmt(budget) + '/day budget' + (spentToday > budget ? ' — over' : '');
+  } else {
+    const series = wlPaceSeries(txns, bounds);
+    const budget = wlSpendBudget(bounds.mode);
+    const n = series.cumulative.length;
+    const upto = Math.min(Math.max(1, bounds.daysElapsed), n);
+    const actual = series.cumulative[upto - 1] || 0;
+    const max = (Math.max(budget, actual) * 1.05) || 1;
+    const X = i => L + (i / Math.max(1, n - 1)) * (W - L - R);
+    const Y = v => H - B - (v / max) * (H - T - B);
+    for (let i = 0; i <= 3; i++) {
+      const v = max * i / 3, y = Y(v);
+      g += '<line x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (W - R) + '" y2="' + y.toFixed(1) +
+        '" stroke="currentColor" opacity="0.12"/>';
+      g += '<text x="' + (L - 6) + '" y="' + (y + 3.5).toFixed(1) + '" fill="currentColor" opacity="0.55" ' +
+        'font-size="9" text-anchor="end">' + kFmt(v) + '</text>';
+    }
+    g += '<line x1="' + X(0).toFixed(1) + '" y1="' + Y(0).toFixed(1) + '" x2="' + X(n - 1).toFixed(1) +
+      '" y2="' + Y(budget).toFixed(1) + '" class="wl-ch-pace"/>';
+    for (let i = 1; i < upto; i++) {
+      const paceHere = budget * i / Math.max(1, n - 1);
+      const cls = series.cumulative[i] > paceHere ? 'wl-ch-over' : 'wl-ch-under';
+      g += '<line x1="' + X(i - 1).toFixed(1) + '" y1="' + Y(series.cumulative[i - 1]).toFixed(1) +
+        '" x2="' + X(i).toFixed(1) + '" y2="' + Y(series.cumulative[i]).toFixed(1) +
+        '" class="' + cls + '"/>';
+    }
+    const paceToDate = wlRound(budget * bounds.daysElapsed / bounds.daysTotal);
+    const delta = wlRound(actual - paceToDate);
+    if (cap) cap.textContent = fmt(actual) + ' spent · pace says ' + fmt(paceToDate) +
+      ' by day ' + bounds.daysElapsed + ' of ' + bounds.daysTotal + ' — ' +
+      (delta > 0 ? 'over pace by ' + fmt(delta) : 'under pace by ' + fmt(-delta));
+  }
+  svg.innerHTML = g;
+}
+
+// Plan vs. actual: one bar per group, worst overspend first. Bar scale is
+// 0–200% of allocation (the 100% reference sits mid-track); ▸ marks >200%.
+function renderWlVariance(agg, bounds) {
+  const el = document.getElementById('wl-variance');
+  if (!el) return;
+  const rows = PLAN.groups.map(g => ({
+    label: g.label,
+    alloc: wlRound(g.monthly * bounds.factor),
+    spent: agg.groups[g.id] || 0,
+  }));
+  rows.push({ label: 'Daily living', alloc: wlRound(wlDailyLivingMo() * bounds.factor),
+    spent: agg.groups.living || 0 });
+  rows.forEach(r => { r.delta = wlRound(r.spent - r.alloc); });
+  rows.sort((a, b) => b.delta - a.delta);
+  el.innerHTML = rows.map(r => {
+    const ratio = r.alloc > 0 ? r.spent / r.alloc : (r.spent > 0 ? 2.01 : 0);
+    const over = r.delta > 0.005;
+    const width = Math.min(100, ratio * 50);
+    return '<div class="wl-varrow">' +
+      '<span class="wl-var-label">' + escapeHTML(r.label) + '</span>' +
+      '<span class="wl-var-track"><i class="wl-var-fill' + (over ? ' over' : '') +
+      '" style="width:' + width.toFixed(1) + '%"></i><i class="wl-var-ref"></i>' +
+      (ratio > 2 ? '<b class="wl-var-clip">▸</b>' : '') + '</span>' +
+      '<span class="wl-var-delta' + (over ? ' over' : '') + '">' +
+      (over ? '+' + fmt(r.delta) + ' over' : fmt(-r.delta) + ' under') + '</span>' +
+      '</div>';
+  }).join('');
+}
+
+// Last 6 months of savings vs the monthly target line. Always monthly.
+function renderWlSavingsTrend(txns, today) {
+  const svg = document.getElementById('wl-sav-trend');
+  if (!svg) return;
+  const months = wlSavingsByMonth(txns, today, 6);
+  const target = PLAN.savingsTargetMo;
+  const max = Math.max(target * 1.25, ...months.map(m => m.total)) || 1;
+  const W = 620, H = 150, L = 46, R = 12, T = 10, B = 22;
+  const bw = (W - L - R) / months.length;
+  const Y = v => H - B - (v / max) * (H - T - B);
+  let g = '';
+  months.forEach((m, i) => {
+    const x = L + i * bw;
+    const met = m.total >= target;
+    if (m.total > 0) {
+      g += '<rect x="' + (x + bw * 0.18).toFixed(1) + '" y="' + Y(m.total).toFixed(1) +
+        '" width="' + (bw * 0.64).toFixed(1) + '" height="' + Math.max(0, H - B - Y(m.total)).toFixed(1) +
+        '" class="wl-ch-col' + (met ? '' : ' short') + '"/>';
+      g += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (Y(m.total) - 4).toFixed(1) +
+        '" fill="currentColor" opacity="0.7" font-size="9" text-anchor="middle">' + wlM0(m.total) + '</text>';
+    }
+    g += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) +
+      '" fill="currentColor" opacity="0.55" font-size="9" text-anchor="middle">' + m.label + '</text>';
+  });
+  g += '<line x1="' + L + '" y1="' + Y(target).toFixed(1) + '" x2="' + (W - R) +
+    '" y2="' + Y(target).toFixed(1) + '" class="wl-ch-target"/>';
+  g += '<text x="' + (W - R) + '" y="' + (Y(target) - 4).toFixed(1) +
+    '" fill="currentColor" opacity="0.7" font-size="9" text-anchor="end">target ' + wlM0(target) + '</text>';
+  svg.innerHTML = g;
+}
 
 // Filled in Task 5
 function wlSavingsTotal(snap) {
