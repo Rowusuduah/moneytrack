@@ -618,6 +618,19 @@
 
       <div class="card" id="wl-header" aria-live="polite"><!-- Rendered by JS --></div>
 
+      <div class="wl-mode" id="wl-toggle" role="group" aria-label="Time window">
+        <button type="button" data-wlv="day"   aria-pressed="false">Day</button>
+        <button type="button" data-wlv="week"  aria-pressed="false">Week</button>
+        <button type="button" data-wlv="month" aria-pressed="true" class="on">Month</button>
+        <button type="button" data-wlv="year"  aria-pressed="false">Year</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Spending pace</div>
+        <svg id="wl-pace" viewBox="0 0 620 180" style="width:100%;height:auto;display:block" aria-hidden="true"></svg>
+        <p class="wl-sub" id="wl-pace-cap" aria-live="polite"></p>
+      </div>
+
       <div class="card">
         <div class="card-title">Allocation status
           <span style="font-weight:400;font-size:11px;color:var(--muted)">this month, from your transactions</span>
@@ -626,8 +639,16 @@
       </div>
 
       <div class="card">
-        <div class="card-title">Savings this month</div>
+        <div class="card-title">Plan vs. actual
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">sorted worst first</span>
+        </div>
+        <div id="wl-variance" aria-live="polite"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Savings</div>
         <div id="wl-savings" aria-live="polite"><!-- Rendered by JS --></div>
+        <svg id="wl-sav-trend" viewBox="0 0 620 150" style="width:100%;height:auto;display:block;margin-top:14px" aria-hidden="true"></svg>
       </div>
 
       <div class="card">

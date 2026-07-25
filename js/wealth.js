@@ -285,38 +285,72 @@ function wlProject(savMo, retPct, years) {
 const WL_MONTHS = ['January','February','March','April','May','June',
   'July','August','September','October','November','December'];
 
+let wlView = 'month';   // 'day' | 'week' | 'month' | 'year' — resets each load
+
+function bindWlToggle() {
+  const el = document.getElementById('wl-toggle');
+  if (!el || el._wlToggleBound) return;
+  el._wlToggleBound = true;
+  el.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-wlv]');
+    if (!btn) return;
+    wlView = btn.dataset.wlv;
+    renderWealthTab();
+  });
+}
+
+function renderWlToggle() {
+  document.querySelectorAll('#wl-toggle button[data-wlv]').forEach(b => {
+    const on = b.dataset.wlv === wlView;
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.classList.toggle('on', on);
+  });
+}
+
 function renderWealthTab() {
-  const txns  = loadTxns();
-  const today = todayISO();
-  const agg   = wlAggregate(txns, today);
-  const pay   = wlPaydays(PLAN.payAnchor, today);
-  renderWlHeader(agg, pay, today);
-  renderWlBoard(agg);
-  renderWlSavings(agg, pay);
+  const txns   = loadTxns();
+  const today  = todayISO();
+  const bounds = wlWindowBounds(wlView, today);
+  const agg    = wlAggregateRange(txns, bounds.startIso, bounds.endIso);
+  const pay    = wlPaydays(PLAN.payAnchor, today);
+  bindWlToggle();
+  renderWlToggle();
+  renderWlHeader(agg, pay, today, bounds);
+  renderWlPace(txns, bounds);
+  renderWlBoard(agg, bounds);
+  renderWlVariance(agg, bounds);
+  renderWlSavings(agg, pay, bounds);
+  renderWlSavingsTrend(txns, today);
   renderWlLadder();
   bindWlStudio();
   renderWlStudio();
   renderWlFooter(agg);
 }
 
-function renderWlHeader(agg, pay, today) {
-  const d = new Date(today + 'T00:00:00');
+function renderWlHeader(agg, pay, today, bounds) {
   const sub = document.getElementById('wl-month-sub');
-  if (sub) sub.textContent = WL_MONTHS[d.getMonth()] + ' ' + d.getFullYear() +
+  if (sub) sub.textContent = bounds.label +
     ' · plan target ' + fmt(PLAN.savingsTargetMo) + '/mo saved';
   const el = document.getElementById('wl-header');
   if (!el) return;
-  let html =
-    '<div class="wl-head-line"><b>' + agg.paychecksLanded + ' of ' + pay.expected +
-    '</b> paychecks landed · <b>' + fmt(agg.netLanded) + '</b> net so far</div>';
-  if (pay.expected === 3) {
-    html += '<div class="wl-callout">Third-paycheck month — an extra ' +
-      fmt(PLAN.netPerCheck) + ' lands on top of the plan. The plan says sweep it to savings.</div>';
-  }
-  if (agg.paychecksLanded < pay.dueByToday) {
-    html += '<div class="wl-callout">Heads up: ' + pay.dueByToday +
-      ' payday(s) have passed this month but only ' + agg.paychecksLanded +
-      ' Paycheck transaction(s) are logged.</div>';
+  let html;
+  if (bounds.mode === 'month') {
+    html = '<div class="wl-head-line"><b>' + agg.paychecksLanded + ' of ' + pay.expected +
+      '</b> paychecks landed · <b>' + fmt(agg.netLanded) + '</b> net so far</div>';
+    if (pay.expected === 3) {
+      html += '<div class="wl-callout">Third-paycheck month — an extra ' +
+        fmt(PLAN.netPerCheck) + ' lands on top of the plan. The plan says sweep it to savings.</div>';
+    }
+    if (agg.paychecksLanded < pay.dueByToday) {
+      html += '<div class="wl-callout">Heads up: ' + pay.dueByToday +
+        ' payday(s) have passed this month but only ' + agg.paychecksLanded +
+        ' Paycheck transaction(s) are logged.</div>';
+    }
+  } else if (bounds.mode === 'year') {
+    html = '<div class="wl-head-line"><b>' + agg.paychecksLanded +
+      '</b> paychecks landed · <b>' + fmt(agg.netLanded) + '</b> net so far this year</div>';
+  } else {
+    html = '<div class="wl-head-line"><b>' + fmt(agg.netLanded) + '</b> net landed</div>';
   }
   el.innerHTML = html;
 }
@@ -343,38 +377,47 @@ function wlRowHTML(label, alloc, spent, chipsHTML) {
     '</div>';
 }
 
-function renderWlBoard(agg) {
+function renderWlBoard(agg, bounds) {
   const el = document.getElementById('wl-board');
   if (!el) return;
   let html = '';
   PLAN.groups.forEach(g => {
-    const chips = g.bills.map(b => {
+    const chips = bounds.mode !== 'month' ? '' : g.bills.map(b => {
       const paid = agg.bills[b.id];
       return paid
         ? '<span class="wl-chip paid">' + escapeHTML(b.label) + ' ✓ paid ' + fmtDate(paid.lastDate) + '</span>'
         : '<span class="wl-chip">' + escapeHTML(b.label) + ' — due</span>';
     }).join('');
-    html += wlRowHTML(g.label, g.monthly, agg.groups[g.id] || 0, chips);
+    html += wlRowHTML(g.label, wlRound(g.monthly * bounds.factor), agg.groups[g.id] || 0, chips);
   });
-  html += wlRowHTML('Daily living', wlDailyLivingMo(), agg.groups.living || 0, '');
+  html += wlRowHTML('Daily living', wlRound(wlDailyLivingMo() * bounds.factor), agg.groups.living || 0, '');
   el.innerHTML = html;
 }
 
-function renderWlSavings(agg, pay) {
+function renderWlSavings(agg, pay, bounds) {
   const el = document.getElementById('wl-savings');
   if (!el) return;
-  const target = PLAN.savingsTargetMo;
+  const target = wlRound(PLAN.savingsTargetMo * bounds.factor);
   const saved  = agg.savingsThisMonth;
   const toGo   = wlRound(Math.max(0, target - saved));
-  const pending = pay.expected - agg.paychecksLanded;
   let note;
   if (saved >= target) note = 'Target hit. Anything more is ahead of plan.';
-  else note = fmt(toGo) + ' to go' + (pending > 0
-    ? ' · ' + pending + ' paycheck' + (pending > 1 ? 's' : '') + ' still to land'
-    : ' · all paychecks landed — this month will close short unless you top up');
+  else if (bounds.mode === 'month') {
+    const pending = pay.expected - agg.paychecksLanded;
+    note = fmt(toGo) + ' to go' + (pending > 0
+      ? ' · ' + pending + ' paycheck' + (pending > 1 ? 's' : '') + ' still to land'
+      : ' · all paychecks landed — this month will close short unless you top up');
+  } else {
+    note = fmt(toGo) + ' to go this ' + (bounds.mode === 'day' ? 'day' : bounds.mode);
+  }
   el.innerHTML = wlRowHTML('Saved (Savings Transfer + Investment)', target, saved, '') +
     '<p class="wl-sub" style="margin-top:8px">' + escapeHTML(note) + '</p>';
 }
+// Filled in v2 Task 3
+function renderWlPace(txns, bounds) {}
+function renderWlVariance(agg, bounds) {}
+function renderWlSavingsTrend(txns, today) {}
+
 // Filled in Task 5
 function wlSavingsTotal(snap) {
   const b = (snap && snap.accounts) || {};
