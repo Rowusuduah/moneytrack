@@ -34,7 +34,7 @@ No new dependencies. No build tooling. No new localStorage keys (Drive backup/re
 
 A single object holding, at minimum:
 
-- `netPerCheck: 2778.95`, `payAnchor` (ISO date of any one real payday — **required input from the user at implementation time**; used to compute expected paydays in the current month)
+- `netPerCheck: 2778.95`, `payAnchor: '2026-07-24'` (a real payday, confirmed by user; biweekly anchor used to compute expected paydays in the current month)
 - `savingsTargetMo: 3000` (the live monthly savings target)
 - `groups`: the nine fixed allocation groups from the plan — id, label, monthly amount (biweekly sub × 2), and for bill-like lines a `bills` list (`{ label, monthlyAmount, categories }`) used for paid-chips:
   Giving, Housing, Transport, Subscriptions, Protection & obligations, Exploration, Ghana family, Annual irregular, Professional dev
