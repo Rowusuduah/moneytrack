@@ -137,3 +137,76 @@ test('every expense category in the txn form is mapped, excluded, or savings', (
   const unknown = cats.filter(c => !known(c));
   assert.deepEqual(unknown, [], 'unmapped dropdown categories: ' + unknown.join(', '));
 });
+
+test('wlWindowBounds: all four modes with correct boundaries and factors', () => {
+  const d = W.wlWindowBounds('day', '2026-07-25');
+  assert.equal(d.startIso, '2026-07-25'); assert.equal(d.endIso, '2026-07-25');
+  assert.equal(d.daysTotal, 1); assert.equal(d.daysElapsed, 1);
+  const w = W.wlWindowBounds('week', '2026-07-25');   // Saturday → Sun Jul 19 .. Sat Jul 25
+  assert.equal(w.startIso, '2026-07-19'); assert.equal(w.endIso, '2026-07-25');
+  assert.equal(w.daysTotal, 7); assert.equal(w.daysElapsed, 7);
+  const w2 = W.wlWindowBounds('week', '2026-08-01');  // week spans the month boundary
+  assert.equal(w2.startIso, '2026-07-26'); assert.equal(w2.endIso, '2026-08-01');
+  const m = W.wlWindowBounds('month', '2026-07-25');
+  assert.equal(m.startIso, '2026-07-01'); assert.equal(m.endIso, '2026-07-31');
+  assert.equal(m.daysTotal, 31); assert.equal(m.daysElapsed, 25);
+  assert.equal(m.label, 'July 2026');
+  const y = W.wlWindowBounds('year', '2026-07-25');
+  assert.equal(y.startIso, '2026-01-01'); assert.equal(y.endIso, '2026-12-31');
+  assert.equal(y.daysTotal, 365); assert.equal(y.label, '2026');
+  assert.equal(m.factor, 1); assert.equal(y.factor, 12);
+  assert.ok(Math.abs(w.factor - 12 / 52) < 1e-9);
+  assert.ok(Math.abs(d.factor - 12 / 365.25) < 1e-9);
+});
+
+test('wlAggregateRange windows txns; wlAggregate wrapper keeps v1 behavior', () => {
+  const txns = [
+    { id: 'a', date: '2026-07-19', type: 'expense', amount: 50, category: 'Groceries' },
+    { id: 'b', date: '2026-07-25', type: 'expense', amount: 30, category: 'Groceries' },
+    { id: 'c', date: '2026-07-01', type: 'expense', amount: 20, category: 'Groceries' },
+    { id: 'd', date: '2026-06-30', type: 'expense', amount: 99, category: 'Groceries' },
+  ];
+  const wk = W.wlAggregateRange(txns, '2026-07-19', '2026-07-25');
+  assert.equal(wk.groups.living, 80);
+  const mo = W.wlAggregateRange(txns, '2026-07-01', '2026-07-31');
+  assert.equal(mo.groups.living, 100);
+  const wrapped = W.wlAggregate(txns, '2026-07-25');
+  assert.equal(wrapped.groups.living, 100);
+  assert.equal(wrapped.month, '2026-07');
+});
+
+test('wlSpendBudget scales the non-savings budget by window factor', () => {
+  assert.equal(W.wlSpendBudget('month'), 2557.90);
+  assert.equal(W.wlSpendBudget('year'), 30694.80);
+  assert.equal(W.wlSpendBudget('week'), 590.28);
+  assert.equal(W.wlSpendBudget('day'), 84.04);
+});
+
+test('wlPaceSeries: daily totals, running cumulative, spending-only inclusion', () => {
+  const txns = [
+    { date: '2026-07-19', type: 'expense',  amount: 50,  category: 'Groceries' },
+    { date: '2026-07-20', type: 'expense',  amount: 25,  category: 'Gas' },
+    { date: '2026-07-20', type: 'expense',  amount: 500, category: 'Savings Transfer' },
+    { date: '2026-07-21', type: 'transfer', amount: 40,  category: 'Transfer' },
+    { date: '2026-07-21', type: 'expense',  amount: 10,  category: 'Bank Fee' },
+    { date: '2026-07-21', type: 'expense',  amount: 7,   category: 'Mystery Custom' },
+  ];
+  const s = W.wlPaceSeries(txns, { startIso: '2026-07-19', endIso: '2026-07-22' });
+  assert.deepEqual(s.days.map(x => x.total), [50, 25, 7, 0]);   // unmapped counts as spending
+  assert.deepEqual(s.cumulative, [50, 75, 82, 82]);
+});
+
+test('wlSavingsByMonth zero-fills and orders oldest first', () => {
+  const txns = [
+    { date: '2026-07-11', type: 'transfer', amount: 1500, category: 'Savings Transfer' },
+    { date: '2026-05-02', type: 'expense',  amount: 200,  category: 'Investment' },
+    { date: '2025-12-31', type: 'transfer', amount: 999,  category: 'Savings Transfer' },
+  ];
+  const m = W.wlSavingsByMonth(txns, '2026-07-25', 6);
+  assert.equal(m.length, 6);
+  assert.deepEqual(m.map(x => x.ym), ['2026-02','2026-03','2026-04','2026-05','2026-06','2026-07']);
+  assert.equal(m[3].total, 200);
+  assert.equal(m[5].total, 1500);
+  assert.equal(m[0].total, 0);
+  assert.equal(m[0].label, 'Feb');
+});

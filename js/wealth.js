@@ -77,6 +77,42 @@ function wlFixedMo() { return wlRound(PLAN.groups.reduce((s, g) => s + g.monthly
 function wlAvailMo() { return wlRound(2 * PLAN.netPerCheck - wlFixedMo()); }
 function wlDailyLivingMo() { return wlRound(wlAvailMo() - PLAN.savingsTargetMo); }
 
+const WL_FACTORS = { day: 12 / 365.25, week: 12 / 52, month: 1, year: 12 };
+const WL_MON3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function wlSpendBudget(mode) {
+  return wlRound((wlFixedMo() + wlDailyLivingMo()) * WL_FACTORS[mode]);
+}
+
+// Calendar window containing todayIso. Weeks run Sunday–Saturday.
+function wlWindowBounds(mode, todayIso) {
+  const t = new Date(todayIso + 'T00:00:00');
+  let start, end, label;
+  if (mode === 'day') {
+    start = new Date(t); end = new Date(t);
+    label = 'Today · ' + WL_MON3[t.getMonth()] + ' ' + t.getDate();
+  } else if (mode === 'week') {
+    start = new Date(t); start.setDate(t.getDate() - t.getDay());
+    end = new Date(start); end.setDate(start.getDate() + 6);
+    label = 'Week of ' + WL_MON3[start.getMonth()] + ' ' + start.getDate() + '–' +
+      (start.getMonth() === end.getMonth() ? '' : WL_MON3[end.getMonth()] + ' ') + end.getDate();
+  } else if (mode === 'year') {
+    start = new Date(t.getFullYear(), 0, 1); end = new Date(t.getFullYear(), 11, 31);
+    label = String(t.getFullYear());
+  } else {
+    start = new Date(t.getFullYear(), t.getMonth(), 1);
+    end   = new Date(t.getFullYear(), t.getMonth() + 1, 0);
+    label = WL_MONTHS[t.getMonth()] + ' ' + t.getFullYear();
+  }
+  const DAY = 86400000;
+  return {
+    mode, startIso: wlIsoLocal(start), endIso: wlIsoLocal(end),
+    factor: WL_FACTORS[mode], label,
+    daysTotal: Math.round((end - start) / DAY) + 1,
+    daysElapsed: Math.round((t - start) / DAY) + 1,
+  };
+}
+
 function wlIsoLocal(d) {
   return d.getFullYear() + '-' +
     String(d.getMonth() + 1).padStart(2, '0') + '-' +
@@ -102,8 +138,8 @@ function wlPaydays(anchorIso, todayIso) {
 }
 
 // One pass over the txn log → everything the live blocks need.
-function wlAggregate(txns, todayIso) {
-  const month = todayIso.slice(0, 7);
+// Inclusive ISO date range; string comparison is safe for YYYY-MM-DD.
+function wlAggregateRange(txns, startIso, endIso) {
   const groups = {};
   PLAN.groups.forEach(g => { groups[g.id] = 0; });
   groups.living = 0;
@@ -115,7 +151,7 @@ function wlAggregate(txns, todayIso) {
   let savingsThisMonth = 0, netLanded = 0, paychecksLanded = 0;
 
   for (const t of txns) {
-    if (!t.date || t.date.slice(0, 7) !== month) continue;
+    if (!t.date || t.date < startIso || t.date > endIso) continue;
     const amt = Number(t.amount) || 0;
 
     if (t.type === 'income') {
@@ -146,9 +182,64 @@ function wlAggregate(txns, todayIso) {
   }
 
   return {
-    month, groups, bills, savingsThisMonth, netLanded, paychecksLanded,
+    groups, bills, savingsThisMonth, netLanded, paychecksLanded,
     unmapped: Object.entries(unmappedByCat).map(([category, total]) => ({ category, total })),
   };
+}
+
+// v1 signature preserved: calendar month of todayIso.
+function wlAggregate(txns, todayIso) {
+  const b = wlWindowBounds('month', todayIso);
+  const agg = wlAggregateRange(txns, b.startIso, b.endIso);
+  agg.month = todayIso.slice(0, 7);
+  return agg;
+}
+
+// Daily spending totals + running cumulative for a window (spending only:
+// expenses that are neither savings-categorized nor excluded).
+function wlPaceSeries(txns, bounds) {
+  const idx = {};
+  for (const t of txns) {
+    if (!t.date || t.date < bounds.startIso || t.date > bounds.endIso) continue;
+    if (t.type !== 'expense') continue;
+    if (WEALTH_SAVINGS_CATS.includes(t.category)) continue;
+    if (WEALTH_EXCLUDED_CATS.includes(t.category)) continue;
+    idx[t.date] = wlRound((idx[t.date] || 0) + (Number(t.amount) || 0));
+  }
+  const days = [], cumulative = [];
+  const d = new Date(bounds.startIso + 'T00:00:00');
+  const end = new Date(bounds.endIso + 'T00:00:00');
+  let run = 0;
+  while (d <= end) {
+    const iso = wlIsoLocal(d);
+    const total = idx[iso] || 0;
+    run = wlRound(run + total);
+    days.push({ iso, total });
+    cumulative.push(run);
+    d.setDate(d.getDate() + 1);
+  }
+  return { days, cumulative };
+}
+
+// Savings Transfer + Investment totals for the last n calendar months
+// (including the current one), zero-filled, oldest first.
+function wlSavingsByMonth(txns, todayIso, n) {
+  const count = n || 6;
+  const t = new Date(todayIso + 'T00:00:00');
+  const out = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const d = new Date(t.getFullYear(), t.getMonth() - i, 1);
+    const ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    out.push({ ym, label: WL_MON3[d.getMonth()], total: 0 });
+  }
+  const byYm = {};
+  out.forEach(o => { byYm[o.ym] = o; });
+  for (const t2 of txns) {
+    if (!t2.date || !WEALTH_SAVINGS_CATS.includes(t2.category)) continue;
+    const o = byYm[t2.date.slice(0, 7)];
+    if (o) o.total = wlRound(o.total + (Number(t2.amount) || 0));
+  }
+  return out;
 }
 
 // Sequential fill of the four reserve milestones from total savings balance.
