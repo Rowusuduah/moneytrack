@@ -333,5 +333,91 @@ function renderWlFooter(agg) {
   el.innerHTML = html;
 }
 // Filled in Task 6
-function bindWlStudio() {}
-function renderWlStudio() {}
+function bindWlStudio() {
+  const sec = document.getElementById('sec-wealth');
+  if (!sec || sec._wlStudioBound) return;
+  sec._wlStudioBound = true;
+  ['wl-sl-save', 'wl-sl-ret', 'wl-sl-yrs'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', renderWlStudio);
+  });
+}
+
+function wlM0(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
+
+function renderWlStudio() {
+  const savMo = +(document.getElementById('wl-sl-save')?.value || PLAN.savingsTargetMo);
+  const ret   = +(document.getElementById('wl-sl-ret')?.value  || PLAN.returnPct);
+  const yrs   = +(document.getElementById('wl-sl-yrs')?.value  || PLAN.years);
+  const livMo = wlRound(wlAvailMo() - savMo);
+  const grade = wlGrade(livMo);
+
+  const gEl = document.getElementById('wl-st-grade');
+  if (gEl) { gEl.textContent = grade.g; gEl.className = 'wl-grade ' + grade.cls; }
+  const tEl = document.getElementById('wl-st-title');
+  if (tEl) tEl.textContent = grade.t;
+  const vEl = document.getElementById('wl-st-verdict');
+  if (vEl) vEl.textContent = 'Saving ' + wlM0(savMo) + '/mo leaves ' + wlM0(livMo) +
+    ' a month for groceries, medical, clothing and everything unplanned. ' +
+    'Third-paycheck months add ' + wlM0(2 * PLAN.netPerCheck) + ' a year on top.';
+  const sEl = document.getElementById('wl-st-save');
+  if (sEl) sEl.textContent = wlM0(savMo) + '/mo · ' + wlM0(savMo / 2) + ' per check';
+
+  // Corridor: fixed groups + daily living (dim) + savings, % of the 2-check month
+  const moNet = 2 * PLAN.netPerCheck;
+  const corr = document.getElementById('wl-corr'), key = document.getElementById('wl-corr-key');
+  if (corr && key) {
+    const segs = PLAN.groups.map(g => ({ label: g.label, v: g.monthly, color: g.color }));
+    segs.push({ label: 'Daily living', v: Math.max(0, livMo), color: PLAN.livingColor, dim: true });
+    segs.push({ label: 'Savings', v: savMo, color: PLAN.savingsColor });
+    corr.innerHTML = segs.map(s =>
+      '<div style="width:' + (s.v / moNet * 100) + '%;background:' + s.color +
+      (s.dim ? ';opacity:.45' : '') + '" title="' + escapeHTML(s.label + ' — ' + fmt(s.v)) + '"></div>'
+    ).join('');
+    key.innerHTML = segs.map(s =>
+      '<span><i style="background:' + s.color + '"></i>' + escapeHTML(s.label) +
+      ' <b>' + wlM0(s.v) + '</b></span>').join('');
+  }
+
+  // Projection
+  const p = wlProject(savMo, ret, yrs);
+  const set = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+  set('wl-proj-total', wlM0(p.total));
+  set('wl-proj-cap', 'at age ' + (29 + yrs) + " · today's dollars · reserves full in " + p.fundM + ' mo');
+  set('wl-proj-contrib', wlM0(p.contrib));
+  set('wl-st-ret', ret.toFixed(1) + '% real');
+  set('wl-st-yrs', yrs + ' yrs');
+
+  // Chart: yearly balance curve (same math as wlProject, evaluated per year)
+  const svg = document.getElementById('wl-chart');
+  if (!svg) return;
+  const W = 620, H = 210, L = 54, R = 12, T = 12, B = 24;
+  const pts = [];
+  for (let y = 0; y <= yrs; y++) {
+    const n = y * 12, fm = Math.min(p.fundM, n), r = ret / 100;
+    pts.push([y,
+      wlFV(savMo, 0.04, fm) * Math.pow(1 + 0.04 / 12, Math.max(0, n - fm)) +
+      wlFV(savMo, r, Math.max(0, n - fm)) + wlFV(PLAN.kMo, r, n)]);
+  }
+  const max = pts[pts.length - 1][1] || 1;
+  const X = y => L + (y / yrs) * (W - L - R), Y = v => H - B - (v / max) * (H - T - B);
+  const kFmt = n => n >= 1e6 ? '$' + (n / 1e6).toFixed(1) + 'M' : '$' + Math.round(n / 1000) + 'k';
+  let g = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = max * i / 4, y = Y(v);
+    g += '<line x1="' + L + '" y1="' + y + '" x2="' + (W - R) + '" y2="' + y +
+      '" stroke="currentColor" opacity="0.12"/>';
+    g += '<text x="' + (L - 7) + '" y="' + (y + 3.5) + '" fill="currentColor" opacity="0.55" ' +
+      'font-size="9" text-anchor="end">' + kFmt(v) + '</text>';
+  }
+  const step = yrs <= 10 ? 2 : 5;
+  for (let y = 0; y <= yrs; y += step) {
+    g += '<text x="' + X(y) + '" y="' + (H - 7) + '" fill="currentColor" opacity="0.55" ' +
+      'font-size="9" text-anchor="middle">' + (29 + y) + '</text>';
+  }
+  let d = 'M' + X(0) + ',' + Y(0);
+  pts.forEach(pt => { d += ' L' + X(pt[0]).toFixed(1) + ',' + Y(pt[1]).toFixed(1); });
+  g += '<path d="' + d + ' L' + X(yrs) + ',' + (H - B) + ' L' + L + ',' + (H - B) +
+    ' Z" fill="' + PLAN.savingsColor + '" opacity="0.15"/>';
+  g += '<path d="' + d + '" fill="none" stroke="' + PLAN.savingsColor + '" stroke-width="2"/>';
+  svg.innerHTML = g;
+}
