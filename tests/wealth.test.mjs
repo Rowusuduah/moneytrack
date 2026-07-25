@@ -4,9 +4,8 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const src = readFileSync(new URL('../js/wealth.js', import.meta.url), 'utf8');
-const ctx = vm.createContext({ console });
-vm.runInContext(src, ctx);
-const W = ctx; // top-level function declarations are vm globals
+vm.runInThisContext(src);
+const W = globalThis; // top-level function declarations land on the host global
 
 test('PLAN totals are internally consistent', () => {
   const p = W.wlPlan();
