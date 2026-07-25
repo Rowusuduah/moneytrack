@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wealth Corridor — Capacity Analysis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#0E1726; --ink2:#16233A; --ink3:#1E2F4D;
+  --line:rgba(140,175,215,0.13); --line2:rgba(140,175,215,0.26);
+  --paper:#E8EDF2; --muted:#7A8AA3;
+  --cyan:#4CC9E0; --amber:#F2A93B; --sage:#6FCF97;
+  --clay:#E4735E; --violet:#9B8BD6; --rose:#D97DA6; --sand:#C9B26E;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'IBM Plex Sans',system-ui,sans-serif;background:var(--ink);color:var(--paper);min-height:100vh;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(140,175,215,0.045) 1px,transparent 1px),linear-gradient(90deg,rgba(140,175,215,0.045) 1px,transparent 1px),linear-gradient(rgba(140,175,215,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(140,175,215,0.02) 1px,transparent 1px);
+  background-size:120px 120px,120px 120px,24px 24px,24px 24px}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+/* NAV + TABS */
+.topbar{position:sticky;top:0;z-index:100;background:rgba(14,23,38,0.95);backdrop-filter:blur(16px);border-bottom:1px solid var(--line2)}
+.tb1{display:flex;align-items:center;justify-content:space-between;padding:11px 20px;gap:14px}
+.brand{font-family:'Archivo',sans-serif;font-weight:800;font-size:12px;letter-spacing:0.16em;text-transform:uppercase;white-space:nowrap}
+.brand em{color:var(--amber);font-style:normal}
+.navstat{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--cyan);white-space:nowrap}
+.navstat b{color:var(--paper);font-weight:500}
+@media(max-width:700px){.navstat{display:none}}
+.tabs{display:flex;gap:0;overflow-x:auto;scrollbar-width:none;padding:0 12px;border-top:1px solid var(--line)}
+.tabs::-webkit-scrollbar{display:none}
+.tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);cursor:pointer;
+  font-family:'IBM Plex Sans',sans-serif;font-size:12px;padding:11px 13px;white-space:nowrap;transition:all .15s}
+.tab:hover{color:var(--paper)}
+.tab.on{color:var(--amber);border-bottom-color:var(--amber);font-weight:500}
+
+main{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:26px 20px 80px}
+.pane{display:none;animation:fade .25s both}
+.pane.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.sec-head{margin-bottom:18px}
+.sec-title{font-family:'Archivo',sans-serif;font-weight:700;font-size:22px;letter-spacing:-0.015em;margin-bottom:7px}
+.sec-desc{font-size:13px;color:var(--muted);line-height:1.65;max-width:780px;font-weight:300}
+h3.sub{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;margin:26px 0 12px;padding-top:20px;border-top:1px solid var(--line)}
+h3.sub:first-of-type{border-top:none;padding-top:0;margin-top:20px}
+p.body{font-size:13px;color:var(--muted);line-height:1.75;font-weight:300;max-width:820px;margin-bottom:12px}
+p.body b{color:var(--paper);font-weight:500}
+
+.panel{background:var(--ink2);border:1px solid var(--line);padding:20px}
+.panel+.panel{margin-top:2px}
+.panel.hl{border-left:3px solid var(--amber)}
+.panel.warn{border-left:3px solid var(--clay)}
+.panel.good{border-left:3px solid var(--sage)}
+
+/* title block */
+.titleblock{border:1px solid var(--line2);margin-bottom:26px;display:grid;grid-template-columns:1fr 1fr 1fr}
+@media(max-width:620px){.titleblock{grid-template-columns:1fr}}
+.tb-cell{padding:16px 18px;border-right:1px solid var(--line2)}
+.tb-cell:last-child{border-right:none}
+.tb-lab{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:0.18em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+.tb-title{font-family:'Archivo',sans-serif;font-weight:800;font-size:clamp(24px,3.6vw,38px);line-height:1.02;letter-spacing:-0.02em}
+.tb-title span{color:var(--amber)}
+.tb-sub{font-size:12.5px;color:var(--muted);margin-top:9px;line-height:1.6;font-weight:300}
+.tb-val{font-family:'Archivo',sans-serif;font-weight:700;font-size:21px}
+.tb-val.cy{color:var(--cyan)}.tb-val.am{color:var(--amber)}.tb-val.sg{color:var(--sage)}
+.tb-note{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);margin-top:4px}
+
+/* studio */
+.studio{background:var(--ink2);border:1px solid var(--line2)}
+.studio-top{padding:22px;border-bottom:1px solid var(--line)}
+.readout{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
+.readout-num{font-family:'Archivo',sans-serif;font-weight:800;font-size:clamp(38px,7vw,58px);line-height:.9;letter-spacing:-0.03em;color:var(--amber);font-variant-numeric:tabular-nums}
+.readout-unit{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted);padding-bottom:6px}
+.readout-side{margin-left:auto;text-align:right;padding-bottom:4px}
+.readout-side .n{font-family:'Archivo',sans-serif;font-weight:700;font-size:22px;color:var(--cyan);font-variant-numeric:tabular-nums}
+.readout-side .l{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-top:3px}
+.sl-wrap{margin-top:20px}
+.sl-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px;gap:10px}
+.sl-lab{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.sl-out{font-family:'IBM Plex Mono',monospace;font-size:12px;font-variant-numeric:tabular-nums}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:26px;background:transparent;cursor:pointer;display:block}
+input[type=range]::-webkit-slider-runnable-track{height:4px;background:var(--ink3);border:1px solid var(--line)}
+input[type=range]::-moz-range-track{height:4px;background:var(--ink3);border:1px solid var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;margin-top:-7px;background:var(--amber);border:2px solid var(--ink);box-shadow:0 0 0 1px var(--amber);transition:transform .12s}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;background:var(--amber);border:2px solid var(--ink);box-shadow:0 0 0 1px var(--amber)}
+input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.18)}
+input[type=range].cy::-webkit-slider-thumb{background:var(--cyan);box-shadow:0 0 0 1px var(--cyan)}
+input[type=range].cy::-moz-range-thumb{background:var(--cyan);box-shadow:0 0 0 1px var(--cyan)}
+.sl-scale{display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--muted)}
+.sl-target{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--amber);margin-top:8px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.sl-target button{background:none;border:1px solid var(--line2);color:var(--amber);font-family:'IBM Plex Mono',monospace;font-size:9.5px;padding:3px 8px;cursor:pointer}
+.sl-target button:hover{background:var(--ink3)}
+.corridor{padding:20px 22px;border-bottom:1px solid var(--line)}
+.corr-lab{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:flex;justify-content:space-between;gap:10px}
+.corr-bar{display:flex;height:32px;border:1px solid var(--line2);overflow:hidden}
+.corr-seg{height:100%;transition:width .35s cubic-bezier(.4,0,.2,1);min-width:0}
+.corr-key{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:12px}
+.ck{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.ck i{width:9px;height:9px;flex-shrink:0}
+.ck b{color:var(--paper);font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:400}
+.verdict{padding:20px 22px;display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:start}
+@media(max-width:640px){.verdict{grid-template-columns:1fr}}
+.los{width:92px;text-align:center;border:1px solid var(--line2);padding:12px 8px}
+.los-grade{font-family:'Archivo',sans-serif;font-weight:800;font-size:44px;line-height:1}
+.los-lab{font-family:'IBM Plex Mono',monospace;font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-top:5px}
+.verdict h4{font-family:'Archivo',sans-serif;font-weight:700;font-size:15px;margin-bottom:7px}
+.verdict p{font-size:12.5px;color:var(--muted);line-height:1.65;font-weight:300}
+.forces{margin-top:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:2px}
+.force{display:flex;justify-content:space-between;gap:10px;padding:7px 10px;background:var(--ink);border:1px solid var(--line);font-size:11.5px}
+.force span{color:var(--muted)}
+.force b{font-family:'IBM Plex Mono',monospace;font-weight:400;font-variant-numeric:tabular-nums}
+#shock{margin-top:12px;font-size:11.5px;color:var(--muted);line-height:1.7;font-weight:300;border-top:1px solid var(--line);padding-top:11px}
+
+/* charts */
+.proj{display:grid;grid-template-columns:1fr 290px;gap:2px;margin-top:2px}
+@media(max-width:840px){.proj{grid-template-columns:1fr}}
+.chartbox{background:var(--ink2);border:1px solid var(--line);padding:18px}
+.chart-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;flex-wrap:wrap;gap:8px}
+.chart-val{font-family:'Archivo',sans-serif;font-weight:800;font-size:29px;color:var(--sage);letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.chart-cap{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
+.ctrls{background:var(--ink2);border:1px solid var(--line);padding:18px;display:flex;flex-direction:column;gap:16px}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin-top:auto}
+.split div{background:var(--ink);border:1px solid var(--line);padding:10px}
+.split .l{font-family:'IBM Plex Mono',monospace;font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.split .v{font-family:'IBM Plex Mono',monospace;font-size:13px;font-variant-numeric:tabular-nums}
+
+/* tables */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line)}
+table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:480px}
+thead th{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);padding:11px 14px;background:var(--ink2);border-bottom:1px solid var(--line2);text-align:right;font-weight:400}
+thead th:first-child{text-align:left}
+tbody td{padding:9px 14px;text-align:right;font-family:'IBM Plex Mono',monospace;color:var(--muted);font-variant-numeric:tabular-nums;border-bottom:1px solid var(--line)}
+tbody td:first-child{text-align:left;font-family:'IBM Plex Sans',sans-serif;color:var(--paper)}
+tbody tr:hover td{background:var(--ink2)}
+tbody tr.grp td{background:var(--ink2);color:var(--paper);font-weight:500;border-bottom:1px solid var(--line2)}
+tbody tr.grp td:first-child{font-family:'Archivo',sans-serif;font-weight:700;font-size:12px}
+tbody tr.tot td{background:var(--ink3);color:var(--paper);font-weight:600}
+tbody tr.mark td{background:rgba(242,169,59,0.07)}
+td.txt{text-align:left!important;font-family:'IBM Plex Sans',sans-serif!important;font-size:11.5px!important}
+.note{font-size:10.5px;color:var(--muted);font-family:'IBM Plex Sans',sans-serif;display:block;margin-top:2px;font-weight:300}
+.toggle{display:inline-flex;border:1px solid var(--line2);margin-bottom:14px}
+.toggle button{background:none;border:none;color:var(--muted);cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;padding:7px 14px}
+.toggle button+button{border-left:1px solid var(--line2)}
+.toggle button.on{background:var(--amber);color:var(--ink);font-weight:500}
+
+/* stages */
+.stack{display:flex;flex-direction:column;gap:2px}
+.stage{display:grid;grid-template-columns:32px 1fr auto;gap:14px;align-items:center;background:var(--ink2);border:1px solid var(--line);padding:13px 15px;border-left:3px solid var(--line2)}
+.stage-n{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted)}
+.stage-t{font-family:'Archivo',sans-serif;font-weight:600;font-size:13.5px}
+.stage-d{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.5;font-weight:300}
+.stage-v{font-family:'IBM Plex Mono',monospace;font-size:12px;text-align:right;white-space:nowrap}
+.stage-v small{display:block;color:var(--muted);font-size:9.5px;margin-top:3px}
+
+/* cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:2px}
+.mini{background:var(--ink2);border:1px solid var(--line);padding:15px}
+.mini-l{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.mini-v{font-family:'Archivo',sans-serif;font-weight:700;font-size:16px;margin-bottom:6px}
+.mini-d{font-size:11.5px;color:var(--muted);line-height:1.6;font-weight:300}
+
+/* flags */
+.flag{display:grid;grid-template-columns:auto 1fr;gap:13px;align-items:start;background:var(--ink2);border:1px solid var(--line);border-left:3px solid var(--clay);padding:14px 16px}
+.flag+.flag{margin-top:2px}
+.flag.q{border-left-color:var(--sand)}
+.flag.ok{border-left-color:var(--sage)}
+.flag-m{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--muted);letter-spacing:.1em;padding-top:2px}
+.flag-t{font-family:'Archivo',sans-serif;font-weight:600;font-size:13.5px;margin-bottom:5px}
+.flag-d{font-size:12px;color:var(--muted);line-height:1.65;font-weight:300}
+.flag-d b{color:var(--paper);font-weight:500}
+
+/* checklist */
+.chk{display:flex;gap:12px;align-items:flex-start;background:var(--ink2);border:1px solid var(--line);padding:12px 15px;cursor:pointer}
+.chk+.chk{margin-top:2px}
+.chk:hover{background:var(--ink3)}
+.chk-box{width:15px;height:15px;border:1px solid var(--line2);flex-shrink:0;margin-top:2px;display:flex;align-items:center;justify-content:center}
+.chk.done .chk-box{background:var(--sage);border-color:var(--sage)}
+.chk-tick{opacity:0;color:var(--ink);font-size:11px;font-weight:800;line-height:1}
+.chk.done .chk-tick{opacity:1}
+.chk.done .chk-t{text-decoration:line-through;color:var(--muted)}
+.chk-t{font-size:13px;font-weight:500;margin-bottom:2px}
+.chk-d{font-size:11.5px;color:var(--muted);line-height:1.5;font-weight:300}
+.chk-w{font-family:'IBM Plex Mono',monospace;font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;padding:3px 7px;margin-left:auto;flex-shrink:0;border:1px solid var(--line2);color:var(--muted)}
+.chk-w.now{color:var(--clay)}.chk-w.y1{color:var(--amber)}
+.progbar{height:3px;background:var(--ink3);margin-bottom:8px;max-width:340px}
+.progfill{height:100%;background:var(--sage);width:0;transition:width .35s}
+
+/* step list */
+.steps{counter-reset:s}
+.step{display:grid;grid-template-columns:30px 1fr;gap:14px;background:var(--ink2);border:1px solid var(--line);padding:15px 16px;align-items:start}
+.step+.step{margin-top:2px}
+.step::before{counter-increment:s;content:counter(s,decimal-leading-zero);font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--amber);padding-top:2px}
+.step h5{font-family:'Archivo',sans-serif;font-weight:600;font-size:13.5px;margin-bottom:5px}
+.step p{font-size:12px;color:var(--muted);line-height:1.65;font-weight:300}
+.step code{font-family:'IBM Plex Mono',monospace;font-size:11.5px;background:var(--ink);border:1px solid var(--line2);padding:1px 6px;color:var(--cyan)}
+
+footer{border-top:1px solid var(--line);margin-top:30px;padding:24px 0;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);line-height:1.9}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{background:var(--ink)}::-webkit-scrollbar-thumb{background:var(--ink3)}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="tb1">
+    <div class="brand">Wealth <em>Corridor</em></div>
+    <div class="navstat">NET / CHECK <b>$2,778.95</b> · HOURLY $41.83</div>
+  </div>
+  <div class="tabs" id="tabs"></div>
+</div>
+
+<main>
+
+<!-- OVERVIEW -->
+<div class="pane on" id="p-overview">
+  <div class="titleblock">
+    <div class="tb-cell" style="grid-column:1/-1;border-right:none;border-bottom:1px solid var(--line2)">
+      <div class="tb-lab">Capacity analysis · Tampa FL · Age 29 · F-1 OPT · no debt</div>
+      <h1 class="tb-title">Every dollar has<br>a <span>destination.</span></h1>
+      <p class="tb-sub">Built from your pay stub, not estimates. Nine tabs: set the savings rate, see the month-by-month sequence, learn the mechanics of actually investing it, then test the whole thing against 97 years of market history.</p>
+    </div>
+    <div class="tb-cell"><div class="tb-lab">Gross / year</div><div class="tb-val">$87,006</div><div class="tb-note">2,080 hrs @ $41.83</div></div>
+    <div class="tb-cell"><div class="tb-lab">Net / year</div><div class="tb-val cy">$72,253</div><div class="tb-note">$6,021 / month</div></div>
+    <div class="tb-cell"><div class="tb-lab">Retirement (auto)</div><div class="tb-val sg">$7,831</div><div class="tb-note">5% you + 4% match</div></div>
+  </div>
+  <h3 class="sub">What the stub told us that you did not know</h3>
+  <div class="cards" id="ovCards"></div>
+  <h3 class="sub">Two categories you were missing</h3>
+  <div class="cards" id="missCards"></div>
+</div>
+
+<!-- STUDIO -->
+<div class="pane" id="p-studio">
+  <div class="sec-head">
+    <h2 class="sec-title">Savings studio</h2>
+    <p class="sec-desc">Fixed commitments are locked. What remains splits two ways — savings or daily living. Push one up, the other comes down. There is no third source.</p>
+  </div>
+  <div class="studio">
+    <div class="studio-top">
+      <div class="readout">
+        <div class="readout-num" id="savNum">$2,200</div>
+        <div class="readout-unit">saved<br>per month</div>
+        <div class="readout-side"><div class="n" id="savRate"></div><div class="l">of what lands</div></div>
+      </div>
+      <div class="sl-wrap">
+        <div class="sl-head"><span class="sl-lab">Budgeted monthly savings (2 checks)</span><span class="sl-out" id="savBw"></span></div>
+        <input type="range" id="savSlider" min="600" max="3200" step="25" value="3000" aria-label="Monthly savings target">
+        <div class="sl-scale" id="savScale"></div>
+        <div class="sl-target">
+          <span id="ceilTxt"></span>
+          <button type="button" id="btnRec">Max sustainable</button>
+          <button type="button" id="btn36k">Hit $36,000/yr</button><button type="button" id="btn3000">$3,000 budgeted</button>
+        </div>
+      </div>
+    </div>
+    <div class="corridor">
+      <div id="effLine" style="margin-top:12px;font-size:12px;color:var(--muted);line-height:1.7;font-weight:300"></div>
+      </div>
+    </div>
+    <div class="corridor">
+      <div class="corr-lab"><span>Paycheck corridor — $2,778.95 net, fully allocated</span><span id="corrCheck"></span></div>
+      <div class="corr-bar" id="corrBar"></div>
+      <div class="corr-key" id="corrKey"></div>
+    </div>
+    <div class="verdict">
+      <div class="los"><div class="los-grade" id="losGrade">B</div><div class="los-lab">Level of<br>service</div></div>
+      <div>
+        <h4 id="verdictTitle"></h4>
+        <p id="verdictText"></p>
+        <div class="forces" id="forces"></div>
+        <div id="shock"></div>
+      </div>
+    </div>
+  </div>
+  <div class="proj">
+    <div class="chartbox">
+      <div class="chart-head">
+        <div><div class="chart-val" id="projVal">$0</div><div class="chart-cap" id="projCap"></div></div>
+        <div style="text-align:right"><div class="chart-cap">You contribute</div><div style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--muted)" id="projContrib"></div></div>
+      </div>
+      <svg id="chart" viewBox="0 0 620 210" style="width:100%;height:auto;display:block" role="img" aria-label="Portfolio projection"></svg>
+    </div>
+    <div class="ctrls">
+      <div><div class="sl-head"><span class="sl-lab">Real return</span><span class="sl-out" id="retOut"></span></div>
+        <input type="range" class="cy" id="retSlider" min="3" max="10" step="0.5" value="6.7" aria-label="Real annual return"></div>
+      <div><div class="sl-head"><span class="sl-lab">Years</span><span class="sl-out" id="yrOut"></span></div>
+        <input type="range" class="cy" id="yrSlider" min="5" max="35" step="1" value="30" aria-label="Years invested"></div>
+      <div class="split">
+        <div><div class="l">Reserves full</div><div class="v" id="efMonths"></div></div>
+        <div><div class="l">401k + match/yr</div><div class="v">$7,831</div></div>
+        <div><div class="l">Growth earned</div><div class="v" id="projGrowth"></div></div>
+        <div><div class="l">Invested / month</div><div class="v" id="projMonthly"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BUDGET -->
+<div class="pane" id="p-budget">
+  <div class="sec-head"><h2 class="sec-title">Paycheck &amp; allocation</h2>
+    <p class="sec-desc">Where the money comes from, and where all of it goes.</p></div>
+  <h3 class="sub">Why monthly is not two paychecks</h3>
+  <p class="body">You are paid <b>every two weeks</b>, not twice a month. That is 52 &divide; 2 = <b>26 paychecks a year</b>. Multiplying by 2 assumes 24, which quietly loses two whole paychecks &mdash; <b>$5,557.90 a year</b>.</p>
+  <div class="cards" id="cadenceCards" style="margin-bottom:2px"></div>
+  <p class="body" style="margin-top:14px">So $6,021.06 is the <b>average</b> month, correct for annual planning. It is not what lands in a typical month. Ten months a year you receive $5,557.90; twice a year you receive $8,336.85. Every biweekly figure in this plan is the real unit &mdash; the monthly column is a conversion for reading, not a paycheck.</p>
+  <div class="panel warn" style="margin-top:2px">
+    <div class="mini-l" style="color:var(--clay)">The float this creates &mdash; keep $1,200 in checking</div>
+    <div class="mini-d" id="floatNote"></div>
+  </div>
+
+  <h3 class="sub">Paycheck anatomy</h3>
+  <div class="tbl-wrap"><table><thead><tr><th>Line</th><th>Per check</th><th>Per month</th><th>Per year</th></tr></thead><tbody id="stubBody"></tbody></table></div>
+  <h3 class="sub">Full allocation</h3>
+  <div class="toggle"><button type="button" data-v="bw" class="on">Biweekly</button><button type="button" data-v="mo">Monthly</button><button type="button" data-v="yr">Annual</button></div>
+  <div class="tbl-wrap"><table><thead><tr><th>Category</th><th>Amount</th><th>% of net</th></tr></thead><tbody id="budgetBody"></tbody></table></div>
+</div>
+
+<!-- INVEST -->
+<div class="pane" id="p-invest">
+  <div class="sec-head"><h2 class="sec-title">How to actually invest it</h2>
+    <p class="sec-desc">You asked where 7% comes from and where to begin. Here is the honest answer to both, then the exact mechanics.</p></div>
+
+  <h3 class="sub">Where the 7% comes from</h3>
+  <p class="body">It is not a product anyone sells you. It is the long-run <b>real</b> return of the US stock market — what is left after inflation. Since 1928 the S&amp;P 500 has returned about <b>10% a year nominally</b> with dividends reinvested. Inflation has averaged about 3.1%. Subtract one from the other and you get roughly <b>6.7–7% real</b>, which is the number I use throughout this plan.</p>
+  <p class="body">That matters for reading every projection here: <b>the numbers are in today's purchasing power.</b> When the chart says $2.9M, it means $2.9M of what a dollar buys now — not an inflated future dollar that feels big and buys little. I set the default slider to <b>6.7%</b> rather than 7% because 6.7% is what actually happened over the full 97-year record.</p>
+  <p class="body">Nobody earns 7% every year. The market gave −37% in 2008 and +32% in 2013. The 7% is what the average comes to if you hold through all of it. The Scenarios tab tests exactly what happens if you are unlucky about when you start.</p>
+
+  <h3 class="sub">The three accounts, in order</h3>
+  <div class="stack" id="acctStack"></div>
+
+  <h3 class="sub">What to actually buy</h3>
+  <p class="body">One fund is enough. Genuinely. A total-market or S&amp;P 500 index fund holds hundreds or thousands of companies, so no single failure can hurt you badly, and the fee is almost nothing. The choice below is nearly cosmetic — pick the one matching your brokerage and stop thinking about it.</p>
+  <div class="tbl-wrap"><table><thead><tr><th>Fund</th><th>Ticker</th><th>Fee</th><th>Holds</th></tr></thead><tbody id="fundBody"></tbody></table></div>
+  <p class="body" style="margin-top:12px">A 0.03% fee means <b>$3 a year per $10,000</b>. An actively managed fund charging 1% takes $100 for the same money and, on the evidence, does not beat the index reliably. Fees are the one variable in investing you control completely.</p>
+
+  <h3 class="sub">Your options, starting August &mdash; and what each is worth</h3>
+  <p class="body">Same $3,000 a month, same 30 years, same 6.7% real market return. The only thing that changes is <b>where you put it</b>. Because you are a nonresident, the 30% dividend withholding turns fund choice into a real decision rather than a preference &mdash; a high-yield fund hands more of your return to the IRS every single year.</p>
+  <div class="tbl-wrap"><table><thead><tr><th>Where you put it</th><th>Yield</th><th>NRA drag</th><th>Net real</th><th>After 30 yrs</th></tr></thead><tbody id="optBody"></tbody></table></div>
+  <div class="cards" id="optCards" style="margin-top:2px"></div>
+
+  <h3 class="sub">Making $3,000 actually work</h3>
+  <p class="body">You have chosen $3,000 a month and I will build to it &mdash; but the arithmetic has to be said once, plainly. It leaves <b id="trimLiving"></b> a month for groceries, medical costs, clothing and everything unplanned. Here is the only honest path to it.</p>
+  <div class="tbl-wrap"><table><thead><tr><th>Trim</th><th>From</th><th>To</th><th>Frees / mo</th></tr></thead><tbody id="trimBody"></tbody></table></div>
+  <div class="panel warn" style="margin-top:2px"><div class="mini-l" style="color:var(--clay)">What I would actually do</div>
+    <div class="mini-d" id="trimNote"></div></div>
+
+  <h3 class="sub">The mechanics, step by step</h3>
+  <div class="steps" id="stepList"></div>
+
+  <div class="panel warn" style="margin-top:2px">
+    <div class="mini-l" style="color:var(--clay)">Do not do these</div>
+    <div class="mini-d" id="dontList"></div>
+  </div>
+</div>
+
+<!-- TIMELINE -->
+<div class="pane" id="p-timeline">
+  <div class="sec-head"><h2 class="sec-title">Month by month</h2>
+    <p class="sec-desc">From your next paycheck to month 24. Balances update with the savings slider on the Studio tab — currently <b id="tlRate">$2,200</b>/month.</p></div>
+  <div class="stack" id="orderStack" style="margin-bottom:20px"></div>
+  <h3 class="sub">The first 24 months</h3>
+  <div class="tbl-wrap"><table><thead><tr><th>Month</th><th>Cash reserve</th><th>Invested</th><th>Total</th><th>What happens</th></tr></thead><tbody id="tlBody"></tbody></table></div>
+</div>
+
+<!-- SCENARIOS -->
+<div class="pane" id="p-scenarios">
+  <div class="sec-head"><h2 class="sec-title">Tested against 97 years</h2>
+    <p class="sec-desc">Rather than assume a smooth return, this runs your exact contribution through every historical starting year from 1928 to 2024 using actual S&amp;P 500 total returns and actual inflation. Every figure below is inflation-adjusted.</p></div>
+  <div class="cards" id="scenKpi" style="margin-bottom:2px"></div>
+  <h3 class="sub">Every historical outcome, ranked</h3>
+  <p class="body">Each bar is one historical starting year. Sorted worst to best, so the left edge is the unluckiest start in a century.</p>
+  <div class="chartbox"><svg id="distChart" viewBox="0 0 620 220" style="width:100%;height:auto;display:block" role="img" aria-label="Distribution of historical outcomes"></svg></div>
+  <div class="toggle" style="margin-top:12px"><button type="button" data-h="10">10 years</button><button type="button" data-h="20">20 years</button><button type="button" data-h="30" class="on">30 years</button></div>
+  <h3 class="sub">Named disasters</h3>
+  <p class="body">What if you had started right before the worst moments in market history and simply kept contributing?</p>
+  <div class="tbl-wrap"><table><thead><tr><th>Starting year</th><th>Event</th><th>After 30 years</th><th>Real CAGR</th></tr></thead><tbody id="disasterBody"></tbody></table></div>
+  <div class="panel good" style="margin-top:2px"><div class="mini-l" style="color:var(--sage)">The finding that matters</div>
+    <div class="mini-d" id="scenNote"></div></div>
+</div>
+
+<!-- TAX -->
+<div class="pane" id="p-tax">
+  <div class="sec-head"><h2 class="sec-title">Nonresident tax</h2>
+    <p class="sec-desc">The part almost every F-1 investor gets wrong. While you file as a nonresident, your investments are taxed on entirely different rules — and Ghana has no US tax treaty to soften any of it.</p></div>
+  <div class="cards" id="nraCards"></div>
+  <div class="panel hl" style="margin-top:2px">
+    <div class="mini-l" style="color:var(--amber)">What this changes</div>
+    <div class="mini-d" style="font-size:13px;line-height:1.75">I earlier told you to favour liquid taxable brokerage over extra 401k. <b style="color:var(--paper)">That was wrong in one direction.</b> A taxable account loses 30% of every dividend and 30% of every realised gain while you are a nonresident. Your 401k loses none of it.<br><br>You defer 5% against a $24,500 limit — roughly <b style="color:var(--paper)">$1,679 a month of unused shelter</b>. The counter-argument is real: 401k money is locked to 59½, and leaving the US early means up to 30% withholding plus a 10% penalty. A genuine trade, not a free win.<br><br>The shape I would suggest, as a question for the CPA rather than a decision off a web page: fill reserves in cash first, since <b style="color:var(--paper)">high-yield interest is US tax-free for you</b>. Then lean toward the 401k while nonresident, and shift to taxable once the NIW lands. The nonresident drag is temporary; build to outlast it.</div>
+  </div>
+</div>
+
+<!-- GHANA -->
+<div class="pane" id="p-ghana">
+  <div class="sec-head"><h2 class="sec-title">Ghana</h2>
+    <p class="sec-desc">You cut this from $295 to $92 per paycheck. That decision is yours — here is what the old number was buying that the new one is not.</p></div>
+  <div class="cards" id="ghanaCards"></div>
+</div>
+
+<!-- ACTIONS -->
+<div class="pane" id="p-actions">
+  <div class="sec-head"><h2 class="sec-title">Flags &amp; actions</h2>
+    <p class="sec-desc">What I assumed, what looks wrong, and what to do about it.</p></div>
+  <div id="flagList"></div>
+  <h3 class="sub">Checklist</h3>
+  <div class="progbar"><div class="progfill" id="progFill"></div></div>
+  <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--muted);margin-bottom:14px" id="progTxt"></div>
+  <div id="chkList"></div>
+</div>
+
+<footer>
+  Pay stub Jul 2026 · gross $3,346.40 · net $2,778.95 · 26 periods · hourly $41.83<br>
+  Market data: S&amp;P 500 annual total returns and CPI, 1928–2024 (public series). HYSA ~4.00–4.15% APY Jul 2026. 401k limit $24,500 · IRA $7,500.<br>
+  Projections are arithmetic, not promises. Tax, immigration and insurance items need licensed professionals.
+</footer>
+</main>
+
+<script>
+/* ═══ CORE ═══ */
+const NET=2778.95, GROSS=3346.40, P=26, B2M=P/12, M2B=12/P;
+const K401=167.32, MATCH=133.86, FED=351.48, MED=33.50, DEN=10.00, VIS=5.15;
+const money=(n,d)=>'$'+n.toLocaleString('en-US',{minimumFractionDigits:d===undefined?2:d,maximumFractionDigits:d===undefined?2:d});
+const m0=n=>'$'+Math.round(n).toLocaleString('en-US');
+const mk=n=>n>=1e6?'$'+(n/1e6).toFixed(2)+'M':n>=1e3?'$'+Math.round(n/1000)+'k':'$'+Math.round(n);
+
+const FIXED=[
+  {id:'giving',label:'Giving',hex:'#9B8BD6',items:[
+    {n:'Tithe — 10% of net',bw:277.90,note:'Auto-transfer on payday'},
+    {n:'Offering',bw:20.00,note:'$10 weekly'}]},
+  {id:'housing',label:'Housing',hex:'#4CC9E0',items:[
+    {n:'Rent',bw:745/2,note:'$745/mo ÷ 2 checks'},
+    {n:'Utilities',bw:100/2,note:'$100/mo — internet included'}]},
+  {id:'transport',label:'Transport',hex:'#6FCF97',items:[
+    {n:'Car insurance',bw:163/2,note:'$163/mo ÷ 2'},
+    {n:'Fuel',bw:60.00,note:'$60 per paycheck'},
+    {n:'Oil & consumables',bw:50/2,note:'$50/mo ÷ 2'},
+    {n:'Maintenance reserve',bw:50.00,note:'Tires, brakes, repairs'},
+    {n:'Car wash',bw:25/2,note:'$25/mo ÷ 2'}]},
+  {id:'subs',label:'Subscriptions',hex:'#D97DA6',items:[
+    {n:'Claude',bw:50/2,note:'$50/mo ÷ 2'},{n:'T-Mobile',bw:32/2,note:'$32/mo ÷ 2'},
+    {n:'ChatGPT',bw:20/2,note:'$20/mo ÷ 2'},{n:'Google',bw:20/2,note:'$20/mo ÷ 2'},
+    {n:'Apple Music',bw:7/2,note:'$7/mo ÷ 2'}]},
+  {id:'protect',label:'Protection & obligations',hex:'#C9B26E',items:[
+    {n:'Supplemental life cover',bw:20/2,note:'$20/mo — via Stantec group plan'},
+    {n:'Community & family occasions',bw:50/2,note:'$50/mo — funerals, weddings, naming ceremonies'}]},
+  {id:'explore',label:'Exploration',hex:'#5B8AA8',items:[
+    {n:'Tampa & travel',bw:75/2,note:'$75/mo ÷ 2'}]},
+  {id:'ghana',label:'Ghana family',hex:'#E4735E',items:[
+    {n:'Monthly remittance',bw:200/2,note:'$200/mo — Lemfi, fees 0–1%'}]},
+  {id:'annual',label:'Annual irregular',hex:'#8B7EC8',items:[
+    {n:'Sprintax tax filing',bw:150/24,note:'~$150/yr — not TurboTax'},
+    {n:'FL registration & tags',bw:75/24,note:'~$75/yr'},
+    {n:'Annual renewals buffer',bw:100/24,note:'~$100/yr'}]},
+  {id:'profdev',label:'Professional dev',hex:'#A8B5C4',items:[
+    {n:'PE exam, courses, books',bw:25.00,note:'$650/yr'}]}
+];
+FIXED.forEach(c=>c.sub=c.items.reduce((a,b)=>a+b.bw,0));
+const FIXED_BW=FIXED.reduce((a,c)=>a+c.sub,0);
+const AVAIL_BW=NET-FIXED_BW, AVAIL_MO=AVAIL_BW*2;   // 2 checks = a real month
+const MO_NET=NET*2;                                  // what actually lands, 10 months of 12
+const SURPLUS=NET*P-(FIXED_BW+AVAIL_BW)*24;          // the two extra paychecks
+const LIVING=[['Groceries',.42],['Solo dining out',.11],['Personal care',.10],['Clothing fund',.09],
+  ['Medical & pharmacy',.09],['Household supplies',.06],['Buffer / unplanned',.09],['Gym & fitness',.04]];
+function grade(d){
+  if(d>=1300)return{g:'A',t:'Comfortable',c:'var(--sage)'};
+  if(d>=1050)return{g:'B',t:'Sustainable',c:'var(--sage)'};
+  if(d>=850)return{g:'C',t:'Disciplined',c:'var(--cyan)'};
+  if(d>=650)return{g:'D',t:'Tight',c:'var(--amber)'};
+  if(d>=500)return{g:'E',t:'Very tight',c:'var(--amber)'};
+  return{g:'F',t:'Not sustainable',c:'var(--clay)'};
+}
+const STARTER=2000, TAXRES=3500, EF=13000, NIW=10000;
+const RESERVE=STARTER+TAXRES+EF+NIW;
+const K_MO=(K401+MATCH)*P/12;
+let savMo=3000, ret=6.7, yrs=30, view='bw', horizon=30;
+const REC=2258;   // max at LOS C on the 2-check basis
+
+/* ═══ TABS ═══ */
+const TABS=[['overview','Overview'],['studio','Savings studio'],['budget','Budget'],['invest','How to invest'],
+  ['timeline','Month by month'],['scenarios','Scenarios'],['tax','Nonresident tax'],['ghana','Ghana'],['actions','Flags & actions']];
+(function(){
+  const t=document.getElementById('tabs');
+  TABS.forEach(function(x,i){
+    const b=document.createElement('button');
+    b.className='tab'+(i===0?' on':''); b.textContent=x[1]; b.dataset.k=x[0];
+    b.addEventListener('click',function(){
+      document.querySelectorAll('.tab').forEach(e=>e.classList.remove('on'));
+      document.querySelectorAll('.pane').forEach(e=>e.classList.remove('on'));
+      b.classList.add('on');
+      document.getElementById('p-'+x[0]).classList.add('on');
+      window.scrollTo({top:0,behavior:'auto'});
+    });
+    t.appendChild(b);
+  });
+})();
+
+/* ═══ STUDIO ═══ */
+function renderStudio(){
+  const savBw=savMo/2, livMo=AVAIL_MO-savMo, livBw=livMo/2, g=grade(livMo);
+  document.getElementById('savNum').textContent=m0(savMo);
+  document.getElementById('savRate').textContent=(savMo/MO_NET*100).toFixed(1)+'%';
+  document.getElementById('savBw').textContent=money(savBw)+' per paycheck';
+  document.getElementById('tlRate').textContent=m0(savMo);
+  const lg=document.getElementById('losGrade'); lg.textContent=g.g; lg.style.color=g.c;
+  document.getElementById('verdictTitle').textContent=g.t;
+
+  const segs=FIXED.map(c=>({label:c.label,v:c.sub,hex:c.hex}));
+  segs.push({label:'Daily living',v:livBw,hex:'#F2A93B',dim:true});
+  segs.push({label:'Savings',v:savBw,hex:'#F2A93B'});
+  const bar=document.getElementById('corrBar'), key=document.getElementById('corrKey');
+  bar.innerHTML=''; key.innerHTML='';
+  segs.forEach(function(s){
+    const col=s.dim?'rgba(242,169,59,0.28)':s.hex;
+    const d=document.createElement('div'); d.className='corr-seg';
+    d.style.width=Math.max(0,s.v/NET*100)+'%'; d.style.background=col;
+    d.title=s.label+' — '+money(s.v); bar.appendChild(d);
+    const k=document.createElement('div'); k.className='ck';
+    k.innerHTML='<i style="background:'+col+'"></i>'+s.label+' <b>'+money(s.v)+'</b>'; key.appendChild(k);
+  });
+  const bal=NET-segs.reduce((a,s)=>a+s.v,0);
+  document.getElementById('corrCheck').textContent='balance '+money(Math.abs(bal)<0.005?0:bal);
+
+  const pct=(savMo/MO_NET*100).toFixed(0);
+  let msg;
+  if(g.g==='F') msg='This leaves '+m0(livMo)+' a month for groceries, medical costs, clothing and everything unplanned. Below what one adult can hold in Tampa — the gap gets covered by a credit card, which is borrowing at 20% to fund a savings account earning 4%. Pull back.';
+  else if(g.g==='E') msg='Saving '+pct+'% of net is exceptional, but it leaves only '+m0(livMo)+' for all daily living, with groceries taking '+m0(livMo*.42)+'. Arithmetically possible, permanently tight, and one dental bill breaks the month.';
+  else if(g.g==='D') msg=pct+'% saved with '+m0(livMo)+' for daily living. Workable if you cook nearly every meal. Little room for a bad month.';
+  else if(g.g==='C') msg=m0(livMo)+' is disciplined but honest — real groceries, occasional meals out, something left when the unplanned arrives. '+pct+'% at your age puts you far ahead.';
+  else if(g.g==='B') msg=m0(livMo)+' covers daily living without rationing at '+pct+'% saved. Solid — but read the hours line below before treating this as your floor.';
+  else msg=m0(livMo)+' for daily living is genuinely comfortable. You could push savings higher without pain.';
+  document.getElementById('verdictText').textContent=msg;
+
+  const f=document.getElementById('forces'); f.innerHTML='';
+  LIVING.forEach(function(x){
+    const el=document.createElement('div'); el.className='force';
+    el.innerHTML='<span>'+x[0]+'</span><b>'+m0(livMo*x[1])+'</b>'; f.appendChild(el);
+  });
+
+  const shock=[80,76,72].map(function(h){
+    const gr=41.83*h, k=gr*0.05, hl=48.65;
+    const net=gr-k-hl-((gr-k-hl)*0.1119);
+    const av=(net-FIXED_BW)*2;
+    return {h:h,liv:av-savMo,g:grade(av-savMo).g};
+  });
+  document.getElementById('shock').innerHTML='<b style="color:var(--paper);font-weight:500">If your hours dip.</b> You are hourly — 2,080 hours is an assumption, not a guarantee. Holding this target: '+
+    shock.map(function(x){
+      const c=x.g==='F'?'var(--clay)':(x.g==='D'||x.g==='E')?'var(--amber)':'var(--sage)';
+      return '<span style="color:'+c+'">'+x.h+' hrs → '+(x.liv<0?'shortfall':m0(x.liv)+' living, '+x.g)+'</span>';
+    }).join(' · ')+'.';
+
+  const annBudget=savMo*12, annTotal=annBudget+SURPLUS;
+  document.getElementById('effLine').innerHTML=
+    '<b style="color:var(--paper);font-weight:500">Budgeted '+m0(savMo)+'/mo = '+m0(annBudget)+' a year.</b> '+
+    'Sweep both third-paycheck months on top and you actually bank <b style="color:var(--sage)">'+m0(annTotal)+' a year</b> — '+
+    m0(annTotal/12)+' a month effective. That is the number to judge yourself on, not the slider.';
+  document.getElementById('ceilTxt').textContent='Hard ceiling '+m0(Math.floor((AVAIL_MO-500)/25)*25)+'/mo';
+  renderBudget(); renderOrder(); renderTimeline(); renderProjection(); renderScen(); renderOpts(); renderTrim();
+}
+
+/* ═══ PROJECTION ═══ */
+function fv(p,r,n){const i=r/12;return i===0?p*n:p*((Math.pow(1+i,n)-1)/i)}
+function project(){
+  const n=yrs*12, r=ret/100, fundM=Math.min(Math.ceil(RESERVE/savMo),n);
+  const res=fv(savMo,0.04,fundM)*Math.pow(1+0.04/12,Math.max(0,n-fundM));
+  const brok=fv(savMo,r,Math.max(0,n-fundM)), k=fv(K_MO,r,n);
+  const total=res+brok+k, contrib=savMo*n+K_MO*n;
+  return{total:total,contrib:contrib,growth:total-contrib,fundM:fundM,r:r};
+}
+function renderProjection(){
+  const p=project();
+  document.getElementById('projVal').textContent=m0(p.total);
+  document.getElementById('projCap').textContent='at age '+(29+yrs)+" · today's dollars";
+  document.getElementById('projContrib').textContent=m0(p.contrib);
+  document.getElementById('projGrowth').textContent=mk(p.growth);
+  document.getElementById('projMonthly').textContent=m0(savMo+K_MO);
+  document.getElementById('efMonths').textContent=p.fundM+' mo';
+  document.getElementById('retOut').textContent=ret.toFixed(1)+'% real';
+  document.getElementById('yrOut').textContent=yrs+' yrs';
+  const W=620,H=210,L=54,R=12,T=12,B=24, svg=document.getElementById('chart');
+  const pts=[];
+  for(let y=0;y<=yrs;y++){
+    const n=y*12, fm=Math.min(p.fundM,n);
+    pts.push([y, fv(savMo,0.04,fm)*Math.pow(1+0.04/12,Math.max(0,n-fm))+fv(savMo,p.r,Math.max(0,n-fm))+fv(K_MO,p.r,n)]);
+  }
+  const max=pts[pts.length-1][1]||1;
+  const X=y=>L+(y/yrs)*(W-L-R), Y=v=>H-B-(v/max)*(H-T-B);
+  let g='';
+  for(let i=0;i<=4;i++){const v=max*i/4,y=Y(v);
+    g+='<line x1="'+L+'" y1="'+y+'" x2="'+(W-R)+'" y2="'+y+'" stroke="rgba(140,175,215,0.12)"/>';
+    g+='<text x="'+(L-7)+'" y="'+(y+3.5)+'" fill="#7A8AA3" font-size="9" font-family="IBM Plex Mono,monospace" text-anchor="end">'+mk(v)+'</text>';}
+  const st=yrs<=10?2:5;
+  for(let y=0;y<=yrs;y+=st) g+='<text x="'+X(y)+'" y="'+(H-7)+'" fill="#7A8AA3" font-size="9" font-family="IBM Plex Mono,monospace" text-anchor="middle">'+(29+y)+'</text>';
+  let d='M'+X(0)+','+Y(0); pts.forEach(pt=>{d+=' L'+X(pt[0]).toFixed(1)+','+Y(pt[1]).toFixed(1)});
+  g+='<path d="'+d+' L'+X(yrs)+','+(H-B)+' L'+L+','+(H-B)+' Z" fill="url(#gr)"/>';
+  g+='<path d="'+d+'" fill="none" stroke="#6FCF97" stroke-width="2"/>';
+  if(p.fundM/12<=yrs){const fy=p.fundM/12;
+    g+='<line x1="'+X(fy)+'" y1="'+T+'" x2="'+X(fy)+'" y2="'+(H-B)+'" stroke="#F2A93B" stroke-dasharray="3 3" opacity=".7"/>';}
+  svg.innerHTML='<defs><linearGradient id="gr" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6FCF97" stop-opacity=".28"/><stop offset="100%" stop-color="#6FCF97" stop-opacity="0"/></linearGradient></defs>'+g;
+}
+
+/* ═══ BUDGET ═══ */
+function renderBudget(){
+  const mul=view==='mo'?2:view==='yr'?P:1, tb=document.getElementById('budgetBody');
+  const livBw=(AVAIL_MO-savMo)/2, savBw=savMo/2;
+  const row=(a,b,c,cls)=>'<tr class="'+(cls||'')+'"><td>'+a+'</td><td>'+b+'</td><td>'+c+'</td></tr>';
+  tb.innerHTML='';
+  FIXED.forEach(function(cat){
+    tb.innerHTML+=row('<span style="color:'+cat.hex+'">'+cat.label+'</span>',money(cat.sub*mul),(cat.sub/NET*100).toFixed(1)+'%','grp');
+    cat.items.forEach(it=>{tb.innerHTML+=row(it.n+'<span class="note">'+it.note+'</span>',money(it.bw*mul),'')});
+  });
+  tb.innerHTML+=row('<span style="color:var(--amber)">Daily living</span>',money(livBw*mul),(livBw/NET*100).toFixed(1)+'%','grp');
+  LIVING.forEach(x=>{tb.innerHTML+=row(x[0]+'<span class="note">scales with slider</span>',money(livBw*x[1]*mul),'')});
+  tb.innerHTML+=row('<span style="color:var(--sage)">Savings</span>',money(savBw*mul),(savBw/NET*100).toFixed(1)+'%','grp');
+  tb.innerHTML+=row('<b>Total allocated</b>',money(NET*mul),'100.0%','tot');
+  if(view==='mo') tb.innerHTML+=row('<b>Third-paycheck months</b><span class="note">twice a year an extra check lands on top</span>','+'+money(NET),'surplus','tot');
+  if(view==='yr') tb.innerHTML+=row('<b>Surplus from the 2 extra checks</b><span class="note">bills over-funded + unbudgeted available</span>',money(SURPLUS),'unbudgeted','tot');
+}
+
+/* ═══ ORDER + TIMELINE ═══ */
+function renderOrder(){
+  const s=[
+    {t:'Capture the 401k match',d:'Already running — you defer 5%, Stantec matches 4%. Never drop below 5%.',v:'$7,831/yr',c:'var(--sage)',mo:0},
+    {t:'Starter buffer — $2,000',d:'Absorbs a car repair or a flight without a credit card. Keep $1,200 of it in checking as the biweekly float — see the Budget tab.',v:'$2,000',c:'var(--amber)',mo:STARTER/savMo},
+    {t:'Tax reserve — $3,500',d:'Withholding is set as if you get the standard deduction. If you file 1040-NR you do not. Hard date: April 2028.',v:'$3,500',c:'var(--clay)',mo:(STARTER+TAXRES)/savMo},
+    {t:'Emergency fund — $13,000',d:'Six months of core needs. Liquid at ~4% — and as a nonresident that interest is US tax-free.',v:'$13,000',c:'var(--cyan)',mo:(STARTER+TAXRES+EF)/savMo},
+    {t:'NIW reserve — $10,000',d:'Attorney $6,000 plus filing $4,000. The path that eventually ends the nonresident tax drag.',v:'$10,000',c:'var(--violet)',mo:RESERVE/savMo},
+    {t:'Then invest, every payday',d:'One index fund, bought automatically, never sold. See the How to invest tab.',v:'ongoing',c:'var(--sage)',mo:null}
+  ];
+  const el=document.getElementById('orderStack'); el.innerHTML='';
+  s.forEach(function(x,i){
+    const when=x.mo===0?'active now':x.mo===null?'month '+Math.ceil(RESERVE/savMo)+' onward':'by month '+Math.ceil(x.mo);
+    el.innerHTML+='<div class="stage" style="border-left-color:'+x.c+'"><div class="stage-n">'+String(i+1).padStart(2,'0')+
+      '</div><div><div class="stage-t">'+x.t+'</div><div class="stage-d">'+x.d+'</div></div><div class="stage-v">'+x.v+'<small>'+when+'</small></div></div>';
+  });
+}
+function renderTimeline(){
+  const marks=[[STARTER,'Starter buffer full'],[STARTER+TAXRES,'Tax reserve full'],
+    [STARTER+TAXRES+EF,'Emergency fund full — 6 months covered'],[RESERVE,'NIW reserve full — investing begins']];
+  const tb=document.getElementById('tlBody'); tb.innerHTML='';
+  let cash=0, brok=0, hit={};
+  const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  for(let m=1;m<=24;m++){
+    cash+=savMo;
+    let note='', isMark=false;
+    if(cash>RESERVE){brok=(brok+(cash-RESERVE))*(1+ret/100/12); cash=RESERVE}
+    else if(brok>0){brok=(brok+savMo)*(1+ret/100/12)}
+    marks.forEach(function(x){ if(cash>=x[0]&&!hit[x[0]]){hit[x[0]]=1; note=x[1]; isMark=true} });
+    if(!note){
+      const nxt=marks.find(x=>cash<x[0]);
+      note=nxt?'building toward '+nxt[1].split(' full')[0].toLowerCase():'investing every payday';
+    }
+    const abs=6+m; const lbl=MON[abs%12]+' '+(2026+Math.floor(abs/12));
+    tb.innerHTML+='<tr class="'+(isMark?'mark':'')+'"><td>M'+m+'<span class="note">'+lbl+'</span></td><td>'+m0(cash)+'</td><td>'+
+      (brok>0?m0(brok):'—')+'</td><td>'+m0(cash+brok)+'</td><td class="txt" style="text-align:left;font-size:11.5px;color:'+(isMark?'var(--amber)':'var(--muted)')+'">'+note+'</td></tr>';
+  }
+}
+
+/* ═══ HISTORICAL DATA ═══ */
+const SP={1928:43.81,1929:-8.30,1930:-25.12,1931:-43.84,1932:-8.64,1933:49.98,1934:-1.19,1935:46.74,1936:31.94,1937:-35.34,1938:29.28,1939:-1.10,1940:-10.67,1941:-12.77,1942:19.17,1943:25.06,1944:19.03,1945:35.82,1946:-8.43,1947:5.20,1948:5.70,1949:18.30,1950:30.81,1951:23.68,1952:18.15,1953:-1.21,1954:52.56,1955:32.60,1956:7.44,1957:-10.46,1958:43.72,1959:12.06,1960:0.34,1961:26.64,1962:-8.81,1963:22.61,1964:16.42,1965:12.40,1966:-9.97,1967:23.80,1968:10.81,1969:-8.24,1970:3.56,1971:14.22,1972:18.76,1973:-14.31,1974:-25.90,1975:37.00,1976:23.83,1977:-6.98,1978:6.51,1979:18.52,1980:31.74,1981:-4.70,1982:20.42,1983:22.34,1984:6.15,1985:31.24,1986:18.49,1987:5.81,1988:16.54,1989:31.48,1990:-3.06,1991:30.23,1992:7.49,1993:9.97,1994:1.33,1995:37.20,1996:22.68,1997:33.10,1998:28.34,1999:20.89,2000:-9.03,2001:-11.85,2002:-21.97,2003:28.36,2004:10.74,2005:4.83,2006:15.61,2007:5.48,2008:-36.55,2009:25.94,2010:14.82,2011:2.10,2012:15.89,2013:32.15,2014:13.52,2015:1.38,2016:11.96,2017:21.83,2018:-4.38,2019:31.49,2020:18.40,2021:28.71,2022:-18.11,2023:26.29,2024:25.02};
+const CPI={1928:-1.2,1929:0,1930:-2.7,1931:-8.9,1932:-10.3,1933:-5.2,1934:3.5,1935:2.6,1936:1.0,1937:3.7,1938:-2.0,1939:-1.3,1940:0.7,1941:5.1,1942:10.9,1943:6.1,1944:1.7,1945:2.3,1946:8.5,1947:14.4,1948:8.1,1949:-1.2,1950:1.3,1951:7.9,1952:1.9,1953:0.8,1954:0.7,1955:-0.4,1956:1.5,1957:3.3,1958:2.8,1959:0.7,1960:1.7,1961:1.0,1962:1.0,1963:1.3,1964:1.3,1965:1.6,1966:2.9,1967:3.1,1968:4.2,1969:5.5,1970:5.7,1971:4.4,1972:3.2,1973:6.2,1974:11.0,1975:9.1,1976:5.8,1977:6.5,1978:7.6,1979:11.3,1980:13.5,1981:10.3,1982:6.2,1983:3.2,1984:4.3,1985:3.6,1986:1.9,1987:3.6,1988:4.1,1989:4.8,1990:5.4,1991:4.2,1992:3.0,1993:3.0,1994:2.6,1995:2.8,1996:3.0,1997:2.3,1998:1.6,1999:2.2,2000:3.4,2001:2.8,2002:1.6,2003:2.3,2004:2.7,2005:3.4,2006:3.2,2007:2.8,2008:3.8,2009:-0.4,2010:1.6,2011:3.2,2012:2.1,2013:1.5,2014:1.6,2015:0.1,2016:1.3,2017:2.1,2018:2.4,2019:1.8,2020:1.2,2021:4.7,2022:8.0,2023:4.1,2024:2.9};
+
+function runHist(start,len,pm){
+  let bal=0,cum=1;
+  for(let y=start;y<start+len;y++){
+    const mr=Math.pow(1+SP[y]/100,1/12);          // annual return spread monthly
+    for(let m=0;m<12;m++){ bal=(bal+pm)*mr; }
+    cum*=(1+CPI[y]/100);
+  }
+  return bal/cum;
+}
+function realCagr(start,len){
+  let c=1; for(let y=start;y<start+len;y++) c*=(1+SP[y]/100)/(1+CPI[y]/100);
+  return (Math.pow(c,1/len)-1)*100;
+}
+function renderScen(){
+  const pm=savMo+K_MO, len=horizon, out=[];
+  for(let s=1928;s+len-1<=2024;s++) out.push({s:s,v:runHist(s,len,pm)});
+  out.sort((a,b)=>a.v-b.v);
+  const contrib=pm*12*len, n=out.length;
+  const below=out.filter(x=>x.v<contrib).length;
+  const kpi=[
+    ['You contribute',m0(contrib),'over '+len+' years, including 401k and match','var(--paper)'],
+    ['Worst outcome',mk(out[0].v),'starting '+out[0].s+' — real CAGR '+realCagr(out[0].s,len).toFixed(1)+'%','var(--clay)'],
+    ['Median outcome',mk(out[Math.floor(n/2)].v),'starting '+out[Math.floor(n/2)].s+' — the typical result','var(--sage)'],
+    ['Best outcome',mk(out[n-1].v),'starting '+out[n-1].s,'var(--cyan)'],
+    ['Windows below what you put in',below+' of '+n,below===0?'never happened over this horizon':(below/n*100).toFixed(0)+'% of starts','var(--amber)']
+  ];
+  document.getElementById('scenKpi').innerHTML=kpi.map(x=>'<div class="mini"><div class="mini-l">'+x[0]+'</div><div class="mini-v" style="color:'+x[3]+'">'+x[1]+'</div><div class="mini-d">'+x[2]+'</div></div>').join('');
+
+  const W=620,H=220,L=54,R=10,T=14,B=26, max=out[n-1].v;
+  const bw=(W-L-R)/n;
+  let g='';
+  for(let i=0;i<=4;i++){const v=max*i/4,y=H-B-(v/max)*(H-T-B);
+    g+='<line x1="'+L+'" y1="'+y+'" x2="'+(W-R)+'" y2="'+y+'" stroke="rgba(140,175,215,0.12)"/>';
+    g+='<text x="'+(L-7)+'" y="'+(y+3.5)+'" fill="#7A8AA3" font-size="9" font-family="IBM Plex Mono,monospace" text-anchor="end">'+mk(v)+'</text>';}
+  out.forEach(function(o,i){
+    const h=(o.v/max)*(H-T-B), col=o.v<contrib?'#E4735E':o.v<contrib*1.8?'#F2A93B':'#6FCF97';
+    g+='<rect x="'+(L+i*bw).toFixed(1)+'" y="'+(H-B-h).toFixed(1)+'" width="'+Math.max(1,bw-0.6).toFixed(1)+'" height="'+h.toFixed(1)+'" fill="'+col+'" opacity=".85"><title>'+o.s+'–'+(o.s+len-1)+': '+mk(o.v)+'</title></rect>';
+  });
+  const cy=H-B-(contrib/max)*(H-T-B);
+  g+='<line x1="'+L+'" y1="'+cy+'" x2="'+(W-R)+'" y2="'+cy+'" stroke="#E8EDF2" stroke-dasharray="4 3" stroke-width="1.2"/>';
+  g+='<text x="'+(W-R)+'" y="'+(cy-6)+'" fill="#E8EDF2" font-size="9" font-family="IBM Plex Mono,monospace" text-anchor="end">what you contributed</text>';
+  g+='<text x="'+L+'" y="'+(H-8)+'" fill="#7A8AA3" font-size="9" font-family="IBM Plex Mono,monospace">worst start</text>';
+  g+='<text x="'+(W-R)+'" y="'+(H-8)+'" fill="#7A8AA3" font-size="9" font-family="IBM Plex Mono,monospace" text-anchor="end">best start</text>';
+  document.getElementById('distChart').innerHTML=g;
+
+  const dis=[[1929,'Crash of 1929, then the Depression'],[1965,'Stagflation — the lost decade'],[1968,'Worst modern 30-year start'],[1972,'The 1973–74 crash immediately'],[1995,'Dot-com bust and 2008, both mid-window']];
+  document.getElementById('disasterBody').innerHTML=dis.filter(x=>x[0]+29<=2024).map(function(x){
+    return '<tr><td>'+x[0]+'</td><td class="txt" style="text-align:left;color:var(--muted);font-size:11.5px">'+x[1]+'</td><td>'+mk(runHist(x[0],30,pm))+'</td><td>'+realCagr(x[0],30).toFixed(1)+'%</td></tr>';
+  }).join('');
+
+  const b30=[]; for(let s=1928;s+29<=2024;s++) b30.push(runHist(s,30,pm)<pm*360);
+  document.getElementById('scenNote').innerHTML='Across all '+b30.length+' thirty-year windows since 1928 — including starting into the Great Depression, the 1970s, and the dot-com peak — <b style="color:var(--paper)">not one ended with less than you put in</b>. Over ten years, however, '+
+    (function(){let c=0,t=0;for(let s=1928;s+9<=2024;s++){t++;if(runHist(s,10,pm)<pm*120)c++}return c+' of '+t+' windows did'})()+
+    '. That is the whole argument for a long horizon: time, not timing, is what makes this work. It is also why the emergency fund sits in cash — money you might need in three years has no business in the market.';
+}
+
+/* ═══ STATIC CONTENT ═══ */
+(function(){
+  document.getElementById('ovCards').innerHTML=[
+    ['Health cover is already paid','$48.65 / check','Medical, dental and vision come out pre-tax before your net. The old plan had a $0 placeholder waiting on HR. Budgeting it again would double-count about $105 a month.','var(--sage)'],
+    ['You capture the full match','5% you, 4% Stantec','Exact to the dollar. $7,831 a year into retirement that never touches your budget.','var(--sage)'],
+    ['Disability cover already exists','Corp Pd LTD','The imputed income lines on your stub mean Stantec pays for your long-term disability and basic group term life. You are more protected than you thought — most people your age have neither.','var(--sage)'],
+    ['No FICA is withheld','$0 SS, $0 Medicare','Consistent with F-1 nonresident status. But your federal withholding assumes a standard deduction you may not get. See Flags.','var(--amber)']
+  ].map(x=>'<div class="mini"><div class="mini-l">'+x[0]+'</div><div class="mini-v" style="color:'+x[3]+'">'+x[1]+'</div><div class="mini-d">'+x[2]+'</div></div>').join('');
+
+  document.getElementById('missCards').innerHTML=[
+    ['Supplemental life cover','$20/mo added','Stantec gives you basic group term life, typically one year of salary — around $87,000. Against nine people who depend on you, that is thin. The workaround for an F-1 holder is buying <b>supplemental cover through the same group plan</b>: individual policies get complicated on a non-immigrant visa, but group plans usually add coverage without immigration underwriting. Ask HR what multiple you can elect.'],
+    ['Community &amp; family occasions','$50/mo added','Funerals, weddings, naming ceremonies, church harvest. For a Ghanaian in the diaspora these are not optional and they are not rare — funeral contributions alone can run into hundreds. Left out of a budget, they get paid from the emergency fund, which is exactly what the emergency fund is not for.']
+  ].map(x=>'<div class="mini"><div class="mini-l">'+x[0]+'</div><div class="mini-v" style="color:var(--sand)">'+x[1]+'</div><div class="mini-d">'+x[2]+'</div></div>').join('');
+
+  document.getElementById('acctStack').innerHTML=[
+    ['401k — already open','Money goes in before tax, grows untouched. You get a 4% match, which is an instant 80% return on your 5% deferral before the market does anything at all. Nothing beats this.','Active','var(--sage)'],
+    ['High-yield savings — open this week','Not investing — parking. Around 4% APY, no risk, withdraw anytime. This is where all four reserves live. As a nonresident, this interest is US tax-free, which makes it unusually good for you specifically.','~4.00% APY','var(--cyan)'],
+    ['Taxable brokerage — open when reserves are full','The account that holds index funds. No contribution limit, no withdrawal rules, fully liquid. Fidelity, Schwab and Vanguard are all free to open and all fine. As an F-1 holder you will file a W-8BEN when you open it.','Month '+Math.ceil(RESERVE/2200),'var(--amber)']
+  ].map((x,i)=>'<div class="stage" style="border-left-color:'+x[3]+'"><div class="stage-n">'+String(i+1).padStart(2,'0')+
+    '</div><div><div class="stage-t">'+x[0]+'</div><div class="stage-d">'+x[1]+'</div></div><div class="stage-v">'+x[2]+'</div></div>').join('');
+
+  document.getElementById('fundBody').innerHTML=[
+    ['Vanguard Total Stock Market','VTI','0.03%','~3,600 US companies — the whole market'],
+    ['Vanguard S&P 500','VOO','0.03%','500 largest US companies'],
+    ['Fidelity 500 Index','FXAIX','0.015%','Same 500 — Fidelity accounts only'],
+    ['iShares Core S&P 500','IVV','0.03%','Same 500 — free at most brokerages'],
+    ['Schwab S&P 500 Index','SWPPX','0.02%','Same 500 — Schwab accounts']
+  ].map(x=>'<tr><td>'+x[0]+'</td><td style="color:var(--cyan)">'+x[1]+'</td><td>'+x[2]+'</td><td class="txt" style="text-align:left;font-size:11.5px">'+x[3]+'</td></tr>').join('');
+
+  document.getElementById('stepList').innerHTML=[
+    ['Open the high-yield savings account first','Ten minutes online. Compare current rates before you pick — they move. Link it to your checking account so transfers are instant. This is where your reserves go, and it is the only account you need for the next year.'],
+    ['Set the automatic transfer for payday','This is the single most important step on the page. Log into your bank, schedule a recurring transfer for the day after each paycheck lands. Money you never see is money you never spend. Manual transfers fail — not sometimes, reliably.'],
+    ['Split the transfer to match the order of operations','One transfer to savings covers everything until month 13. After that, split it: reserves stay put, new money goes to the brokerage.'],
+    ['When reserves are full, open the brokerage','Fidelity, Schwab or Vanguard. You will complete a <code>W-8BEN</code> as a nonresident — the form that tells them your tax status. Expect to provide your passport, visa and SSN.'],
+    ['Set up automatic investing into one fund','Choose a fund from the table above and set a recurring purchase on payday. Fractional shares mean any dollar amount works. Turn on dividend reinvestment so payouts buy more shares automatically.'],
+    ['Then do nothing for thirty years','This is the hard part, and it is genuinely the whole strategy. Do not check the balance weekly. Do not sell when it drops — the drops are when your automatic purchase is buying cheaply. Do not add funds because one looked good. The plan works because it is boring.']
+  ].map(x=>'<div class="step"><div><h5>'+x[0]+'</h5><p>'+x[1]+'</p></div></div>').join('');
+
+  document.getElementById('dontList').innerHTML='<b style="color:var(--paper)">Do not buy individual stocks</b> with money that matters. <b style="color:var(--paper)">Do not touch crypto, forex or options</b> with the reserve or the long-term money — the leverage that makes them exciting is what makes them unsuitable for this. <b style="color:var(--paper)">Do not buy whole life or universal life insurance</b> from anyone who calls it an investment; term cover plus index funds does the same job for a fraction of the cost. <b style="color:var(--paper)">Do not pay anyone a percentage of your assets</b> to pick funds — a 1% advisory fee on a portfolio that reaches $1M is $10,000 a year for a job one automatic transfer does. <b style="color:var(--paper)">Do not try to time the entry.</b> Waiting for a dip is the most expensive habit in investing.';
+
+  document.getElementById('nraCards').innerHTML=[
+    ['Dividends','30% withheld','Every dividend from a US company or ETF is withheld at a flat 30%. Treaties cut this to 15% for many countries — Ghana has no US income tax treaty, so you pay full. On a fund yielding about 1.3%, roughly 0.4% a year.','var(--clay)'],
+    ['Capital gains','30% flat','The IRS is explicit: a nonresident present 183 days or more owes a flat 30% on US-source capital gains. Being an exempt individual under the substantial presence test does not protect you — separate rule. It only bites when you sell, which is another reason not to.','var(--clay)'],
+    ['Savings interest','Tax-free','The rules run in your favour here. Bank deposit interest paid to a nonresident is excluded from US tax. Your reserves earning ~4% are genuinely untaxed.','var(--sage)'],
+    ['401k','Sheltered','No tax on dividends, none on gains, nothing until withdrawal. The only large account that escapes the 30% rules entirely while you are a nonresident.','var(--sage)'],
+    ['US estate tax','$60,000 shield','The one that matters most given who depends on you. A non-domiciled nonresident gets a $60,000 exemption on US-situs assets, against roughly $15M for a citizen. US stocks and ETFs are US-situs; above $60,000 the rate climbs toward 40%. Ghana has no estate tax treaty. Bank deposits are generally excluded.','var(--clay)'],
+    ['Domicile is the escape','Unsettled for you','Estate exposure turns on domicile, not income-tax residency — different tests. Someone living and working here intending to stay may well be US-domiciled, restoring the full exemption. Your OPT-plus-NIW position is genuinely ambiguous and needs a professional.','var(--sand)']
+  ].map(x=>'<div class="mini"><div class="mini-l">'+x[0]+'</div><div class="mini-v" style="color:'+x[3]+';font-size:15px">'+x[1]+'</div><div class="mini-d">'+x[2]+'</div></div>').join('');
+
+  document.getElementById('ghanaCards').innerHTML=[
+    ['Monthly remittance','$200/mo · $2,400/yr','Down from $300. Send via Lemfi or Sendwave — 0–1% fees against 5–8% at Western Union. On $2,400 a year that spread is worth about $170.'],
+    ['Flight fund — dropped','was $75/BW · $1,950/yr','Tampa to Accra runs $900–1,400 round trip. Without this line a visit comes from savings or a card. Consider $40/BW to fund a trip every 18 months.'],
+    ['Emergency travel — dropped','was $30/BW','A last-minute flight home is the single most likely large unplanned expense you face. If you fold nothing else back, ring-fence $1,500 inside the emergency fund.'],
+    ['Sibling development — dropped','was $15/BW · $390/yr','As the eldest of ten the ask will come whether or not there is a line for it. A named fund turns a crisis into a budgeted answer.'],
+    ['Community occasions — now budgeted','$50/mo added','Funerals, weddings, naming ceremonies. Previously invisible in the budget and paid from whatever was nearest.'],
+    ['The raise rule','when income grows','Remittance should rise with income, not lifestyle. Decide the percentage of any raise that goes home now, and the decision is made before it arrives.']
+  ].map(x=>'<div class="mini"><div class="mini-l">'+x[0]+'</div><div class="mini-v" style="color:var(--clay);font-size:14px">'+x[1]+'</div><div class="mini-d">'+x[2]+'</div></div>').join('');
+
+  document.getElementById('flagList').innerHTML=[
+    ['warn','TAX','Withholding assumes a standard deduction you may not get','Your $351.48 per check annualises to $9,138 — matching the tax on your income <b>with</b> the $16,100 standard deduction almost exactly. File 1040-NR and you do not get it; the real bill is nearer $12,680. Roughly <b>$3,500 on a full year</b>. Tax year 2027, payable April 2028, is where it lands.'],
+    ['warn','NRA','30% on dividends and gains while nonresident','See the Nonresident tax tab. It changes where money sits, not how much you save — but it is the largest tax fact in this plan and invisible on a stub.'],
+    ['ok','SET','Internet is inside your $100 utilities','Confirmed — no separate line needed. The housing figure is complete at $845/mo.'],
+    ['ok','SET','Oil and maintenance are separate, as built','Confirmed — $50/mo consumables plus $50/BW repair reserve. Both stay. That reserve builds $1,300 a year, which is roughly one set of tires plus a brake job, so it is sized right for a car you are keeping.'],
+    ['ok','SET','Tithe is 10% of net — $277.90 per check','Confirmed. $7,225 a year, 10.0% of net. Note it moves with your pay: if hours dip, the tithe dips with them automatically, which is one less thing to recalculate.'],
+    ['ok','SET','No debt anywhere','No student loans, no car note, no card balance. This is why a savings rate this high is even arithmetically available at 29.'],
+    ['ok','SET','School finished, Stantec files the H1B','No tuition line. The old $3,000 H1B fund is replaced by the <b>$10,000 NIW reserve</b> — $6,000 attorney, $4,000 filing.'],
+    ['warn','RISK','You are hourly, not salaried','$87,006 assumes 2,080 paid hours. A 10% dip makes a $2,500 target unliveable. Keep the automatic floor conservative and sweep surplus in good months.'],
+    ['q','ASK','Three-paycheck months are unassigned','Twice a year you get a third check — about <b>$5,558 a year</b>. Decide now where it goes or it will disappear into ordinary spending.']
+  ].map(x=>'<div class="flag '+(x[0]==='ok'?'ok':x[0]==='q'?'q':'')+'"><div class="flag-m">'+x[1]+'</div><div><div class="flag-t">'+x[2]+'</div><div class="flag-d">'+x[3]+'</div></div></div>').join('');
+})();
+
+
+
+/* ═══ INVESTMENT OPTIONS ═══ */
+function renderOpts(){
+  const RES=RESERVE, base=0.067, n=360, fm=Math.ceil(RES/savMo);
+  function outcome(rt,rk){
+    return fv(savMo,0.01,fm)*Math.pow(1+0.01/12,n-fm)+fv(savMo,rt,n-fm)+fv(K_MO,rk,n);
+  }
+  const opts=[
+    ['VOO or VTI — broad US index',0.0120,base-0.0120*0.30,base,'The default. Schwab is the most consistently NRA-friendly brokerage in public reports.'],
+    ['VUG — growth tilt',0.0050,base-0.0050*0.30,base,'Same market, lower dividend, so less of it is withheld each year.'],
+    ['VT — total world',0.0145,base-0.0145*0.30,base,'Global diversification, slightly higher yield so slightly more drag.'],
+    ['SCHD — dividend tilt',0.0360,base-0.0360*0.30,base,'Popular, and the worst structural fit for a nonresident.'],
+    ['Raise 401k to 15%',0,base,base,'Sheltered entirely from the 30% rules while you are a nonresident.'],
+    ['Stay in cash — HYSA only',0,0.01,base,'Roughly 4% nominal, about 1% after inflation. Tax-free for you, and far behind.']
+  ];
+  const rows=opts.map(function(o){
+    const v=o[0]==='Stay in cash — HYSA only'?outcome(0.01,base):outcome(o[2],o[3]);
+    return {n:o[0],y:o[1],drag:o[1]*0.30,eff:o[2],v:v,note:o[4]};
+  });
+  const bestIdx=rows.indexOf(rows.reduce((a,b)=>b.v>a.v?b:a));
+  document.getElementById('optBody').innerHTML=rows.map(function(r,i){
+    return '<tr'+(i===bestIdx?' class="mark"':'')+'><td>'+r.n+'<span class="note">'+r.note+'</span></td><td>'+
+      (r.y?(r.y*100).toFixed(2)+'%':'—')+'</td><td>'+(r.drag?'−'+(r.drag*100).toFixed(2)+'%':'none')+'</td><td>'+
+      (r.eff*100).toFixed(2)+'%</td><td style="color:'+(i===bestIdx?'var(--sage)':'var(--paper)')+'">'+mk(r.v)+'</td></tr>';
+  }).join('');
+  const vti=rows[0].v, schd=rows[3].v, k15=rows[4].v, cash=rows[5].v, vug=rows[1].v;
+  document.getElementById('optCards').innerHTML=[
+    ['Fund choice is worth real money',mk(vti-schd),'The gap between a broad index and a dividend fund over 30 years — created almost entirely by the 30% withholding on the higher yield. For a US citizen this gap would be a fraction of the size.','var(--amber)'],
+    ['Growth tilt edge',mk(vug-vti),'What the lower dividend saves you versus VTI. Real, but small enough that diversification should win if you are unsure.','var(--sage)'],
+    ['Sheltering more in the 401k',mk(k15-vti),'Raising your deferral from 5% to 15% dodges the 30% rules entirely. The cost is liquidity — locked to 59½, and 30% withholding plus 10% penalty if you leave the US and cash out.','var(--cyan)'],
+    ['Cost of staying in cash',mk(vti-cash),'What 30 years in a savings account costs you against a broad index fund. This is the number that should end any hesitation about starting.','var(--clay)']
+  ].map(x=>'<div class="mini"><div class="mini-l">'+x[0]+'</div><div class="mini-v" style="color:'+x[3]+';font-size:19px">'+x[1]+'</div><div class="mini-d">'+x[2]+'</div></div>').join('');
+}
+
+/* ═══ TRIM PATH ═══ */
+function renderTrim(){
+  const liv=AVAIL_MO-savMo;
+  document.getElementById('trimLiving').textContent=m0(liv);
+  const trims=[
+    ['Drop ChatGPT and Google, keep Claude','$90/mo AI tools','$50/mo',40],
+    ['Exploration','$75/mo','$40/mo',35],
+    ['Professional development','$54/mo','$25/mo',29],
+    ['Maintenance reserve','$50/check','$35/check',32.50],
+    ['Community occasions','$50/mo','$30/mo',20],
+    ['Car wash','$25/mo','$10/mo',15]
+  ];
+  const tot=trims.reduce((a,b)=>a+b[3],0);
+  document.getElementById('trimBody').innerHTML=trims.map(function(t){
+    return '<tr><td>'+t[0]+'</td><td>'+t[1]+'</td><td>'+t[2]+'</td><td>'+money(t[3])+'</td></tr>';
+  }).join('')+'<tr class="tot"><td><b>Everything trimmed</b></td><td></td><td></td><td>'+money(tot)+'</td></tr>'+
+  '<tr class="tot"><td><b>Daily living after trims</b></td><td></td><td></td><td style="color:'+(liv+tot>=850?'var(--sage)':'var(--clay)')+'">'+m0(liv+tot)+' — LOS '+grade(liv+tot).g+'</td></tr>';
+  document.getElementById('trimNote').innerHTML=
+    'Even cutting every discretionary line I can find, $3,000 lands you at <b style="color:var(--paper)">'+m0(liv+tot)+' a month</b> for groceries and everything unplanned — grade '+grade(liv+tot).g+'. '+
+    'I have deliberately not touched your tithe or your Ghana remittance. Those are commitments, not discretionary spending, and it is not my place to trim them.'+
+    '<br><br>What I would actually do: set the <b style="color:var(--paper)">automatic transfer at '+m0(REC)+'</b>, which holds grade C without trimming anything, and then <b style="color:var(--paper)">manually sweep every surplus dollar</b> — the two third-paycheck months worth '+m0(SURPLUS)+' a year, any overtime, any raise. '+
+    'That gets you to roughly <b style="color:var(--paper)">'+m0(REC+SURPLUS/12)+' a month effective</b> without a budget that breaks the first time your car needs brakes. '+
+    '<br><br><b style="color:var(--paper)">The path that actually reaches $3,000 a month:</b> budget <b style="color:var(--paper)">'+m0(Math.round((36000-SURPLUS)/12/25)*25)+'</b> and sweep both third-paycheck months. That banks '+m0(36000)+' a year — exactly $3,000 a month averaged — while leaving '+m0(AVAIL_MO-Math.round((36000-SURPLUS)/12/25)*25)+' a month to live on instead of '+m0(AVAIL_MO-3000)+'. Same destination, a budget that survives contact with a dentist. The "Hit $36,000/yr" button on the Studio tab sets it.';
+}
+
+/* ═══ PAY CADENCE ═══ */
+(function(){
+  const two=NET*2, three=NET*3, avg=NET*P/12;
+  document.getElementById('cadenceCards').innerHTML=[
+    ['A normal month · 2 checks',money(two),'Happens 10 months a year. This is what actually arrives most of the time.','var(--paper)'],
+    ['A third-check month',money(three),'Happens twice a year. Feels like a windfall; it is really your own money arriving on schedule.','var(--sage)'],
+    ['Average month',money(avg),'26 checks &divide; 12. Right for annual planning, wrong for any single month.','var(--cyan)'],
+    ['What &times;2 would miss',money(NET*P-NET*24)+' / yr','Exactly two paychecks. Budgeting on &times;2 understates your income by this much every year.','var(--clay)']
+  ].map(x=>'<div class="mini"><div class="mini-l">'+x[0]+'</div><div class="mini-v" style="color:'+x[3]+';font-size:19px">'+x[1]+'</div><div class="mini-d">'+x[2]+'</div></div>').join('');
+
+  const bills=745+100+163+129+20+50+75+200+25+50;
+  const setAside=bills*12/P;
+  const short=bills-setAside*2, surplus=setAside*3-bills;
+  document.getElementById('floatNote').innerHTML=
+    'Your genuinely monthly bills &mdash; rent, utilities, insurance, subscriptions, remittance and the rest &mdash; come to <b style="color:var(--paper)">'+money(bills)+' a month</b>. Setting aside '+money(setAside)+' per paycheck covers that exactly across a full year, but not within every month. '+
+    'In a two-check month you set aside '+money(setAside*2)+' against '+money(bills)+' owed, leaving you <b style="color:var(--paper)">'+money(short)+' short</b>. In a three-check month you run '+money(surplus)+' ahead. Over twelve months it nets to zero.'+
+    '<br><br>The catch is timing. If both third-check months fall late in the year, that shortfall accumulates to about <b style="color:var(--paper)">'+m0(short*10)+'</b> before it corrects. '+
+    'So hold roughly <b style="color:var(--paper)">$1,200 as a permanent float in your checking account</b> and never count it as savings. Take it from the starter buffer &mdash; it does not change any total on this page, it just means $1,200 of that $2,000 sits in checking rather than in the high-yield account. Without it, ten months a year look like overspending when they are just calendar arithmetic.';
+})();
+
+/* ═══ STUB ═══ */
+(function(){
+  const rows=[['Gross pay',GROSS,'grp'],['&nbsp;&nbsp;Regular + holiday + training<span class="note">80 hrs @ $41.83</span>',null],
+    ['Pre-tax deductions',-(K401+MED+DEN+VIS),'grp'],['&nbsp;&nbsp;401k — 5.00%',-K401],
+    ['&nbsp;&nbsp;Medical<span class="note">already deducted — do not budget again</span>',-MED],
+    ['&nbsp;&nbsp;Dental',-DEN],['&nbsp;&nbsp;Vision',-VIS],['Federal tax',-FED,'grp'],
+    ['&nbsp;&nbsp;Social Security<span class="note">F-1 nonresident exemption</span>',0],
+    ['&nbsp;&nbsp;Medicare<span class="note">F-1 nonresident exemption</span>',0],
+    ['&nbsp;&nbsp;Florida state tax',0],['Net pay',NET,'tot'],
+    ['Employer 401k match<span class="note">4.00% — never appears in take-home</span>',MATCH,'grp']];
+  const tb=document.getElementById('stubBody');
+  rows.forEach(function(r){
+    if(r[1]===null){tb.innerHTML+='<tr><td>'+r[0]+'</td><td>—</td><td>—</td><td>—</td></tr>';return}
+    tb.innerHTML+='<tr class="'+(r[2]||'')+'"><td>'+r[0]+'</td><td>'+money(r[1])+'</td><td>'+money(r[1]*B2M)+'</td><td>'+money(r[1]*P)+'</td></tr>';
+  });
+})();
+
+/* ═══ CHECKLIST ═══ */
+const TASKS=[
+  ['Book a CPA who handles nonresident returns','Three questions: residency status, the withholding gap, and whether you are US-domiciled for estate tax.','now'],
+  ['Open a high-yield savings account','~4% APY, US tax-free for you. All four reserves live here.','now'],
+  ['Set the automatic transfer for payday','The single highest-impact action on this page.','now'],
+  ['Ask HR about supplemental life cover','Group plans usually add coverage without immigration underwriting. Individual policies are harder on F-1.','now'],
+  ['Name beneficiaries on every account','Given the estate rules, this matters more for you than most.','now'],
+  ['Download Lemfi or Sendwave','0–1% fees against 5–8%. About $170 a year on $2,400 sent.','now'],
+  ['Assign the two three-paycheck months','About $5,558 a year that vanishes if unassigned.','y1'],
+  ['Park the $3,500 tax reserve','Hard deadline April 2028. Confirm the figure with the CPA first.','y1'],
+  ['Build the emergency fund to $13,000','Six months of core needs.','y1'],
+  ['Start the $10,000 NIW reserve','$6,000 attorney plus $4,000 filing.','y1'],
+  ['Ring-fence $1,500 for Ghana emergency travel','Inside the emergency fund, not separate.','y1'],
+  ['Open the brokerage and buy one index fund','Only after reserves are full. W-8BEN required.','y1'],
+  ['Open a secured credit card','Credit history takes years — start now.','y1'],
+  ['Check hours on every stub','You are hourly. Confirm 80 hours and the 5% deferral.','y1'],
+  ['Book the PE exam','Highest-ROI credential now that school is done.','y2'],
+  ['Prepare your first raise conversation','Write down wins as they happen. Aim 8–12%.','y2']
+];
+(function(){
+  let saved={}; try{saved=JSON.parse(localStorage.getItem('wc3')||'{}')}catch(e){}
+  const el=document.getElementById('chkList');
+  TASKS.forEach(function(t,i){
+    const d=document.createElement('div');
+    const key=t[0];
+    d.className='chk'+(saved[key]?' done':''); d.setAttribute('role','button'); d.tabIndex=0;
+    d.innerHTML='<div class="chk-box"><span class="chk-tick">✓</span></div><div><div class="chk-t">'+t[0]+
+      '</div><div class="chk-d">'+t[1]+'</div></div><span class="chk-w '+t[2]+'">'+(t[2]==='now'?'Now':t[2]==='y1'?'Year 1':'Year 2')+'</span>';
+    const tog=function(){saved[key]=!saved[key];d.classList.toggle('done');try{localStorage.setItem('wc3',JSON.stringify(saved))}catch(e){}prog()};
+    d.addEventListener('click',tog);
+    d.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();tog()}});
+    el.appendChild(d);
+  });
+  function prog(){const n=Object.values(saved).filter(Boolean).length;
+    document.getElementById('progFill').style.width=(n/TASKS.length*100)+'%';
+    document.getElementById('progTxt').textContent=n+' of '+TASKS.length+' complete';}
+  prog();
+})();
+
+/* ═══ WIRING ═══ */
+const sav=document.getElementById('savSlider');
+sav.max=Math.floor((AVAIL_MO-250)/25)*25;
+document.getElementById('savScale').innerHTML='<span>'+m0(+sav.min)+'</span><span>'+m0((+sav.min + +sav.max)/2)+'</span><span>'+m0(+sav.max)+'</span>';
+sav.addEventListener('input',function(e){savMo=+e.target.value;renderStudio()});
+document.getElementById('retSlider').addEventListener('input',function(e){ret=+e.target.value;renderProjection();renderTimeline()});
+document.getElementById('yrSlider').addEventListener('input',function(e){yrs=+e.target.value;renderProjection()});
+document.getElementById('btnRec').addEventListener('click',function(){savMo=REC;sav.value=REC;renderStudio()});
+document.getElementById('btn3000').addEventListener('click',function(){savMo=Math.min(3000,+sav.max);sav.value=savMo;renderStudio()});
+document.getElementById('btn36k').addEventListener('click',function(){savMo=Math.round((36000-SURPLUS)/12/25)*25;sav.value=savMo;renderStudio()});
+document.querySelectorAll('.toggle button[data-v]').forEach(function(b){
+  b.addEventListener('click',function(){
+    document.querySelectorAll('.toggle button[data-v]').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); view=b.dataset.v; renderBudget();});
+});
+document.querySelectorAll('.toggle button[data-h]').forEach(function(b){
+  b.addEventListener('click',function(){
+    document.querySelectorAll('.toggle button[data-h]').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); horizon=+b.dataset.h; renderScen();});
+});
+renderStudio();
+</script>
+</body>
+</html>
