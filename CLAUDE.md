@@ -11,9 +11,11 @@ Finance Tracker/
 ├── index.html        # Full app markup — semantic HTML, ARIA roles, tab structure
 ├── css/
 │   └── styles.css    # Design tokens (CSS variables), layout, components, responsive
-└── js/
-    ├── app.js        # Core app logic — config, data layer, rendering, events
-    └── wealth.js     # Wealth tab — PLAN config, category map, live plan renderers
+├── js/
+│   ├── app.js        # Core app logic — config, data layer, rendering, events
+│   └── wealth.js     # Wealth tab — PLAN config, category map, live plan renderers
+└── tests/
+    └── wealth.test.mjs   # Node unit tests for wealth.js pure functions (node --test)
 ```
 
 ## Architecture

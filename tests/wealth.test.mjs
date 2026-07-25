@@ -121,3 +121,19 @@ test('wlProject math is coherent', () => {
   assert.ok(W.wlProject(3000, 7, 30).total > W.wlProject(3000, 5, 30).total);
   assert.ok(W.wlFV(100, 0, 12) === 1200);                      // zero-rate edge
 });
+
+test('every expense category in the txn form is mapped, excluded, or savings', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const sel = html.match(/<select id="txn-category"[\s\S]*?<\/select>/);
+  assert.ok(sel, 'txn-category select not found');
+  const income = new Set(['Paycheck', 'Freelance', 'Transfer In', 'Other Income']);
+  const decode = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  const cats = [...sel[0].matchAll(/<option[^>]*>([^<]+)<\/option>/g)]
+    .map(m => decode(m[1].trim())).filter(c => !income.has(c));
+  const map = W.wlCatToGroup();
+  const known = c => c in map ||
+    ['Savings Transfer', 'Investment'].includes(c) ||
+    ['Bill Reserve', 'Loan Payment', 'Credit Card Payment', 'Bank Fee'].includes(c);
+  const unknown = cats.filter(c => !known(c));
+  assert.deepEqual(unknown, [], 'unmapped dropdown categories: ' + unknown.join(', '));
+});

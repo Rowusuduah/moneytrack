@@ -52,7 +52,7 @@ const PLAN = {
 
 // MoneyTrack txn category → plan group id ('living' = Daily living card)
 const WEALTH_CATEGORY_MAP = {
-  'Tithe': 'giving', 'Offering': 'giving',
+  'Tithe': 'giving', 'Offering': 'giving', 'Donations': 'giving',
   'Rent': 'housing', 'Utilities': 'housing',
   'Gas': 'transport', 'Car Insurance': 'transport', 'Parking': 'transport', 'Rideshare': 'transport',
   'Subscriptions': 'subs', 'Streaming': 'subs',
