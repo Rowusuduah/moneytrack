@@ -231,8 +231,59 @@ function renderWlHeader(agg, pay, today) {
 }
 
 // Filled in Task 4
-function renderWlBoard(agg) {}
-function renderWlSavings(agg, pay) {}
+function wlBarClass(spent, alloc) {
+  if (alloc <= 0) return spent > 0 ? 'over' : '';
+  const r = spent / alloc;
+  return r > 1 ? 'over' : r >= 0.8 ? 'warn' : '';
+}
+
+function wlRowHTML(label, alloc, spent, chipsHTML) {
+  const left = wlRound(alloc - spent);
+  const pct  = alloc > 0 ? Math.min(100, spent / alloc * 100) : (spent > 0 ? 100 : 0);
+  const cls  = wlBarClass(spent, alloc);
+  const leftTxt = left >= 0
+    ? '<span class="wl-left">' + fmt(left) + ' left</span>'
+    : '<span class="wl-left over">over by ' + fmt(-left) + '</span>';
+  return '<div class="wl-row">' +
+    '<div class="wl-row-head"><span>' + escapeHTML(label) + '</span>' +
+    '<span><span class="amt">' + fmt(spent) + ' of ' + fmt(alloc) + ' · </span>' + leftTxt + '</span></div>' +
+    '<div class="wl-bar"><div class="wl-bar-fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
+    (chipsHTML ? '<div class="wl-chips">' + chipsHTML + '</div>' : '') +
+    '</div>';
+}
+
+function renderWlBoard(agg) {
+  const el = document.getElementById('wl-board');
+  if (!el) return;
+  let html = '';
+  PLAN.groups.forEach(g => {
+    const chips = g.bills.map(b => {
+      const paid = agg.bills[b.id];
+      return paid
+        ? '<span class="wl-chip paid">' + escapeHTML(b.label) + ' ✓ paid ' + fmtDate(paid.lastDate) + '</span>'
+        : '<span class="wl-chip">' + escapeHTML(b.label) + ' — due</span>';
+    }).join('');
+    html += wlRowHTML(g.label, g.monthly, agg.groups[g.id] || 0, chips);
+  });
+  html += wlRowHTML('Daily living', wlDailyLivingMo(), agg.groups.living || 0, '');
+  el.innerHTML = html;
+}
+
+function renderWlSavings(agg, pay) {
+  const el = document.getElementById('wl-savings');
+  if (!el) return;
+  const target = PLAN.savingsTargetMo;
+  const saved  = agg.savingsThisMonth;
+  const toGo   = wlRound(Math.max(0, target - saved));
+  const pending = pay.expected - agg.paychecksLanded;
+  let note;
+  if (saved >= target) note = 'Target hit. Anything more is ahead of plan.';
+  else note = fmt(toGo) + ' to go' + (pending > 0
+    ? ' · ' + pending + ' paycheck' + (pending > 1 ? 's' : '') + ' still to land'
+    : ' · all paychecks landed — this month will close short unless you top up');
+  el.innerHTML = wlRowHTML('Saved (Savings Transfer + Investment)', target, saved, '') +
+    '<p class="wl-sub" style="margin-top:8px">' + escapeHTML(note) + '</p>';
+}
 // Filled in Task 5
 function renderWlLadder() {}
 function renderWlFooter(agg) {}
