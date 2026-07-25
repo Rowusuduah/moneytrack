@@ -12,7 +12,8 @@ Finance Tracker/
 ├── css/
 │   └── styles.css    # Design tokens (CSS variables), layout, components, responsive
 └── js/
-    └── app.js        # All application logic — config, data layer, rendering, events
+    ├── app.js        # Core app logic — config, data layer, rendering, events
+    └── wealth.js     # Wealth tab — PLAN config, category map, live plan renderers
 ```
 
 ## Architecture
@@ -23,6 +24,15 @@ The `ACCOUNTS` array in `js/app.js` (line 10) is the **only** place account defi
 - Do NOT hardcode account IDs (`chase_checking`, `usf_checking`, etc.) elsewhere in the codebase
 - Account `<select>` dropdowns (`#txn-account`, `#filter-account`) must be populated dynamically from `ACCOUNTS`
 - KPI calculations, NW trend, and export must derive group totals using `.filter(a => a.group === '...')` on `ACCOUNTS`
+
+### Single source of truth for plan numbers
+The `PLAN` object at the top of `js/wealth.js` is the **only** place Wealth-plan
+numbers live (net per check, payAnchor, group allocations, milestones, savings
+target). Pay or rent changes are one-line edits there. `WEALTH_CATEGORY_MAP`
+in the same file maps transaction categories to plan groups; a category missing
+from the map shows up in the Wealth tab's "not counted" footer — add it to the
+map rather than special-casing renderers. Top-level code in wealth.js must stay
+DOM-free and app.js-free so `node --test` (run from the repo root) keeps working.
 
 ### Data layer
 - `loadSnapshots()` / `saveSnapshots()` — account balance snapshots
