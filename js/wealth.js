@@ -285,8 +285,53 @@ function renderWlSavings(agg, pay) {
     '<p class="wl-sub" style="margin-top:8px">' + escapeHTML(note) + '</p>';
 }
 // Filled in Task 5
-function renderWlLadder() {}
-function renderWlFooter(agg) {}
+function wlSavingsTotal(snap) {
+  const b = (snap && snap.accounts) || {};
+  return roundMoney(ACCOUNTS.filter(a => a.group === 'savings')
+    .reduce((s, a) => s + safeAmt(b[a.id]), 0));
+}
+
+function renderWlLadder() {
+  const el = document.getElementById('wl-ladder');
+  if (!el) return;
+  const snap = getLatestSnapshot();
+  if (!snap) {
+    el.innerHTML = '<p class="wl-sub">No snapshot yet — record your balances in the ' +
+      'Accounts tab and the ladder fills from your savings accounts.</p>';
+    return;
+  }
+  const total  = wlSavingsTotal(snap);
+  const stages = wlMilestones(total);
+  let html = '';
+  stages.forEach((s, i) => {
+    const pct = Math.min(100, s.amount > 0 ? s.filled / s.amount * 100 : 0);
+    html += '<div class="wl-stage ' + (s.done ? 'done' : s.active ? 'active' : '') + '">' +
+      '<div class="wl-stage-n">' + (s.done ? '✓' : i + 1) + '</div>' +
+      '<div class="wl-stage-body">' +
+      '<div class="wl-row-head"><span>' + escapeHTML(s.label) + '</span>' +
+      '<span class="amt">' + fmt(s.filled) + ' of ' + fmt(s.amount) + '</span></div>' +
+      '<div class="wl-bar"><div class="wl-bar-fill' + (s.done ? '' : ' warn') + '" style="width:' + pct + '%"></div></div>' +
+      '</div></div>';
+  });
+  html += '<p class="wl-sub" style="margin-top:8px">' + fmt(total) +
+    ' in savings accounts · as of ' + fmtDate(snap.date) + ' snapshot</p>';
+  el.innerHTML = html;
+}
+
+function renderWlFooter(agg) {
+  const el = document.getElementById('wl-footer');
+  if (!el) return;
+  let html = '';
+  if (agg.unmapped.length) {
+    html += '<div class="wl-callout"><b>Not counted on the board:</b> ' +
+      agg.unmapped.map(u => escapeHTML(u.category) + ' ' + fmt(u.total)).join(' · ') +
+      ' — add these categories to WEALTH_CATEGORY_MAP in js/wealth.js if they belong to a group.</div>';
+  }
+  html += '<p class="wl-sub" style="margin-top:' + (agg.unmapped.length ? '10px' : '0') + '">' +
+    'The full plan — investing mechanics, nonresident tax, Ghana, 97-year scenarios — ' +
+    '<a href="plan.html" target="_blank" rel="noopener">read it here</a>.</p>';
+  el.innerHTML = html;
+}
 // Filled in Task 6
 function bindWlStudio() {}
 function renderWlStudio() {}
