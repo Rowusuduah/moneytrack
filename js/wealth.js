@@ -150,3 +150,41 @@ function wlAggregate(txns, todayIso) {
     unmapped: Object.entries(unmappedByCat).map(([category, total]) => ({ category, total })),
   };
 }
+
+// Sequential fill of the four reserve milestones from total savings balance.
+function wlMilestones(savingsTotal) {
+  let remaining = Math.max(0, savingsTotal || 0);
+  let activeSeen = false;
+  return PLAN.milestones.map(ms => {
+    const filled = wlRound(Math.min(ms.amount, remaining));
+    remaining = wlRound(Math.max(0, remaining - ms.amount));
+    const done = filled >= ms.amount - 0.005;
+    const active = !done && !activeSeen && (activeSeen = true);
+    return { id: ms.id, label: ms.label, amount: ms.amount, filled, done, active };
+  });
+}
+
+// Level of service for a given monthly daily-living amount (plan.html grade()).
+function wlGrade(livMo) {
+  if (livMo >= 1300) return { g: 'A', t: 'Comfortable',     cls: 'a' };
+  if (livMo >= 1050) return { g: 'B', t: 'Sustainable',     cls: 'b' };
+  if (livMo >= 850)  return { g: 'C', t: 'Disciplined',     cls: 'c' };
+  if (livMo >= 650)  return { g: 'D', t: 'Tight',           cls: 'd' };
+  if (livMo >= 500)  return { g: 'E', t: 'Very tight',      cls: 'e' };
+  return               { g: 'F', t: 'Not sustainable', cls: 'f' };
+}
+
+function wlFV(p, r, n) { const i = r / 12; return i === 0 ? p * n : p * ((Math.pow(1 + i, n) - 1) / i); }
+
+// Reserve phase (cash at 4%) until the 28,500 ladder is funded, then invest.
+function wlProject(savMo, retPct, years) {
+  const n = years * 12, r = retPct / 100;
+  const reserve = PLAN.milestones.reduce((s, m) => s + m.amount, 0);
+  const fundM = Math.min(Math.ceil(reserve / savMo), n);
+  const res   = wlFV(savMo, 0.04, fundM) * Math.pow(1 + 0.04 / 12, Math.max(0, n - fundM));
+  const brok  = wlFV(savMo, r, Math.max(0, n - fundM));
+  const k     = wlFV(PLAN.kMo, r, n);
+  const total = res + brok + k;
+  const contrib = savMo * n + PLAN.kMo * n;
+  return { total, contrib, growth: total - contrib, fundM };
+}

@@ -85,3 +85,39 @@ test('wlAggregate: empty month is all zeros, no crash', () => {
   assert.deepEqual(a.unmapped, []);
   assert.equal(Object.values(a.groups).every(v => v === 0), true);
 });
+
+test('wlMilestones fills sequentially', () => {
+  const zero = W.wlMilestones(0);
+  assert.equal(zero[0].filled, 0);
+  assert.equal(zero[0].active, true);
+  assert.equal(zero.filter(s => s.active).length, 1);
+
+  const mid = W.wlMilestones(4200);
+  assert.equal(mid[0].filled, 2000); assert.equal(mid[0].done, true);
+  assert.equal(mid[1].filled, 2200); assert.equal(mid[1].active, true);
+  assert.equal(mid[2].filled, 0);
+
+  const done = W.wlMilestones(28500);
+  assert.equal(done.every(s => s.done), true);
+  assert.equal(done.some(s => s.active), false);
+});
+
+test('wlGrade thresholds match the plan', () => {
+  assert.equal(W.wlGrade(1300).g, 'A');
+  assert.equal(W.wlGrade(1050).g, 'B');
+  assert.equal(W.wlGrade(850).g,  'C');
+  assert.equal(W.wlGrade(650).g,  'D');
+  assert.equal(W.wlGrade(500).g,  'E');
+  assert.equal(W.wlGrade(499).g,  'F');
+  assert.equal(W.wlGrade(108).g,  'F');
+});
+
+test('wlProject math is coherent', () => {
+  const p = W.wlProject(3000, 6.7, 30);
+  assert.equal(p.fundM, 10);                                   // ceil(28500/3000)
+  assert.equal(p.contrib, 3000 * 360 + 652.56 * 360);
+  assert.ok(Math.abs(p.growth - (p.total - p.contrib)) < 0.01);
+  assert.ok(p.total > p.contrib);
+  assert.ok(W.wlProject(3000, 7, 30).total > W.wlProject(3000, 5, 30).total);
+  assert.ok(W.wlFV(100, 0, 12) === 1200);                      // zero-rate edge
+});
