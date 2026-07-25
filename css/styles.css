@@ -835,6 +835,32 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 .wl-proj-val { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .wl-ctrl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 
+/* ── Wealth v2: window toggle + charts ─────────────────────── */
+.wl-mode { display: flex; gap: 6px; margin: 14px 0; }
+.wl-mode button { background: var(--surf); border: 1px solid var(--border); color: var(--muted);
+  border-radius: var(--radius-sm); padding: 6px 14px; font-size: 12px; cursor: pointer; }
+.wl-mode button:hover { color: var(--text); }
+.wl-mode button.on { background: var(--surf3); color: var(--text); border-color: var(--brig); font-weight: 600; }
+.wl-varrow { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 12px; }
+.wl-var-label { flex: 0 0 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wl-var-track { flex: 1; position: relative; height: 12px; background: var(--surf3);
+  border-radius: 3px; overflow: hidden; }
+.wl-var-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--green); opacity: .85; }
+.wl-var-fill.over { background: var(--red); }
+.wl-var-ref { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--brig); }
+.wl-var-clip { position: absolute; right: 2px; top: -1px; color: var(--red); font-size: 10px; }
+.wl-var-delta { flex: 0 0 110px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.wl-var-delta.over { color: var(--red); font-weight: 600; }
+.wl-ch-under, .wl-ch-over { fill: none; stroke-width: 2; }
+.wl-ch-under { stroke: var(--green); }
+.wl-ch-over  { stroke: var(--red); }
+.wl-ch-pace  { stroke: var(--gold); stroke-dasharray: 4 3; stroke-width: 1.5; fill: none; }
+.wl-ch-col   { fill: var(--green); opacity: .8; }
+.wl-ch-col.short { fill: var(--gold); }
+.wl-ch-col.over  { fill: var(--red); }
+.wl-ch-target { stroke: var(--gold); stroke-dasharray: 4 3; stroke-width: 1.5; }
+@media (max-width: 560px) { .wl-var-label { flex-basis: 90px; } .wl-var-delta { flex-basis: 88px; } }
+
 /* ─── Reduced Motion ─────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
