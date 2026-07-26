@@ -66,6 +66,10 @@
               aria-controls="sec-wealth" tabindex="-1">
         Wealth
       </button>
+      <button role="tab" id="tab-africa" aria-selected="false"
+              aria-controls="sec-africa" tabindex="-1">
+        Africa
+      </button>
     </div>
 
     <button id="theme-toggle" aria-label="Toggle light/dark theme">☀️</button>
@@ -688,10 +692,30 @@
 
       <div class="card" id="wl-footer"><!-- Rendered by JS --></div>
     </section>
+
+    <!-- ══ AFRICA TAB ═══════════════════════════════════════════ -->
+    <section id="sec-africa" role="tabpanel"
+             aria-labelledby="tab-africa" class="sec">
+      <h2>Africa Investments</h2>
+      <p class="section-sub">Ghana &amp; Nigeria holdings — tracked in their own
+        currency, never mixed into US Net Worth.</p>
+
+      <div class="card" id="af-summary" aria-live="polite"><!-- Rendered by JS --></div>
+
+      <div class="card">
+        <div class="flex gap-8" style="justify-content:space-between;align-items:center">
+          <h3 style="margin:0">Investments</h3>
+          <button class="btn btn-green btn-sm" id="af-add">+ Add investment</button>
+        </div>
+        <div id="af-form" style="display:none"></div>
+        <div id="af-list" aria-live="polite"><!-- Rendered by JS --></div>
+      </div>
+    </section>
   </main>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="js/app.js" defer></script>
   <script src="js/wealth.js" defer></script>
+  <script src="js/africa.js" defer></script>
 </body>
 </html>

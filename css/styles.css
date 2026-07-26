@@ -870,3 +870,18 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
   }
   .dot { animation: none; }
 }
+
+/* ── Africa tab ─────────────────────────────────────────────── */
+.af-sumline { margin: 4px 0; }
+.af-est { margin-top: 8px; font-size: 15px; }
+.af-country { margin: 14px 0 4px; font-size: 12px; font-weight: 600;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.af-item { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center;
+  padding: 10px 0; border-bottom: 1px solid var(--surf2); }
+.af-item:last-child { border-bottom: none; }
+.af-name { font-weight: 600; }
+.af-meta { font-size: 12px; color: var(--muted); flex-basis: 100%; }
+.af-gain { color: var(--green); }
+.af-loss { color: var(--red); }
+.af-val-input { width: 110px; }
+.af-row-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
