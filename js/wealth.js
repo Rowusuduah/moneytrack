@@ -77,6 +77,17 @@ function wlFixedMo() { return wlRound(PLAN.groups.reduce((s, g) => s + g.monthly
 function wlAvailMo() { return wlRound(2 * PLAN.netPerCheck - wlFixedMo()); }
 function wlDailyLivingMo() { return wlRound(wlAvailMo() - PLAN.savingsTargetMo); }
 
+// Bill-level plan amounts keyed by txn category, for the Tracker Budget
+// card's "Fill from Wealth plan" prefill. A bill prices its line once: the
+// amount lands on its first category, so alias categories never double it.
+function wlPlanBudgets() {
+  const out = {};
+  PLAN.groups.forEach(g => g.bills.forEach(b => {
+    if (b.categories.length) out[b.categories[0]] = wlRound(b.monthly);
+  }));
+  return out;
+}
+
 const WL_FACTORS = { day: 12 / 365.25, week: 12 / 52, month: 1, year: 12 };
 const WL_MON3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 

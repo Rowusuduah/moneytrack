@@ -1885,7 +1885,7 @@ function renderBudgetCard() {
     'Rent','Utilities','Insurance','Groceries','Dining Out','Coffee',
     'Gas','Rideshare','Car Insurance','Parking','Medical','Pharmacy','Gym',
     'Clothing','Electronics','Amazon','Streaming','Events','Hobbies',
-    'Tithe','Family Support','Donations','Loan Payment','Bank Fee','Subscriptions',
+    'Tithe','Offering','Family Support','Family Support (Ghana)','Donations','Loan Payment','Bank Fee','Subscriptions',
     'Education','Personal Care','Miscellaneous',
   ];
   el.innerHTML = `<div class="budget-grid">${expenseCats.map(cat => {
@@ -1903,6 +1903,7 @@ function renderBudgetCard() {
   }).join('')}</div>
   <div class="flex gap-8 mt-12">
     <button class="btn btn-green" id="save-budgets">Save Budgets</button>
+    <button class="btn btn-ghost btn-sm" id="prefill-budgets">Fill from Wealth plan</button>
     <button class="btn btn-ghost btn-sm" id="clear-budgets">Clear All</button>
   </div>`;
 }
@@ -3681,6 +3682,10 @@ function bindEvents() {
   // Budget card — delegated (rendered dynamically)
   document.addEventListener('click', e => {
     if (e.target.id === 'save-budgets')  saveBudgetsAction();
+    if (e.target.id === 'prefill-budgets') {
+      saveBudgets({ ...loadBudgets(), ...wlPlanBudgets() });
+      renderBudgetCard(); renderCategoryBreakdown(getFilteredTxns());
+    }
     if (e.target.id === 'clear-budgets') { saveBudgets({}); renderBudgetCard(); renderCategoryBreakdown(getFilteredTxns()); }
     if (e.target.id === 'save-debt-meta') saveDebtMetaAction();
     // Loans

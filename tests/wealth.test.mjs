@@ -210,3 +210,14 @@ test('wlSavingsByMonth zero-fills and orders oldest first', () => {
   assert.equal(m[0].total, 0);
   assert.equal(m[0].label, 'Feb');
 });
+
+test('wlPlanBudgets maps each priced bill line to its category budget', () => {
+  assert.deepEqual(W.wlPlanBudgets(), {
+    'Tithe': 555.80,
+    'Offering': 40,
+    'Rent': 745,
+    'Utilities': 100,
+    'Car Insurance': 163,
+    'Family Support (Ghana)': 200,
+  });
+});

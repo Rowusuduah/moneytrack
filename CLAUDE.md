@@ -37,7 +37,9 @@ map rather than special-casing renderers. Top-level code in wealth.js must stay
 DOM-free and app.js-free so `node --test` (run from the repo root) keeps working.
 The Wealth tab's Day/Week/Month/Year toggle scales allocations by annualized
 factors (12/365.25, 12/52, 1, 12); weeks run Sunday–Saturday; paid chips are
-Month-view only.
+Month-view only. The Tracker Budget card's "Fill from Wealth plan" button
+merges `wlPlanBudgets()` (bill-level amounts, first category per bill) into
+the saved budgets — it never clears categories the plan doesn't price.
 
 ### Data layer
 - `loadSnapshots()` / `saveSnapshots()` — account balance snapshots
