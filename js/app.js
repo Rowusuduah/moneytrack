@@ -778,10 +778,27 @@ function renderAccountKPIs() {
     { label: 'Net Worth',   value: net,        color: net >= 0 ? 'var(--green)' : 'var(--red)',         sub: 'All assets − debt' },
   ];
 
+  if (typeof afLoad === 'function') {
+    const af = afLoad();
+    if (af.investments.length) {
+      const est = afUsdEstimate(afTotals(af.investments).byCurrency, af.rate);
+      kpis.push(est === null
+        ? { label: 'Africa (est.)', value: 0, text: '—', color: 'var(--gold)',
+            sub: 'set rate on Africa tab' }
+        : { label: 'Africa (est.)', value: est, color: 'var(--gold)',
+            sub: `at GH₵${af.rate}/$ · not in Net Worth` });
+      if (est !== null) {
+        kpis.push({ label: 'Global Total', value: roundMoney(net + est),
+          color: net + est >= 0 ? 'var(--green)' : 'var(--red)',
+          sub: 'US Net Worth + Africa est.' });
+      }
+    }
+  }
+
   el.innerHTML = kpis.map(k => `
     <div class="kpi">
       <div class="kpi-label">${escapeHTML(k.label)}</div>
-      <div class="kpi-value" style="color:${k.color}">${fmt(k.value)}</div>
+      <div class="kpi-value" style="color:${k.color}">${k.text ?? fmt(k.value)}</div>
       <div class="kpi-sub">${escapeHTML(k.sub)}</div>
     </div>`).join('');
 
