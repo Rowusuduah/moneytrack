@@ -35,6 +35,9 @@ in the same file maps transaction categories to plan groups; a category missing
 from the map shows up in the Wealth tab's "not counted" footer — add it to the
 map rather than special-casing renderers. Top-level code in wealth.js must stay
 DOM-free and app.js-free so `node --test` (run from the repo root) keeps working.
+The Wealth tab's Day/Week/Month/Year toggle scales allocations by annualized
+factors (12/365.25, 12/52, 1, 12); weeks run Sunday–Saturday; paid chips are
+Month-view only.
 
 ### Data layer
 - `loadSnapshots()` / `saveSnapshots()` — account balance snapshots
