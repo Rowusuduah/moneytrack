@@ -490,6 +490,7 @@ const KEY_GOALS          = 'moneytrack_goals';
 const KEY_THINGS_ITEMS   = 'moneytrack_things_items';
 const KEY_THINGS_ENTRIES = 'moneytrack_things_entries';
 const KEY_THINGS_CATS    = 'moneytrack_things_cats';
+const KEY_AFRICA         = 'moneytrack_africa';
 
 // ─── Utilities ───────────────────────────────────────────────────
 function escapeHTML(s) {
@@ -3003,6 +3004,7 @@ const BACKUP_KEYS = [
   KEY_DEBT_META, KEY_LOANS, KEY_ACCOUNTS, KEY_THEME,
   KEY_BILLS, KEY_GOALS,
   KEY_THINGS_ITEMS, KEY_THINGS_ENTRIES, KEY_THINGS_CATS,
+  KEY_AFRICA,
 ];
 
 function exportBackup() {
@@ -3523,6 +3525,7 @@ const TABS = [
   { tabId: 'tab-analysis', secId: 'sec-analysis' },
   { tabId: 'tab-things',   secId: 'sec-things'   },
   { tabId: 'tab-wealth',   secId: 'sec-wealth'   },
+  { tabId: 'tab-africa',   secId: 'sec-africa'   },
 ];
 
 function switchTab(targetTabId) {
@@ -3541,6 +3544,7 @@ function switchTab(targetTabId) {
   if (targetTabId === 'tab-analysis') renderAnalysisTab();
   if (targetTabId === 'tab-things')   renderThingsTab();
   if (targetTabId === 'tab-wealth')   renderWealthTab();
+  if (targetTabId === 'tab-africa')   renderAfricaTab();
 }
 
 // ─── Theme Toggle ────────────────────────────────────────────────
