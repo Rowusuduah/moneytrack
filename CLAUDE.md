@@ -13,9 +13,11 @@ Finance Tracker/
 │   └── styles.css    # Design tokens (CSS variables), layout, components, responsive
 ├── js/
 │   ├── app.js        # Core app logic — config, data layer, rendering, events
-│   └── wealth.js     # Wealth tab — PLAN config, category map, live plan renderers
+│   ├── wealth.js     # Wealth tab — PLAN config, category map, live plan renderers
+│   └── africa.js     # Africa tab — GHS/USD investments, manual FX rate, renderers
 └── tests/
-    └── wealth.test.mjs   # Node unit tests for wealth.js pure functions (node --test)
+    ├── wealth.test.mjs   # Node unit tests for wealth.js pure functions (node --test)
+    └── africa.test.mjs   # Node unit tests for africa.js pure functions (node --test)
 ```
 
 ## Architecture
@@ -40,6 +42,15 @@ factors (12/365.25, 12/52, 1, 12); weeks run Sunday–Saturday; paid chips are
 Month-view only. The Tracker Budget card's "Fill from Wealth plan" button
 merges `wlPlanBudgets()` (bill-level amounts, first category per bill) into
 the saved budgets — it never clears categories the plan doesn't price.
+
+### Africa investments
+The Africa tab (`js/africa.js`, storage key `moneytrack_africa`) tracks
+Ghana/Nigeria investments in their own currency (GHS or USD) — amounts are
+never converted at rest. One manual rate (GH₵ per 1 USD) powers the
+estimate lines and the Accounts-tab "Africa (est.)" / "Global Total" KPIs;
+Africa money never enters `calcNetWorth`, snapshots, the NW trend, or
+CSV/PDF exports. Top-level africa.js code stays DOM-free so `node --test`
+keeps working.
 
 ### Data layer
 - `loadSnapshots()` / `saveSnapshots()` — account balance snapshots
