@@ -42,6 +42,24 @@ function afGainPct(invested, gain) {
   return afRound(gain / invested * 100);
 }
 
+// One rate point per day: a same-date save replaces that day's point.
+// Returns a new date-sorted array; never mutates the input.
+function afRateHistoryAppend(history, date, rate) {
+  const out = (history || []).filter(p => p.date !== date);
+  out.push({ date, rate });
+  out.sort((a, b) => a.date.localeCompare(b.date));
+  return out;
+}
+
+// Movement between the last two saved rates. Positive pct = more GH₵ per
+// USD = cedi weakened.
+function afRateChange(history) {
+  const h = history || [];
+  if (h.length < 2) return null;
+  const prev = h[h.length - 2], latest = h[h.length - 1];
+  return { prev, latest, pct: afRound((latest.rate - prev.rate) / prev.rate * 100) };
+}
+
 function afFmtMoney(n, currency) {
   const v = isFinite(n) ? n : 0;
   const abs = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
