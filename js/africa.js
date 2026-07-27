@@ -78,6 +78,10 @@ function afLoad() {
   return {
     rate: (typeof d.rate === 'number' && isFinite(d.rate) && d.rate > 0) ? d.rate : null,
     rateUpdated: typeof d.rateUpdated === 'string' ? d.rateUpdated : '',
+    rateHistory: Array.isArray(d.rateHistory)
+      ? d.rateHistory.filter(p => p && typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date)
+          && typeof p.rate === 'number' && isFinite(p.rate) && p.rate > 0)
+      : [],
     investments: Array.isArray(d.investments) ? d.investments : [],
   };
 }
@@ -109,6 +113,7 @@ function renderAfricaTab() {
   bindAfricaTab();
   const data = afLoad();
   renderAfSummary(data);
+  renderAfRateTrend(data);
   renderAfList(data);
 }
 
@@ -145,9 +150,52 @@ function renderAfSummary(data) {
     'value="' + (data.rate ?? '') + '" placeholder="15.50"> GHS ' +
     '<button class="btn btn-ghost btn-sm" id="af-rate-save">Save rate</button>' +
     (data.rateUpdated ? '<span class="af-meta" style="flex-basis:auto">rate saved ' +
-      fmtDate(data.rateUpdated) + '</span>' : '') +
-    '</div>';
+      fmtDate(data.rateUpdated) + afRateNote(data.rateHistory) + '</span>' : '') +
+    '</div>' +
+    '<svg id="af-rate-trend" viewBox="0 0 620 150" ' +
+    'style="width:100%;height:auto;display:block;margin-top:10px" aria-hidden="true"></svg>';
   el.innerHTML = html;
+}
+
+function afRateNote(history) {
+  const chg = afRateChange(history);
+  if (!chg) return '';
+  if (chg.pct === 0) return ' · unchanged since ' + fmtDate(chg.prev.date);
+  return ' · was ' + chg.prev.rate + ' on ' + fmtDate(chg.prev.date) + ' — cedi ' +
+    (chg.pct > 0 ? 'weakened ' : 'strengthened ') + Math.abs(chg.pct).toFixed(1) + '%';
+}
+
+// Rate trend: line through every saved point; hidden until 2+ points.
+function renderAfRateTrend(data) {
+  const svg = document.getElementById('af-rate-trend');
+  if (!svg) return;
+  const h = data.rateHistory;
+  if (h.length < 2) { svg.innerHTML = ''; return; }
+  const W = 620, H = 150, L = 46, R = 12, T = 12, B = 22;
+  const rates = h.map(p => p.rate);
+  const min = Math.min(...rates), max = Math.max(...rates);
+  const pad = (max - min) * 0.15 || max * 0.05 || 1;
+  const lo = min - pad, hi = max + pad;
+  const X = i => L + (i / (h.length - 1)) * (W - L - R);
+  const Y = v => H - B - ((v - lo) / (hi - lo)) * (H - T - B);
+  let g = '';
+  for (let i = 0; i <= 2; i++) {
+    const v = lo + (hi - lo) * i / 2, y = Y(v);
+    g += '<line x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (W - R) + '" y2="' + y.toFixed(1) +
+      '" stroke="currentColor" opacity="0.12"/>';
+    g += '<text x="' + (L - 6) + '" y="' + (y + 3.5).toFixed(1) + '" fill="currentColor" opacity="0.55" ' +
+      'font-size="9" text-anchor="end">' + v.toFixed(2) + '</text>';
+  }
+  let d = '';
+  h.forEach((p, i) => { d += (i ? ' L' : 'M') + X(i).toFixed(1) + ',' + Y(p.rate).toFixed(1); });
+  g += '<path d="' + d + '" fill="none" stroke="currentColor" stroke-width="2" opacity="0.8"/>';
+  const li = h.length - 1;
+  g += '<circle cx="' + X(li).toFixed(1) + '" cy="' + Y(h[li].rate).toFixed(1) + '" r="3.5" fill="currentColor"/>';
+  g += '<text x="' + L + '" y="' + (H - 6) + '" fill="currentColor" opacity="0.55" font-size="9">' +
+    fmtDate(h[0].date) + '</text>';
+  g += '<text x="' + (W - R) + '" y="' + (H - 6) + '" fill="currentColor" opacity="0.55" font-size="9" ' +
+    'text-anchor="end">' + fmtDate(h[li].date) + '</text>';
+  svg.innerHTML = g;
 }
 
 function renderAfList(data) {
@@ -278,8 +326,13 @@ function afSaveRate() {
   const v = parseFloat(document.getElementById('af-rate')?.value);
   if (!(v > 0)) { alert('Rate must be a positive number (GH₵ per 1 USD).'); return; }
   const data = afLoad();
+  // Seed the pre-history rate once so the upgrade loses nothing
+  if (!data.rateHistory.length && data.rate !== null && data.rateUpdated) {
+    data.rateHistory = afRateHistoryAppend(data.rateHistory, data.rateUpdated, data.rate);
+  }
   data.rate = roundMoney(v);
   data.rateUpdated = todayISO();
+  data.rateHistory = afRateHistoryAppend(data.rateHistory, data.rateUpdated, data.rate);
   afSave(data);
   renderAfricaTab();
   renderAccountKPIs();
