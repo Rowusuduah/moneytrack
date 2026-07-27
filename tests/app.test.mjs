@@ -77,3 +77,52 @@ test('csvField leaves plain text and negative numbers untouched', () => {
   assert.equal(A.csvField(-50), '"-50"');
   assert.equal(A.csvField(1234.5), '"1234.5"');
 });
+
+// ── NON_EXPENSE_CATS: payment categories are not spending ──
+
+test('NON_EXPENSE_CATS excludes Credit Card Payment (regression: double-count)', () => {
+  assert.match(src, /NON_EXPENSE_CATS = new Set\(\[[^\]]*'Credit Card Payment'/);
+  assert.match(src, /NON_EXPENSE_CATS = new Set\(\[[^\]]*'Loan Payment'/);
+  assert.match(src, /NON_EXPENSE_CATS = new Set\(\[[^\]]*'Bill Reserve'/);
+});
+
+// ── cardOwedNow: live card balance = snapshot + charges since − payments since ──
+
+const CARD = { id: 'discover', label: 'Discover (Owed)', group: 'debt' };
+const SNAP = { date: '2026-07-20', accounts: { discover: 210 } };
+const CARD_TXNS = [
+  { date: '2026-07-20', type: 'expense',  account: 'discover',       category: 'Groceries',           amount: 999 },     // snapshot day: already in base
+  { date: '2026-07-22', type: 'expense',  account: 'discover',       category: 'Gas',                 amount: 50 },
+  { date: '2026-07-24', type: 'expense',  account: 'discover',       category: 'Dining Out',          amount: 36.40 },
+  { date: '2026-07-23', type: 'expense',  account: 'chase_checking', category: 'Groceries',           amount: 80 },      // not on the card
+  { date: '2026-07-25', type: 'transfer', account: 'chase_checking', toAccount: 'discover',           amount: 100 },     // payment
+  { date: '2026-07-25', type: 'transfer', account: 'chase_checking', toAccount: 'usf_savings_1',      amount: 500 },     // unrelated transfer
+];
+
+test('cardOwedNow: base + charges since snapshot − transfer payments', () => {
+  const r = A.cardOwedNow(CARD, SNAP, CARD_TXNS, 1);
+  assert.equal(r.base, 210);
+  assert.equal(r.charges, 86.40);
+  assert.equal(r.payments, 100);
+  assert.equal(r.owed, 196.40);
+  assert.equal(r.since, '2026-07-20');
+});
+
+test('cardOwedNow: legacy Credit Card Payment expense counts as payment only with a single debt account', () => {
+  const txns = [{ date: '2026-07-25', type: 'expense', account: 'chase_checking', category: 'Credit Card Payment', amount: 75 }];
+  assert.equal(A.cardOwedNow(CARD, SNAP, txns, 1).payments, 75);
+  assert.equal(A.cardOwedNow(CARD, SNAP, txns, 2).payments, 0);
+});
+
+test('cardOwedNow: Credit Card Payment on the card itself is never a charge', () => {
+  const txns = [{ date: '2026-07-25', type: 'expense', account: 'discover', category: 'Credit Card Payment', amount: 60 }];
+  assert.equal(A.cardOwedNow(CARD, SNAP, txns, 2).charges, 0);
+});
+
+test('cardOwedNow without a snapshot counts every dated txn from zero', () => {
+  const r = A.cardOwedNow(CARD, null, CARD_TXNS, 1);
+  assert.equal(r.base, 0);
+  assert.equal(r.since, '');
+  assert.equal(r.charges, 1085.40);   // 999 + 50 + 36.40
+  assert.equal(r.owed, 985.40);
+});
