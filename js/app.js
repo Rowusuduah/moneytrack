@@ -69,8 +69,9 @@ const CATEGORY_COLORS = {
 };
 
 // Categories excluded from expense totals. Savings Transfer and Investment
-// deliberately count as money out (user preference) — only these two stay excluded.
-const NON_EXPENSE_CATS = new Set(['Bill Reserve', 'Loan Payment']);
+// deliberately count as money out (user preference). Credit Card Payment is
+// excluded because the spending was already counted when the card was charged.
+const NON_EXPENSE_CATS = new Set(['Bill Reserve', 'Loan Payment', 'Credit Card Payment']);
 
 // ─── Google Drive Sync ───────────────────────────────────────────
 const GDRIVE_CLIENT_ID    = '394124622094-3cj4ho2ipp3m6pm0un09tg9knelhfqtu.apps.googleusercontent.com';
@@ -677,6 +678,27 @@ function getNextDueDate(bill, todayArg) {
     return new Date(bill.anchorDate + 'T00:00:00');
   }
   return null;
+}
+
+// Live card balance: last snapshot's figure plus charges logged since,
+// minus payments since (transfers to the card; with a single debt account,
+// legacy 'Credit Card Payment' expenses too). The snapshot day itself is
+// already inside the snapshot, so only strictly-later txns count.
+function cardOwedNow(account, snap, txns, debtAccountCount) {
+  const base  = snap ? safeAmt((snap.accounts || {})[account.id]) : 0;
+  const since = snap ? snap.date : '';
+  let charges = 0, payments = 0;
+  for (const t of txns) {
+    if (!t.date || t.date <= since) continue;
+    if (t.type === 'expense' && t.account === account.id && t.category !== 'Credit Card Payment') {
+      charges = roundMoney(charges + safeAmt(t.amount));
+    } else if (t.type === 'transfer' && t.toAccount === account.id) {
+      payments = roundMoney(payments + safeAmt(t.amount));
+    } else if (debtAccountCount === 1 && t.type === 'expense' && t.category === 'Credit Card Payment') {
+      payments = roundMoney(payments + safeAmt(t.amount));
+    }
+  }
+  return { owed: roundMoney(base + charges - payments), base, charges, payments, since };
 }
 
 function loadGoals() {
