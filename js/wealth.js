@@ -57,6 +57,7 @@ const WEALTH_CATEGORY_MAP = {
   'Gas': 'transport', 'Car Insurance': 'transport', 'Parking': 'transport', 'Rideshare': 'transport',
   'Subscriptions': 'subs', 'Streaming': 'subs',
   'Insurance': 'protect', 'Gifts': 'protect', 'Family Support (US)': 'protect', 'Friends Support': 'protect',
+  'Treating Friends': 'protect',
   'Travel': 'explore', 'Events': 'explore',
   'Family Support (Ghana)': 'ghana',
   'Education': 'profdev',

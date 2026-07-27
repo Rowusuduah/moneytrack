@@ -61,6 +61,7 @@ const CATEGORY_COLORS = {
   'Streaming':       '#2dd4bf', 'Events':        '#2dd4bf', 'Hobbies':     '#2dd4bf',
   'Tithe':           '#e879f9', 'Offering':      '#e879f9', 'Family Support':'#e879f9',
   'Family Support (Ghana)': '#e879f9', 'Family Support (US)': '#e879f9', 'Friends Support': '#e879f9',
+  'Treating Friends': '#e879f9',
   'Gifts':           '#e879f9', 'Donations':     '#e879f9',
   'Savings Transfer':'#4ade80', 'Bill Reserve':'#60a5fa', 'Investment':'#4ade80', 'Loan Payment':'#f87171',
   'Credit Card Payment': '#f87171',
@@ -1955,7 +1956,7 @@ function renderBudgetCard() {
     'Rent','Utilities','Insurance','Groceries','Dining Out','Coffee',
     'Gas','Rideshare','Car Insurance','Parking','Medical','Pharmacy','Gym',
     'Clothing','Electronics','Amazon','Streaming','Events','Hobbies',
-    'Tithe','Offering','Family Support (US)','Family Support (Ghana)','Donations','Loan Payment','Bank Fee','Subscriptions',
+    'Tithe','Offering','Family Support (US)','Family Support (Ghana)','Treating Friends','Donations','Loan Payment','Bank Fee','Subscriptions',
     'Education','Personal Care','Miscellaneous',
   ];
   el.innerHTML = `<div class="budget-grid">${expenseCats.map(cat => {
