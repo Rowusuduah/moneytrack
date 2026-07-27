@@ -885,3 +885,7 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 .af-loss { color: var(--red); }
 .af-val-input { width: 110px; }
 .af-row-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
+/* ── Debt: live owed line ───────────────────────────────────── */
+.debt-owed-now { margin: 6px 0 10px; font-size: 14px; }
+.debt-owed-break { font-size: 12px; color: var(--muted); margin-top: 2px; }

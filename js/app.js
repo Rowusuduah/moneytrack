@@ -951,9 +951,16 @@ function renderDebtDetails() {
   }
   const meta = loadDebtMeta();
   const b = snap.accounts || {};
+  const txnsForOwed = loadTxns();
 
   el.innerHTML = debtAccounts.map(a => {
     const balance = b[a.id] || 0;
+    const ow = cardOwedNow(a, snap, txnsForOwed, debtAccounts.length);
+    const owedHtml = (ow.charges > 0 || ow.payments > 0)
+      ? `<div class="debt-owed-now">Owed now: <b class="text-red">${fmt(ow.owed)}</b>
+           <div class="debt-owed-break">snapshot ${fmt(ow.base)} (${escapeHTML(fmtDate(snap.date))}) + ${fmt(ow.charges)} charges − ${fmt(ow.payments)} payments</div>
+         </div>`
+      : `<div class="debt-owed-now">Owed now: <b class="text-red">${fmt(ow.owed)}</b></div>`;
     const m = meta[a.id] || { apr: 0, minPayment: 0 };
     const monthlyRate    = m.apr > 0 ? m.apr / 100 / 12 : 0;
     const monthlyInterest = balance > 0 && monthlyRate > 0 ? roundMoney(balance * monthlyRate) : 0;
@@ -981,6 +988,7 @@ function renderDebtDetails() {
         <strong>${escapeHTML(a.label)}</strong>
         <span class="debt-balance text-red">${fmt(-balance)}</span>
       </div>
+      ${owedHtml}
       <div class="debt-meta-grid">
         <div class="form-group">
           <label for="apr-${a.id}">APR %</label>
