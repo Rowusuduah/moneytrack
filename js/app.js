@@ -33,6 +33,10 @@ function refreshAccountConfig() {
   ACCOUNT_COLORS = Object.fromEntries(ACCOUNTS.map(a => [a.id, a.color]));
 }
 
+// Deleted custom accounts stay in ACCOUNTS as tombstones so historical
+// snapshots keep counting them; UI entry points list only active accounts.
+function activeAccounts() { return ACCOUNTS.filter(a => !a.deleted); }
+
 const DEFAULT_THINGS_CATS = [
   'Groceries','Household','Personal Care','Fuel',
   'Subscriptions','Medicine','Electronics','Clothing','Food & Dining','Other'
@@ -550,7 +554,10 @@ function fmtShort(n) {
 }
 
 function csvField(v) {
-  const s = String(v == null ? '' : v).replace(/"/g, '""');
+  let s = String(v == null ? '' : v).replace(/"/g, '""');
+  // Neutralize spreadsheet formula injection (=, @, tab, CR always; +/- only when
+  // not a plain number, so exported amounts stay numeric in Excel/Sheets)
+  if (/^[=@\t\r]/.test(s) || (/^[+-]/.test(s) && isNaN(Number(s)))) s = "'" + s;
   return `"${s}"`;
 }
 
@@ -644,21 +651,27 @@ function saveBills(arr) {
   queueDriveSync();
 }
 
-// Returns next due Date object for a bill, or null if undetermined
-function getNextDueDate(bill) {
-  const today = new Date(); today.setHours(0,0,0,0);
+// Returns next due Date object for a bill (today counts as due), or null.
+// todayArg is injectable for tests.
+function getNextDueDate(bill, todayArg) {
+  const today = todayArg ? new Date(todayArg) : new Date();
+  today.setHours(0,0,0,0);
   if (bill.frequency === 'monthly' && bill.dayOfMonth) {
-    const d = new Date(today.getFullYear(), today.getMonth(), bill.dayOfMonth);
-    if (d < today) d.setMonth(d.getMonth() + 1);
+    // Clamp day 29-31 to the month's length so February never rolls into March
+    const clamp = (y, m) => new Date(y, m, Math.min(bill.dayOfMonth, new Date(y, m + 1, 0).getDate()));
+    let d = clamp(today.getFullYear(), today.getMonth());
+    if (d < today) d = clamp(today.getFullYear(), today.getMonth() + 1);
     return d;
   }
   if ((bill.frequency === 'biweekly' || bill.frequency === 'weekly') && bill.anchorDate) {
     const interval = bill.frequency === 'biweekly' ? 14 : 7;
-    const anchor = new Date(bill.anchorDate + 'T00:00:00');
-    const diffDays = Math.floor((today - anchor) / (interval * 86400000));
-    let next = new Date(anchor.getTime() + (diffDays + 1) * interval * 86400000);
-    if (next < today) next = new Date(anchor.getTime() + (diffDays + 2) * interval * 86400000);
-    return next;
+    const d = new Date(bill.anchorDate + 'T00:00:00');
+    if (d > today) return d;   // future anchor: the first occurrence is the anchor itself
+    // Jump close, then step by calendar days (setDate, not ms math) so DST never shifts the day
+    const behind = Math.floor((today - d) / (interval * 86400000)) - 1;
+    if (behind > 0) d.setDate(d.getDate() + behind * interval);
+    while (d < today) d.setDate(d.getDate() + interval);
+    return d;
   }
   if (bill.frequency === 'once' && bill.anchorDate) {
     return new Date(bill.anchorDate + 'T00:00:00');
@@ -689,35 +702,45 @@ function populateAccountSelects() {
   ['txn-account', 'filter-account'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
+    const prev = el.value;
     const prefix = id === 'filter-account' ? '<option value="all">All Accounts</option>' : '';
-    el.innerHTML = prefix + ACCOUNTS.map(a =>
-      `<option value="${a.id}">${escapeHTML(a.label)}</option>`
+    el.innerHTML = prefix + activeAccounts().map(a =>
+      `<option value="${escapeHTML(a.id)}">${escapeHTML(a.label)}</option>`
     ).join('');
+    // Keep the user's selection across rebuilds; if it's gone, fall back cleanly
+    if (prev && [...el.options].some(o => o.value === prev)) {
+      el.value = prev;
+    } else if (id === 'filter-account') {
+      el.value = 'all';
+      filters.account = 'all';
+    }
   });
   // Also populate the to-account select for transfers
   const toEl = document.getElementById('txn-to-account');
   if (toEl) {
-    toEl.innerHTML = ACCOUNTS.map(a =>
-      `<option value="${a.id}">${escapeHTML(a.label)}</option>`
+    const prev = toEl.value;
+    toEl.innerHTML = activeAccounts().map(a =>
+      `<option value="${escapeHTML(a.id)}">${escapeHTML(a.label)}</option>`
     ).join('');
+    if (prev && [...toEl.options].some(o => o.value === prev)) toEl.value = prev;
   }
 }
 
 // ─── Accounts Tab Rendering ──────────────────────────────────────
 function renderAccountFields() {
   const groups = { checking: [], savings: [], debt: [], investment: [] };
-  ACCOUNTS.forEach(a => { if (groups[a.group]) groups[a.group].push(a); });
+  activeAccounts().forEach(a => { if (groups[a.group]) groups[a.group].push(a); });
 
   ['checking', 'savings', 'debt', 'investment'].forEach(g => {
     const el = document.getElementById(g + '-fields');
     if (!el) return;
     el.innerHTML = groups[g].map(a => `
       <div class="account-field-group">
-        <label class="acct-label" for="bal-${a.id}">
+        <label class="acct-label" for="bal-${escapeHTML(a.id)}">
           <span class="acct-badge" style="background:${safeColor(a.color)}"></span>
           ${escapeHTML(a.label)}
         </label>
-        <input type="number" id="bal-${a.id}" class="acct-input ${a.group === 'debt' ? 'debt-input' : ''}"
+        <input type="number" id="bal-${escapeHTML(a.id)}" class="acct-input ${a.group === 'debt' ? 'debt-input' : ''}"
                min="0" step="0.01" placeholder="0.00"
                aria-label="${escapeHTML(a.label)} balance">
       </div>`).join('');
@@ -754,7 +777,7 @@ function renderAccountKPIs() {
 
   const b = snap ? (snap.accounts || {}) : {};
   const sum = g => roundMoney(ACCOUNTS.filter(a => a.group === g).reduce((s, a) => s + safeAmt(b[a.id]), 0));
-  const lbl = g => ACCOUNTS.filter(a => a.group === g).map(a => a.label).join(', ') || 'None';
+  const lbl = g => ACCOUNTS.filter(a => a.group === g && !a.deleted).map(a => a.label).join(', ') || 'None';
 
   const checking         = sum('checking');
   const savings          = sum('savings');
@@ -898,7 +921,7 @@ function renderDebtDetails() {
   const el = document.getElementById('debt-details');
   if (!el) return;
   const snap = getLatestSnapshot();
-  const debtAccounts = ACCOUNTS.filter(a => a.group === 'debt');
+  const debtAccounts = activeAccounts().filter(a => a.group === 'debt');
   if (!debtAccounts.length || !snap) {
     el.innerHTML = `<div class="empty-state" style="padding:16px 0"><div style="font-size:24px">💳</div><div>Save a balance snapshot first to see debt details.</div></div>`;
     return;
@@ -940,13 +963,13 @@ function renderDebtDetails() {
           <label for="apr-${a.id}">APR %</label>
           <input type="number" id="apr-${a.id}" class="acct-input" min="0" max="100" step="0.01"
                  placeholder="e.g. 24.99" value="${m.apr > 0 ? m.apr : ''}"
-                 data-debt-id="${a.id}" data-debt-field="apr">
+                 data-debt-id="${escapeHTML(a.id)}" data-debt-field="apr">
         </div>
         <div class="form-group">
           <label for="minpay-${a.id}">Min Payment ($)</label>
           <input type="number" id="minpay-${a.id}" class="acct-input" min="0" step="1"
                  placeholder="e.g. 35" value="${m.minPayment > 0 ? m.minPayment : ''}"
-                 data-debt-id="${a.id}" data-debt-field="minPayment">
+                 data-debt-id="${escapeHTML(a.id)}" data-debt-field="minPayment">
         </div>
       </div>
       ${statsHtml}
@@ -966,14 +989,14 @@ function renderLoansCard() {
 
   const outstandingHtml = outstanding.length
     ? outstanding.map(l => `
-      <div class="loan-item" data-id="${l.id}">
+      <div class="loan-item" data-id="${escapeHTML(l.id)}">
         <div style="flex:1;min-width:0">
           <div class="loan-name">${escapeHTML(l.name)}</div>
           <div class="loan-meta">${escapeHTML(fmtDate(l.date))}${l.note ? ' · ' + escapeHTML(l.note) : ''}</div>
         </div>
         <div class="loan-amount">${fmt(l.amount)}</div>
-        <button class="btn btn-green" style="padding:5px 10px;font-size:11px" data-loan-paid="${l.id}" aria-label="Mark as paid">✓ Paid</button>
-        <button class="txn-btn del" data-loan-del="${l.id}" aria-label="Delete loan">✕</button>
+        <button class="btn btn-green" style="padding:5px 10px;font-size:11px" data-loan-paid="${escapeHTML(l.id)}" aria-label="Mark as paid">✓ Paid</button>
+        <button class="txn-btn del" data-loan-del="${escapeHTML(l.id)}" aria-label="Delete loan">✕</button>
       </div>`).join('')
     : `<div class="empty-state" style="padding:16px 0;font-size:12px">No outstanding loans — you're all clear!</div>`;
 
@@ -984,7 +1007,7 @@ function renderLoansCard() {
         <div class="loan-paid-item">
           <span style="flex:1">${escapeHTML(l.name)} — ${fmt(l.amount)}</span>
           <span>Paid ${escapeHTML(fmtDate(l.paidDate))}</span>
-          <button class="txn-btn del" data-loan-del="${l.id}" aria-label="Delete loan record" style="margin-left:4px">✕</button>
+          <button class="txn-btn del" data-loan-del="${escapeHTML(l.id)}" aria-label="Delete loan record" style="margin-left:4px">✕</button>
         </div>`).join('')}
     </div>` : '';
 
@@ -1059,7 +1082,7 @@ function renderManageAccounts() {
   const listEl = document.getElementById('acct-mgmt-list');
   if (!listEl) return;
 
-  const custom = loadCustomAccounts();
+  const custom = loadCustomAccounts().filter(a => !a.deleted);
   const groupLabels = { checking: 'Checking', savings: 'Savings', debt: 'Debt', investment: 'Investment' };
 
   if (!custom.length) {
@@ -1147,12 +1170,16 @@ function deleteCustomAccount(id) {
   if (!account) return;
   if (!confirm(`Remove "${account.label}"? Historical snapshot data will be preserved, but this account won't appear in new entries.`)) return;
 
-  saveCustomAccounts(custom.filter(a => a.id !== id));
+  // Tombstone instead of removing so historical snapshots, net worth and
+  // trends keep counting this account's past balances.
+  account.deleted = true;
+  saveCustomAccounts(custom);
   refreshAccountConfig();
 
   renderAccountFields();
   renderAccountsTab();
   populateAccountSelects();
+  renderTracker();   // the account filter may have just been reset to 'all'
 }
 
 // ─── Financial Ratios ────────────────────────────────────────────
@@ -1207,7 +1234,9 @@ function renderFinancialRatios() {
   const snaps = loadSnapshots();
   let nwChange = null;
   if (snaps.length >= 2) {
-    nwChange = calcNetWorth(snaps[snaps.length - 1], []) - calcNetWorth(snaps[snaps.length - 2], []);
+    const loansForNW = loadLoans();
+    const lastSnap = snaps[snaps.length - 1], prevSnap = snaps[snaps.length - 2];
+    nwChange = calcNetWorth(lastSnap, loansForNW, lastSnap.date) - calcNetWorth(prevSnap, loansForNW, prevSnap.date);
   }
 
   const ratios = [
@@ -1318,7 +1347,7 @@ function showAddBillForm() {
           <label for="new-bill-account">Account</label>
           <select id="new-bill-account">
             <option value="">None</option>
-            ${ACCOUNTS.map(a => `<option value="${a.id}">${escapeHTML(a.label)}</option>`).join('')}
+            ${activeAccounts().map(a => `<option value="${escapeHTML(a.id)}">${escapeHTML(a.label)}</option>`).join('')}
           </select>
         </div>
       </div>
@@ -1404,7 +1433,7 @@ function renderSavingsGoals() {
     el.innerHTML = goals.map(g => {
       const trackIds = (g.accounts && g.accounts.length)
         ? g.accounts
-        : ACCOUNTS.filter(a => a.group === 'savings').map(a => a.id);
+        : activeAccounts().filter(a => a.group === 'savings').map(a => a.id);
       const current = roundMoney(trackIds.reduce((s, id) => s + safeAmt(b[id]), 0));
       const pct = g.target > 0 ? Math.min(100, Math.round(current / g.target * 100)) : 0;
 
@@ -1606,10 +1635,11 @@ function getFilteredTxns() {
     } else if (filters.period === 'month') {
       if (d.getFullYear() !== today.getFullYear() || d.getMonth() !== today.getMonth()) return false;
     } else if (filters.period === 'last30') {
-      const cutoff = new Date(today); cutoff.setDate(today.getDate() - 30);
+      // 30 days inclusive of today — matches the daily chart's window
+      const cutoff = new Date(today); cutoff.setDate(today.getDate() - 29);
       if (d < cutoff) return false;
     } else if (filters.period === 'last7') {
-      const cutoff = new Date(today); cutoff.setDate(today.getDate() - 7);
+      const cutoff = new Date(today); cutoff.setDate(today.getDate() - 6);
       if (d < cutoff) return false;
     } else if (filters.period === 'custom') {
       if (filters.from) { const f = new Date(filters.from + 'T00:00:00'); if (d < f) return false; }
@@ -1825,7 +1855,7 @@ function renderTransactionLog(txns) {
     const sign  = t.type === 'income' ? '+' : t.type === 'transfer' ? '→' : '-';
     const acctLabel = ACCOUNT_LABELS[t.account] || t.account;
     const catColor = safeColor(CATEGORY_COLORS[t.category], '#8a8aa6');
-    return `<div class="txn-item" role="listitem" data-id="${t.id}">
+    return `<div class="txn-item" role="listitem" data-id="${escapeHTML(t.id)}">
       <div class="txn-dot" style="background:${color}"></div>
       <div class="txn-info">
         <div class="txn-desc">${escapeHTML(t.description)}</div>
@@ -1838,8 +1868,8 @@ function renderTransactionLog(txns) {
       </div>
       <div class="txn-amount" style="color:${color}">${sign}${fmt(t.amount)}</div>
       <div class="txn-actions">
-        <button class="txn-btn edit" data-edit="${t.id}" aria-label="Edit transaction">✏️</button>
-        <button class="txn-btn del"  data-del="${t.id}"  aria-label="Delete transaction">✕</button>
+        <button class="txn-btn edit" data-edit="${escapeHTML(t.id)}" aria-label="Edit transaction">✏️</button>
+        <button class="txn-btn del"  data-del="${escapeHTML(t.id)}"  aria-label="Delete transaction">✕</button>
       </div>
     </div>`;
   }).join('');
@@ -1903,7 +1933,7 @@ function renderBudgetCard() {
     'Rent','Utilities','Insurance','Groceries','Dining Out','Coffee',
     'Gas','Rideshare','Car Insurance','Parking','Medical','Pharmacy','Gym',
     'Clothing','Electronics','Amazon','Streaming','Events','Hobbies',
-    'Tithe','Offering','Family Support','Family Support (Ghana)','Donations','Loan Payment','Bank Fee','Subscriptions',
+    'Tithe','Offering','Family Support (US)','Family Support (Ghana)','Donations','Loan Payment','Bank Fee','Subscriptions',
     'Education','Personal Care','Miscellaneous',
   ];
   el.innerHTML = `<div class="budget-grid">${expenseCats.map(cat => {

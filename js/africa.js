@@ -64,7 +64,7 @@ function afLoad() {
   };
 }
 
-function afSave(data) { _safeSave(AF_KEY, data); }
+function afSave(data) { _safeSave(AF_KEY, data); queueDriveSync(); }
 
 let afEditId = null;   // investment id currently open in the form
 
