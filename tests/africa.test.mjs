@@ -59,3 +59,28 @@ test('afFmtMoney formats GHS and USD including negatives', () => {
   assert.equal(A.afFmtMoney(-50, 'GHS'), '-GH₵ 50.00');
   assert.equal(A.afFmtMoney(0, 'USD'), '$0.00');
 });
+
+test('afRateHistoryAppend appends, replaces same-date, sorts, does not mutate', () => {
+  const h = [{ date: '2026-07-10', rate: 15.2 }];
+  const h2 = A.afRateHistoryAppend(h, '2026-07-26', 15.5);
+  assert.deepEqual(h2, [{ date: '2026-07-10', rate: 15.2 }, { date: '2026-07-26', rate: 15.5 }]);
+  assert.equal(h.length, 1);                                   // input untouched
+  const h3 = A.afRateHistoryAppend(h2, '2026-07-26', 15.6);    // same-day re-save
+  assert.equal(h3.length, 2);
+  assert.deepEqual(h3[1], { date: '2026-07-26', rate: 15.6 });
+  const h4 = A.afRateHistoryAppend(h2, '2026-07-01', 15.0);    // older date sorts first
+  assert.deepEqual(h4.map(p => p.date), ['2026-07-01', '2026-07-10', '2026-07-26']);
+});
+
+test('afRateChange: null under 2 points; signed pct for weakened/strengthened/flat', () => {
+  assert.equal(A.afRateChange([]), null);
+  assert.equal(A.afRateChange([{ date: '2026-07-10', rate: 15.2 }]), null);
+  const up = A.afRateChange([{ date: '2026-07-10', rate: 15.2 }, { date: '2026-07-26', rate: 15.5 }]);
+  assert.equal(up.pct, 1.97);                                  // (15.5−15.2)/15.2·100 = 1.9736…
+  assert.equal(up.prev.date, '2026-07-10');
+  assert.equal(up.latest.rate, 15.5);
+  const down = A.afRateChange([{ date: '2026-07-10', rate: 15.5 }, { date: '2026-07-26', rate: 15.2 }]);
+  assert.equal(down.pct, -1.94);                               // −1.9354…
+  const flat = A.afRateChange([{ date: '2026-07-10', rate: 15.5 }, { date: '2026-07-26', rate: 15.5 }]);
+  assert.equal(flat.pct, 0);
+});
