@@ -50,7 +50,9 @@ never converted at rest. One manual rate (GH₵ per 1 USD) powers the
 estimate lines and the Accounts-tab "Africa (est.)" / "Global Total" KPIs;
 Africa money never enters `calcNetWorth`, snapshots, the NW trend, or
 CSV/PDF exports. Top-level africa.js code stays DOM-free so `node --test`
-keeps working.
+keeps working. Every saved rate is also recorded in `rateHistory` (one point
+per day, same-day saves replace); the Africa tab charts it and notes cedi
+movement — estimates always use the latest rate only.
 
 ### Credit-card flow
 Card purchases are logged at buy time as expenses on the card account with
