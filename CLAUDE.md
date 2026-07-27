@@ -52,6 +52,15 @@ Africa money never enters `calcNetWorth`, snapshots, the NW trend, or
 CSV/PDF exports. Top-level africa.js code stays DOM-free so `node --test`
 keeps working.
 
+### Credit-card flow
+Card purchases are logged at buy time as expenses on the card account with
+their real category — that is when they count as spending. The statement
+payment is a transfer checking → card (a legacy 'Credit Card Payment'
+expense is tolerated: NON_EXPENSE_CATS keeps it out of spending, and with a
+single debt account it counts as a card payment). `cardOwedNow()` renders
+the live per-card balance on Debt Details; KPIs and Net Worth stay
+snapshot-based.
+
 ### Data layer
 - `loadSnapshots()` / `saveSnapshots()` — account balance snapshots
 - `loadTxns()` / `saveTxns()` — transactions
