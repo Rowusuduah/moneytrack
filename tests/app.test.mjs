@@ -80,10 +80,12 @@ test('csvField leaves plain text and negative numbers untouched', () => {
 
 // ── NON_EXPENSE_CATS: payment categories are not spending ──
 
-test('NON_EXPENSE_CATS excludes Credit Card Payment (regression: double-count)', () => {
+test('NON_EXPENSE_CATS excludes Credit Card Payment + Bill Reserve, but NOT Loan Payment', () => {
   assert.match(src, /NON_EXPENSE_CATS = new Set\(\[[^\]]*'Credit Card Payment'/);
-  assert.match(src, /NON_EXPENSE_CATS = new Set\(\[[^\]]*'Loan Payment'/);
   assert.match(src, /NON_EXPENSE_CATS = new Set\(\[[^\]]*'Bill Reserve'/);
+  // Loan Payment now counts as a real expense (money out) — user preference.
+  const line = (src.match(/NON_EXPENSE_CATS = new Set\(\[[^\]]*\]/) || [''])[0];
+  assert.ok(!/'Loan Payment'/.test(line), 'Loan Payment must NOT be in NON_EXPENSE_CATS');
 });
 
 // ── cardOwedNow: live card balance = snapshot + charges since − payments since ──
@@ -125,4 +127,31 @@ test('cardOwedNow without a snapshot counts every dated txn from zero', () => {
   assert.equal(r.since, '');
   assert.equal(r.charges, 1085.40);   // 999 + 50 + 36.40
   assert.equal(r.owed, 985.40);
+});
+
+// ── debtPayoff: interest must not be overstated by the final overpayment ──
+
+test('debtPayoff caps the final payment (correct total interest, not the min-payment sum)', () => {
+  const p = A.debtPayoff(1000, 24, 100);
+  assert.equal(p.months, 12);
+  assert.ok(p.totalInterest > 126 && p.totalInterest < 128, 'interest ~127, got ' + p.totalInterest);
+  assert.ok(p.totalInterest < 200, 'must not overstate to the sum of full minimum payments');
+  assert.equal(p.monthlyInterest, 20);
+  assert.equal(A.debtPayoff(1000, 0, 100).months, null);   // no APR
+  assert.equal(A.debtPayoff(1000, 24, 10).months, null);   // min payment below monthly interest (never pays off)
+  assert.equal(A.debtPayoff(0, 24, 100).months, null);     // no balance
+});
+
+// ── lastKnownBalances: carry blank snapshot fields forward instead of zeroing ──
+
+test('lastKnownBalances returns the latest value per account before the date', () => {
+  const snaps = [
+    { date: '2026-05-01', accounts: { chk: 100, sav: 500 } },
+    { date: '2026-06-01', accounts: { chk: 150 } },            // only chk updated that day
+    { date: '2026-07-01', accounts: { chk: 200, sav: 600 } },  // == query date -> excluded (strictly before)
+  ];
+  const lk = A.lastKnownBalances(snaps, '2026-07-01');
+  assert.equal(lk.chk, 150);   // most recent chk before 07-01
+  assert.equal(lk.sav, 500);   // sav last seen on 05-01
+  assert.deepEqual(A.lastKnownBalances([], '2026-07-01'), {});
 });
