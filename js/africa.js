@@ -60,6 +60,42 @@ function afRateChange(history) {
   return { prev, latest, pct: afRound((latest.rate - prev.rate) / prev.rate * 100) };
 }
 
+// One value point per day per investment: a same-date save replaces that
+// day's point (so editing twice in a day doesn't stack). Returns a new
+// date-sorted array; never mutates the input.
+function afValHistoryAppend(history, date, current) {
+  const out = (history || []).filter(p => p.date !== date);
+  out.push({ date, current: afRound(current) });
+  out.sort((a, b) => a.date.localeCompare(b.date));
+  return out;
+}
+
+// Change between the first tracked value and the latest.
+function afValChange(history) {
+  const h = history || [];
+  if (h.length < 2) return null;
+  const first = h[0], latest = h[h.length - 1];
+  const abs = afRound(latest.current - first.current);
+  return { first, latest, abs, pct: first.current > 0 ? afRound(abs / first.current * 100) : null, points: h.length };
+}
+
+// Normalise one stored investment: guarantee a valid value history, seeding it
+// from the current value on first upgrade so older data isn't lost.
+function afSanitizeInv(inv) {
+  const i = inv && typeof inv === 'object' ? inv : {};
+  let hist = Array.isArray(i.history)
+    ? i.history.filter(p => p && typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date)
+        && typeof p.current === 'number' && isFinite(p.current))
+    : [];
+  hist.sort((a, b) => a.date.localeCompare(b.date));
+  const seedDate = (typeof i.updated === 'string' && i.updated) ? i.updated
+                 : (typeof i.date === 'string' && i.date) ? i.date : '';
+  if (!hist.length && seedDate && typeof i.current === 'number' && isFinite(i.current)) {
+    hist = [{ date: seedDate, current: afRound(i.current) }];
+  }
+  return Object.assign({}, i, { history: hist });
+}
+
 function afFmtMoney(n, currency) {
   const v = isFinite(n) ? n : 0;
   const abs = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -82,7 +118,7 @@ function afLoad() {
       ? d.rateHistory.filter(p => p && typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date)
           && typeof p.rate === 'number' && isFinite(p.rate) && p.rate > 0)
       : [],
-    investments: Array.isArray(d.investments) ? d.investments : [],
+    investments: (Array.isArray(d.investments) ? d.investments : []).map(afSanitizeInv),
   };
 }
 
@@ -237,11 +273,22 @@ function renderAfList(data) {
         '</span>' +
         '<span class="af-meta">since ' + fmtDate(inv.date) +
           (inv.updated ? ' · updated ' + fmtDate(inv.updated) : '') +
+          afInvHistNote(inv) +
           (inv.note ? ' · ' + escapeHTML(inv.note) : '') + '</span>' +
         '</div>';
     });
   });
   el.innerHTML = html;
+}
+
+// compact "N updates ▲GH₵X (+Y%) since start" note from the tracked history
+function afInvHistNote(inv) {
+  const chg = afValChange(inv && inv.history);
+  if (!chg) return '';
+  const arrow = chg.abs > 0 ? '▲' : chg.abs < 0 ? '▼' : '·';
+  const pct = chg.pct === null ? '' : ' (' + (chg.pct >= 0 ? '+' : '') + chg.pct + '%)';
+  return ' · ' + chg.points + ' update' + (chg.points === 1 ? '' : 's') + ' ' +
+    arrow + ' ' + afFmtMoney(Math.abs(chg.abs), inv.currency) + pct + ' since start';
 }
 
 function afShowForm() {
@@ -304,7 +351,10 @@ function afSubmitForm() {
   if (afEditId) {
     const inv = data.investments.find(i => i.id === afEditId);
     if (inv) {
-      if (roundMoney(current) !== inv.current) inv.updated = todayISO();
+      if (roundMoney(current) !== inv.current) {
+        inv.updated = todayISO();
+        inv.history = afValHistoryAppend(inv.history, todayISO(), roundMoney(current));
+      }
       inv.name = name; inv.country = country; inv.currency = currency;
       inv.invested = roundMoney(invested); inv.current = roundMoney(current);
       inv.date = date; inv.note = note;
@@ -314,6 +364,7 @@ function afSubmitForm() {
       id: crypto.randomUUID(), name, country, currency,
       invested: roundMoney(invested), current: roundMoney(current),
       date, updated: todayISO(), note,
+      history: afValHistoryAppend([], todayISO(), roundMoney(current)),
     });
   }
   afSave(data);
@@ -347,6 +398,7 @@ function afQuickUpdate(id) {
   if (!inv) return;
   inv.current = roundMoney(v);
   inv.updated = todayISO();
+  inv.history = afValHistoryAppend(inv.history, todayISO(), roundMoney(v));
   afSave(data);
   renderAfricaTab();
   renderAccountKPIs();

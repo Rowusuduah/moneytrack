@@ -84,3 +84,34 @@ test('afRateChange: null under 2 points; signed pct for weakened/strengthened/fl
   const flat = A.afRateChange([{ date: '2026-07-10', rate: 15.5 }, { date: '2026-07-26', rate: 15.5 }]);
   assert.equal(flat.pct, 0);
 });
+
+// ── investment value history (daily tracking, not override) ──
+
+test('afValHistoryAppend adds a point; same-day save replaces; stays sorted', () => {
+  let h = A.afValHistoryAppend([], '2026-07-01', 100);
+  assert.deepEqual(h, [{ date: '2026-07-01', current: 100 }]);
+  h = A.afValHistoryAppend(h, '2026-07-05', 120);
+  h = A.afValHistoryAppend(h, '2026-07-03', 110);           // out of order
+  assert.deepEqual(h.map(p => p.date), ['2026-07-01', '2026-07-03', '2026-07-05']);
+  h = A.afValHistoryAppend(h, '2026-07-05', 130);            // same day -> replace
+  assert.equal(h.length, 3);
+  assert.equal(h[h.length - 1].current, 130);
+  assert.equal(A.afValHistoryAppend([], '2026-07-01', 100.006)[0].current, 100.01); // rounded
+});
+
+test('afValChange: abs, pct, points; null when fewer than 2 points', () => {
+  const c = A.afValChange([{ date: '2026-07-01', current: 100 }, { date: '2026-07-10', current: 130 }]);
+  assert.equal(c.abs, 30);
+  assert.equal(c.pct, 30);
+  assert.equal(c.points, 2);
+  assert.equal(A.afValChange([{ date: '2026-07-01', current: 100 }]), null);
+  assert.equal(A.afValChange([]), null);
+});
+
+test('afSanitizeInv seeds history from current/updated, keeps + filters valid points', () => {
+  const seeded = A.afSanitizeInv({ id: 'x', current: 500, updated: '2026-07-20', date: '2026-07-01' });
+  assert.deepEqual(seeded.history, [{ date: '2026-07-20', current: 500 }]); // prefers `updated`
+  const kept = A.afSanitizeInv({ id: 'y', current: 9, date: '2026-07-01',
+    history: [{ date: '2026-07-02', current: 10 }, { date: 'bad', current: 1 }, { date: '2026-07-01', current: 8 }] });
+  assert.deepEqual(kept.history, [{ date: '2026-07-01', current: 8 }, { date: '2026-07-02', current: 10 }]);
+});

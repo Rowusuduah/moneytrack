@@ -67,6 +67,19 @@ const WEALTH_CATEGORY_MAP = {
   'Gym': 'living', 'Household Essentials': 'living', 'Home & Furniture': 'living', 'Amazon': 'living',
   'Online Shopping': 'living', 'Electronics': 'living', 'School Supplies': 'living', 'Laundry': 'living',
   'Hobbies': 'living', 'Miscellaneous': 'living',
+  // ── expanded categories ──
+  'Mortgage': 'housing', 'HOA / Community Fees': 'housing', 'Electricity': 'housing', 'Water': 'housing',
+  'Gas Bill': 'housing', 'Trash': 'housing', 'Internet': 'housing', 'Phone': 'housing', 'Home Maintenance': 'housing',
+  'Car Maintenance': 'transport', 'Car Repair': 'transport', 'Car Payment': 'transport', 'Registration / DMV': 'transport',
+  'Car Wash': 'transport', 'Public Transit': 'transport', 'Tolls': 'transport',
+  'Flights': 'explore', 'Movies': 'explore', 'Concerts': 'explore',
+  'Dental': 'living', 'Vision': 'living', 'Therapy': 'living', 'Supplements': 'living',
+  'Games': 'living', 'Books & Media': 'living', 'Sports & Recreation': 'living',
+  'Pet Food': 'living', 'Vet': 'living', 'Pet Supplies': 'living', 'Pet Grooming': 'living',
+  'Childcare': 'living', 'School Fees': 'living', 'Kids Activities': 'living', 'Baby Supplies': 'living',
+  'ATM Fee': 'living', 'Late Fee': 'living', 'Interest Charge': 'living', 'Service Fee': 'living', 'Haircut': 'living',
+  'Home Insurance': 'protect', 'Health Insurance': 'protect', 'Taxes': 'protect',
+  'Tuition': 'profdev', 'Textbooks': 'profdev', 'Courses': 'profdev', 'Student Loan': 'profdev',
 };
 const WEALTH_SAVINGS_CATS  = ['Savings Transfer', 'Investment'];
 const WEALTH_EXCLUDED_CATS = ['Bill Reserve', 'Loan Payment', 'Credit Card Payment', 'Bank Fee'];
@@ -247,7 +260,8 @@ function wlSavingsByMonth(txns, todayIso, n) {
   const byYm = {};
   out.forEach(o => { byYm[o.ym] = o; });
   for (const t2 of txns) {
-    if (!t2.date || !WEALTH_SAVINGS_CATS.includes(t2.category)) continue;
+    // income-typed savings txns are treated as income (matches wlAggregateRange), not saved money
+    if (!t2.date || t2.type === 'income' || !WEALTH_SAVINGS_CATS.includes(t2.category)) continue;
     const o = byYm[t2.date.slice(0, 7)];
     if (o) o.total = wlRound(o.total + (Number(t2.amount) || 0));
   }
@@ -462,7 +476,7 @@ function renderWlPace(txns, bounds) {
     });
     g += '<line x1="' + L + '" y1="' + Y(budget).toFixed(1) + '" x2="' + (W - R) +
       '" y2="' + Y(budget).toFixed(1) + '" class="wl-ch-target"/>';
-    const spentToday = series.days[n - 1].total;
+    const spentToday = (series.days[n - 1] || {}).total || 0;   // guard empty/degenerate range
     if (cap) cap.textContent = 'Last 14 days · today ' + fmt(spentToday) + ' vs ' +
       fmt(budget) + '/day budget' + (spentToday > budget ? ' — over' : '');
   } else {

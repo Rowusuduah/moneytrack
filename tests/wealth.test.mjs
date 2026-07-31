@@ -126,7 +126,8 @@ test('every expense category in the txn form is mapped, excluded, or savings', (
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const sel = html.match(/<select id="txn-category"[\s\S]*?<\/select>/);
   assert.ok(sel, 'txn-category select not found');
-  const income = new Set(['Paycheck', 'Freelance', 'Transfer In', 'Other Income']);
+  const income = new Set(['Paycheck', 'Freelance', 'Transfer In', 'Other Income',
+    'Money from Last Month', 'Bonus', 'Refund', 'Reimbursement', 'Cash Back', 'Interest Earned', 'Selling / Resale']);
   const decode = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
   const cats = [...sel[0].matchAll(/<option[^>]*>([^<]+)<\/option>/g)]
     .map(m => decode(m[1].trim())).filter(c => !income.has(c));

@@ -67,12 +67,38 @@ const CATEGORY_COLORS = {
   'Credit Card Payment': '#f87171',
   'Bank Fee':        '#f87171', 'Subscriptions': '#fb923c',
   'Education':       '#fbbf24', 'Personal Care': '#a78bfa', 'Miscellaneous':'#8a8aa6',
+  // ── income (green) ──
+  'Money from Last Month': '#4ade80', 'Bonus': '#4ade80', 'Refund': '#4ade80', 'Reimbursement': '#4ade80',
+  'Cash Back': '#4ade80', 'Interest Earned': '#4ade80', 'Selling / Resale': '#4ade80',
+  // ── housing & bills (orange) ──
+  'Mortgage': '#fb923c', 'HOA / Community Fees': '#fb923c', 'Electricity': '#fb923c', 'Water': '#fb923c',
+  'Gas Bill': '#fb923c', 'Trash': '#fb923c', 'Internet': '#fb923c', 'Phone': '#fb923c',
+  'Home Maintenance': '#fb923c', 'Home Insurance': '#fb923c',
+  // ── transport (blue) ──
+  'Car Maintenance': '#60a5fa', 'Car Repair': '#60a5fa', 'Car Payment': '#60a5fa', 'Registration / DMV': '#60a5fa',
+  'Car Wash': '#60a5fa', 'Public Transit': '#60a5fa', 'Tolls': '#60a5fa', 'Flights': '#60a5fa',
+  // ── health (pink) ──
+  'Dental': '#f472b6', 'Vision': '#f472b6', 'Therapy': '#f472b6', 'Supplements': '#f472b6', 'Health Insurance': '#f472b6',
+  // ── entertainment (teal) ──
+  'Movies': '#2dd4bf', 'Concerts': '#2dd4bf', 'Games': '#2dd4bf', 'Books & Media': '#2dd4bf', 'Sports & Recreation': '#2dd4bf',
+  // ── pets (purple) ──
+  'Pet Food': '#a78bfa', 'Vet': '#a78bfa', 'Pet Supplies': '#a78bfa', 'Pet Grooming': '#a78bfa',
+  // ── family & kids (indigo) ──
+  'Childcare': '#818cf8', 'School Fees': '#818cf8', 'Kids Activities': '#818cf8', 'Baby Supplies': '#818cf8',
+  // ── education (yellow) ──
+  'Tuition': '#fbbf24', 'Textbooks': '#fbbf24', 'Courses': '#fbbf24', 'Student Loan': '#fbbf24',
+  // ── finance / fees (red) ──
+  'ATM Fee': '#f87171', 'Late Fee': '#f87171', 'Interest Charge': '#f87171', 'Service Fee': '#f87171', 'Taxes': '#f87171',
+  // ── other ──
+  'Haircut': '#a78bfa',
 };
 
 // Categories excluded from expense totals. Savings Transfer and Investment
 // deliberately count as money out (user preference). Credit Card Payment is
 // excluded because the spending was already counted when the card was charged.
-const NON_EXPENSE_CATS = new Set(['Bill Reserve', 'Loan Payment', 'Credit Card Payment']);
+// Loan Payment counts as a real expense (money leaving your account) — user
+// preference — so it is NOT excluded here.
+const NON_EXPENSE_CATS = new Set(['Bill Reserve', 'Credit Card Payment']);
 
 // ─── Google Drive Sync ───────────────────────────────────────────
 const GDRIVE_CLIENT_ID    = '394124622094-3cj4ho2ipp3m6pm0un09tg9knelhfqtu.apps.googleusercontent.com';
@@ -334,11 +360,13 @@ async function autoLoadFromDrive() {
     if (!valid.length) { _gSetStatus(''); return; }
     try { _validateRestoreData(valid, parsed); } catch { _gSetStatus(''); return; }
 
-    // Compare Drive backup date with local data freshness
+    // Compare Drive backup date with local data freshness. On a same-day tie we
+    // prefer LOCAL (upload it) so the device you're actively editing is never
+    // silently overwritten by an equally-dated older backup from another device.
     const driveDate = parsed._exported || '';
     const localDate = _getLocalDataDate();
-    if (localDate && driveDate && localDate > driveDate) {
-      // Local data is newer — push local to Drive instead of overwriting
+    if (localDate && driveDate && localDate >= driveDate) {
+      // Local data is newer (or same day) — push local to Drive instead of overwriting
       _gSetStatus('Local data is newer — uploading…');
       try {
         const data = {};
@@ -391,45 +419,52 @@ function _silentTokenRefresh() {
 // Debounced auto-save — queued after every data write (fires 3 s after last change).
 // Silently refreshes token if expired — never triggers a visible auth popup.
 let _autoSaveRetrying = false;
+async function _runDriveSync() {
+  // If no token, try to silently get one
+  if (!_gAccessToken) {
+    if (!_gTokenClient) initGDrive();
+    if (_gTokenClient) {
+      const ok = await _silentTokenRefresh();
+      if (!ok) { _gSetStatus('Drive disconnected', true); return; }
+    } else { return; }
+  }
+  try {
+    const data = {};
+    BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
+    const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
+    let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
+    if (!fileId) {
+      fileId = await _gFindFile();
+      if (fileId) localStorage.setItem(KEY_GDRIVE_FILE, fileId);
+    }
+    if (fileId) { await _gUpdateFile(fileId, json); }
+    else { fileId = await _gCreateFile(json); localStorage.setItem(KEY_GDRIVE_FILE, fileId); }
+    _gSetStatus(`Auto-saved ${new Date().toLocaleTimeString()}`);
+    _autoSaveRetrying = false;
+  } catch (err) {
+    if (err._gStatus === 401 && !_autoSaveRetrying) {
+      // Token expired mid-request — refresh and retry once
+      _gAccessToken = null;
+      _autoSaveRetrying = true;
+      const ok = await _silentTokenRefresh();
+      if (ok) { queueDriveSync(); return; }
+      _gSetStatus('Drive disconnected', true);
+    }
+    _autoSaveRetrying = false;
+    console.error('[MoneyTrack Drive auto-save]', err);
+  }
+}
+
 function queueDriveSync() {
   if (!localStorage.getItem(KEY_GDRIVE_CONNECTED)) return;
   if (_driveSyncTimer) clearTimeout(_driveSyncTimer);
-  _driveSyncTimer = setTimeout(async () => {
-    _driveSyncTimer = null;
-    // If no token, try to silently get one
-    if (!_gAccessToken) {
-      if (!_gTokenClient) initGDrive();
-      if (_gTokenClient) {
-        const ok = await _silentTokenRefresh();
-        if (!ok) { _gSetStatus('Drive disconnected', true); return; }
-      } else { return; }
-    }
-    try {
-      const data = {};
-      BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
-      const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
-      let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
-      if (!fileId) {
-        fileId = await _gFindFile();
-        if (fileId) localStorage.setItem(KEY_GDRIVE_FILE, fileId);
-      }
-      if (fileId) { await _gUpdateFile(fileId, json); }
-      else { fileId = await _gCreateFile(json); localStorage.setItem(KEY_GDRIVE_FILE, fileId); }
-      _gSetStatus(`Auto-saved ${new Date().toLocaleTimeString()}`);
-      _autoSaveRetrying = false;
-    } catch (err) {
-      if (err._gStatus === 401 && !_autoSaveRetrying) {
-        // Token expired mid-request — refresh and retry once
-        _gAccessToken = null;
-        _autoSaveRetrying = true;
-        const ok = await _silentTokenRefresh();
-        if (ok) { queueDriveSync(); return; }
-        _gSetStatus('Drive disconnected', true);
-      }
-      _autoSaveRetrying = false;
-      console.error('[MoneyTrack Drive auto-save]', err);
-    }
-  }, 3000);
+  _driveSyncTimer = setTimeout(() => { _driveSyncTimer = null; _runDriveSync(); }, 3000);
+}
+
+// Flush a queued auto-sync immediately (e.g. before the tab is hidden/closed) so
+// the final change isn't stuck in the 3s debounce and lost from Drive.
+function flushDriveSync() {
+  if (_driveSyncTimer) { clearTimeout(_driveSyncTimer); _driveSyncTimer = null; _runDriveSync(); }
 }
 
 // Called on init: if user has previously authorised Drive, silently refresh token and auto-load
@@ -576,7 +611,14 @@ function calcNetWorth(snap, loans, atDate) {
 // ─── Data Layer ──────────────────────────────────────────────────
 function _safeParseJSON(raw, fallback) {
   if (raw === null) return fallback;
-  return JSON.parse(raw, (k, v) => k === '__proto__' ? undefined : v);
+  const parsed = JSON.parse(raw, (k, v) => k === '__proto__' ? undefined : v);
+  // Guard valid-JSON-but-wrong-shape data (corrupt or foreign backup): if the
+  // caller expects an array/object, never hand back a mismatched type that would
+  // make downstream .filter/.map/Object.keys throw.
+  if (Array.isArray(fallback) && !Array.isArray(parsed)) return fallback;
+  if (fallback && typeof fallback === 'object' && !Array.isArray(fallback) &&
+      (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))) return fallback;
+  return parsed;
 }
 
 function _safeSave(key, value) {
@@ -940,6 +982,26 @@ function renderSnapshotHistory() {
   el.innerHTML = html;
 }
 
+// Minimum-payment payoff for a card: months to clear + total interest paid.
+// Interest is accrued month by month and the final payment is capped to the
+// remaining balance (so the last month never overpays and inflates interest).
+function debtPayoff(balance, aprPct, minPayment) {
+  const monthlyRate = aprPct > 0 ? aprPct / 100 / 12 : 0;
+  const monthlyInterest = balance > 0 && monthlyRate > 0 ? roundMoney(balance * monthlyRate) : 0;
+  if (!(balance > 0 && minPayment > 0 && monthlyRate > 0 && minPayment > monthlyInterest)) {
+    return { months: null, totalInterest: null, monthlyInterest };
+  }
+  const months = Math.ceil(-Math.log(1 - (balance * monthlyRate) / minPayment) / Math.log(1 + monthlyRate));
+  let bal = balance, totalInt = 0, i = 0;
+  for (; i < Math.min(months, 600) && bal > 0.005; i++) {
+    const interest = roundMoney(bal * monthlyRate);
+    totalInt = roundMoney(totalInt + interest);
+    const pay = Math.min(minPayment, roundMoney(bal + interest)); // cap the final payment
+    bal = roundMoney(bal + interest - pay);
+  }
+  return { months, totalInterest: roundMoney(totalInt), monthlyInterest };
+}
+
 function renderDebtDetails() {
   const el = document.getElementById('debt-details');
   if (!el) return;
@@ -962,16 +1024,10 @@ function renderDebtDetails() {
          </div>`
       : `<div class="debt-owed-now">Owed now: <b class="text-red">${fmt(ow.owed)}</b></div>`;
     const m = meta[a.id] || { apr: 0, minPayment: 0 };
-    const monthlyRate    = m.apr > 0 ? m.apr / 100 / 12 : 0;
-    const monthlyInterest = balance > 0 && monthlyRate > 0 ? roundMoney(balance * monthlyRate) : 0;
-
-    let payoffMonths = null, totalInterest = null;
-    if (balance > 0 && m.minPayment > 0 && monthlyRate > 0 && m.minPayment > monthlyInterest) {
-      payoffMonths = Math.ceil(-Math.log(1 - (balance * monthlyRate) / m.minPayment) / Math.log(1 + monthlyRate));
-      let bal = balance, paid = 0;
-      for (let i = 0; i < Math.min(payoffMonths, 600); i++) { bal = roundMoney(bal * (1 + monthlyRate) - m.minPayment); paid += m.minPayment; }
-      totalInterest = roundMoney(paid - balance);
-    }
+    const payoff = debtPayoff(balance, m.apr, m.minPayment);
+    const monthlyInterest = payoff.monthlyInterest;
+    const payoffMonths = payoff.months;
+    const totalInterest = payoff.totalInterest;
 
     const statsHtml = balance > 0 && m.apr > 0 ? `
       <div class="debt-stats">
@@ -1009,6 +1065,16 @@ function renderDebtDetails() {
 }
 
 // ─── Loans Out ───────────────────────────────────────────────────
+// Small colored badge for a loan's expected repayment date (overdue / due soon).
+function loanDueBadge(dueDate) {
+  if (!dueDate || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return '';
+  const days = Math.round((new Date(dueDate + 'T00:00:00') - new Date(todayISO() + 'T00:00:00')) / 86400000);
+  if (days < 0)   return ` · <span style="color:var(--red);font-weight:600">overdue ${Math.abs(days)}d</span>`;
+  if (days === 0) return ` · <span style="color:var(--red);font-weight:600">due today</span>`;
+  const soon = days <= 7 ? ` (in ${days}d)` : '';
+  return ` · <span style="color:var(--muted)">due ${escapeHTML(fmtDate(dueDate))}${soon}</span>`;
+}
+
 function renderLoansCard() {
   const el = document.getElementById('loans-content');
   if (!el) return;
@@ -1023,7 +1089,7 @@ function renderLoansCard() {
       <div class="loan-item" data-id="${escapeHTML(l.id)}">
         <div style="flex:1;min-width:0">
           <div class="loan-name">${escapeHTML(l.name)}</div>
-          <div class="loan-meta">${escapeHTML(fmtDate(l.date))}${l.note ? ' · ' + escapeHTML(l.note) : ''}</div>
+          <div class="loan-meta">${escapeHTML(fmtDate(l.date))}${loanDueBadge(l.dueDate)}${l.note ? ' · ' + escapeHTML(l.note) : ''}</div>
         </div>
         <div class="loan-amount">${fmt(l.amount)}</div>
         <button class="btn btn-green" style="padding:5px 10px;font-size:11px" data-loan-paid="${escapeHTML(l.id)}" aria-label="Mark as paid">✓ Paid</button>
@@ -1057,6 +1123,10 @@ function renderLoansCard() {
         <input type="date" id="loan-date" class="acct-input" value="${todayISO()}" max="${todayISO()}">
       </div>
       <div class="form-group">
+        <label for="loan-due">Expected Repayment (optional)</label>
+        <input type="date" id="loan-due" class="acct-input" min="${todayISO()}">
+      </div>
+      <div class="form-group">
         <label for="loan-note">What For (optional)</label>
         <input type="text" id="loan-note" class="acct-input" placeholder="e.g. rent help" maxlength="80">
       </div>
@@ -1073,6 +1143,7 @@ function addLoan() {
   const name   = document.getElementById('loan-name')?.value.trim();
   const amtRaw = parseFloat(document.getElementById('loan-amount')?.value);
   const date   = document.getElementById('loan-date')?.value || todayISO();
+  const dueDate = document.getElementById('loan-due')?.value || '';
   const note   = document.getElementById('loan-note')?.value.trim() || '';
 
   if (!name || isNaN(amtRaw) || amtRaw <= 0 || !date) {
@@ -1081,7 +1152,7 @@ function addLoan() {
   }
 
   const loans = loadLoans();
-  loans.push({ id: crypto.randomUUID(), name, amount: roundMoney(amtRaw), date, note, status: 'outstanding', paidDate: '' });
+  loans.push({ id: crypto.randomUUID(), name, amount: roundMoney(amtRaw), date, dueDate, note, status: 'outstanding', paidDate: '' });
   saveLoans(loans);
   renderLoansCard();
   renderAccountKPIs(); // update Net Worth KPI
@@ -1555,6 +1626,16 @@ function renderAccountsTab() {
 }
 
 // ─── Snapshot Actions ────────────────────────────────────────────
+// Latest known balance per account across all snapshots strictly before `beforeDate`.
+// Used to carry blank fields forward so a partial snapshot doesn't zero accounts.
+function lastKnownBalances(snaps, beforeDate) {
+  const out = {};
+  (snaps || []).filter(s => s && s.date && s.date < beforeDate)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .forEach(s => { const acc = s.accounts || {}; Object.keys(acc).forEach(id => { if (acc[id] != null) out[id] = acc[id]; }); });
+  return out;
+}
+
 function saveSnapshot() {
   const note = (document.getElementById('snapshot-note')?.value || '').trim();
   const selectedDate = document.getElementById('snapshot-date')?.value || todayISO();
@@ -1562,9 +1643,10 @@ function saveSnapshot() {
   const dupIdx = snaps.findIndex(s => s.date === selectedDate);
   if (dupIdx !== -1 && !confirm(`A snapshot for ${selectedDate} already exists. Overwrite it?`)) return;
 
-  // If updating an existing snapshot, carry over any fields the user left blank
-  // so that editing just one account doesn't wipe out all the others.
-  const existingAccts = dupIdx !== -1 ? (snaps[dupIdx].accounts || {}) : {};
+  // Carry over any field the user left blank: for an existing snapshot use its
+  // own values; for a NEW date, inherit the most recent known balance per account
+  // so entering just one account doesn't record every other account as $0.
+  const existingAccts = dupIdx !== -1 ? (snaps[dupIdx].accounts || {}) : lastKnownBalances(snaps, selectedDate);
 
   const balances = {};
   let hasData = false;
@@ -1662,16 +1744,16 @@ function getFilteredTxns() {
     } else if (filters.period === 'week') {
       const dow = today.getDay(); // 0=Sun
       const weekStart = new Date(today); weekStart.setDate(today.getDate() - dow);
-      if (d < weekStart) return false;
+      if (d < weekStart || d > today) return false;   // this week so far (no future-dated txns)
     } else if (filters.period === 'month') {
       if (d.getFullYear() !== today.getFullYear() || d.getMonth() !== today.getMonth()) return false;
     } else if (filters.period === 'last30') {
       // 30 days inclusive of today — matches the daily chart's window
       const cutoff = new Date(today); cutoff.setDate(today.getDate() - 29);
-      if (d < cutoff) return false;
+      if (d < cutoff || d > today) return false;
     } else if (filters.period === 'last7') {
       const cutoff = new Date(today); cutoff.setDate(today.getDate() - 6);
-      if (d < cutoff) return false;
+      if (d < cutoff || d > today) return false;
     } else if (filters.period === 'custom') {
       if (filters.from) { const f = new Date(filters.from + 'T00:00:00'); if (d < f) return false; }
       if (filters.to)   { const t2 = new Date(filters.to + 'T00:00:00'); if (d > t2) return false; }
@@ -2519,7 +2601,7 @@ function parseDiscoverCSV(lines) {
     if (!lines[i].trim()) continue;
     const f = parseCSVLine(lines[i]);
     const date = f[0]?.trim(); const desc = f[2]?.trim() || ''; const amount = parseFloat(f[3]);
-    if (!date || isNaN(amount) || !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(date)) continue;
+    if (!date || isNaN(amount) || amount === 0 || !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(date)) continue;
     const [m, d, y] = date.split('/');
     const iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
     // Discover: positive = expense, negative = payment/credit
@@ -2538,7 +2620,7 @@ function parseGenericCSV(lines) {
     const desc    = f[1]?.trim() || '';
     const amtStr  = f[2] || f[3] || f[f.length - 1];
     const amount  = parseFloat((amtStr || '').replace(/[^0-9.\-]/g, ''));
-    if (!dateRaw || isNaN(amount)) continue;
+    if (!dateRaw || isNaN(amount) || amount === 0) continue;   // skip $0 rows
     let iso = '';
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) {
       iso = dateRaw;
@@ -3619,7 +3701,7 @@ function switchTab(targetTabId) {
 
   if (targetTabId === 'tab-accounts') renderAccountsTab();
   if (targetTabId === 'tab-tracker')  renderTracker();
-  if (targetTabId === 'tab-analysis') renderAnalysisTab();
+  if (targetTabId === 'tab-analysis') { analysisState.offset = 0; renderAnalysisTab(); } // always open on the current period
   if (targetTabId === 'tab-things')   renderThingsTab();
   if (targetTabId === 'tab-wealth')   renderWealthTab();
   if (targetTabId === 'tab-africa')   renderAfricaTab();
@@ -4018,12 +4100,24 @@ function bindLoginForm() {
 }
 
 // ─── Cross-tab Sync ──────────────────────────────────────────────
+let _storageReloadTimer = null;
 window.addEventListener('storage', (e) => {
-  if (e.key && (e.key.startsWith('moneytrack_') || BACKUP_KEYS.includes(e.key))) {
-    // Another tab changed data — refresh
+  if (!(e.key && (e.key.startsWith('moneytrack_') || BACKUP_KEYS.includes(e.key)))) return;
+  // Another tab changed data. Push our own pending change first so it isn't lost,
+  // then reload — debounced, and deferred while the user is mid-edit in a field.
+  flushDriveSync();
+  if (_storageReloadTimer) clearTimeout(_storageReloadTimer);
+  _storageReloadTimer = setTimeout(function tryReload() {
+    const el = document.activeElement;
+    const editing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+    if (editing) { _storageReloadTimer = setTimeout(tryReload, 3000); return; }
     location.reload();
-  }
+  }, 800);
 });
+
+// Flush any queued Drive sync before the tab is hidden or closed.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushDriveSync(); });
+window.addEventListener('pagehide', () => { flushDriveSync(); });
 
 // ─── Idle Session Timeout ────────────────────────────────────────
 let _lastActivity = Date.now();
