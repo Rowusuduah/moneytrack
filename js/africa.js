@@ -79,6 +79,19 @@ function afValChange(history) {
   return { first, latest, abs, pct: first.current > 0 ? afRound(abs / first.current * 100) : null, points: h.length };
 }
 
+// Every tracked value with its step-by-step change from the previous point —
+// what the per-investment history list renders. First point has no previous.
+function afValSeries(history) {
+  const h = history || [];
+  return h.map((p, i) => {
+    if (i === 0) return { date: p.date, current: p.current, delta: null, pct: null };
+    const prev = h[i - 1];
+    const delta = afRound(p.current - prev.current);
+    return { date: p.date, current: p.current, delta,
+             pct: prev.current > 0 ? afRound(delta / prev.current * 100) : null };
+  });
+}
+
 // Normalise one stored investment: guarantee a valid value history, seeding it
 // from the current value on first upgrade so older data isn't lost.
 function afSanitizeInv(inv) {
@@ -124,7 +137,8 @@ function afLoad() {
 
 function afSave(data) { _safeSave(AF_KEY, data); queueDriveSync(); }
 
-let afEditId = null;   // investment id currently open in the form
+let afEditId = null;               // investment id currently open in the form
+const afHistOpen = new Set();      // investment ids with the price history expanded
 
 function bindAfricaTab() {
   const sec = document.getElementById('sec-africa');
@@ -140,6 +154,13 @@ function bindAfricaTab() {
     if (edit) { afEditId = edit.dataset.afEdit; afShowForm(); return; }
     const del = t.closest('[data-af-del]');
     if (del) { afDelete(del.dataset.afDel); return; }
+    const hist = t.closest('[data-af-hist]');
+    if (hist) {
+      const id = hist.dataset.afHist;
+      afHistOpen.has(id) ? afHistOpen.delete(id) : afHistOpen.add(id);
+      renderAfricaTab();
+      return;
+    }
     const val = t.closest('[data-af-valsave]');
     if (val) afQuickUpdate(val.dataset.afValsave);
   });
@@ -266,6 +287,11 @@ function renderAfList(data) {
           'aria-label="New value for ' + escapeHTML(inv.name) + '">' +
         '<button class="txn-btn" data-af-valsave="' + escapeHTML(inv.id) +
           '" aria-label="Save new value for ' + escapeHTML(inv.name) + '">✓</button>' +
+        ((inv.history || []).length >= 2
+          ? '<button class="txn-btn" data-af-hist="' + escapeHTML(inv.id) +
+            '" aria-label="Price history for ' + escapeHTML(inv.name) +
+            '" aria-expanded="' + (afHistOpen.has(inv.id) ? 'true' : 'false') + '">📈</button>'
+          : '') +
         '<button class="txn-btn" data-af-edit="' + escapeHTML(inv.id) +
           '" aria-label="Edit ' + escapeHTML(inv.name) + '">✎</button>' +
         '<button class="txn-btn del" data-af-del="' + escapeHTML(inv.id) +
@@ -275,10 +301,63 @@ function renderAfList(data) {
           (inv.updated ? ' · updated ' + fmtDate(inv.updated) : '') +
           afInvHistNote(inv) +
           (inv.note ? ' · ' + escapeHTML(inv.note) : '') + '</span>' +
+        (afHistOpen.has(inv.id) ? afHistBlockHTML(inv) : '') +
         '</div>';
     });
   });
   el.innerHTML = html;
+}
+
+// Expanded per-investment block: value trend chart + newest-first list of
+// every saved value with its change from the previous point.
+function afHistBlockHTML(inv) {
+  const series = afValSeries(inv.history);
+  let rows = '';
+  for (let i = series.length - 1; i >= 0; i--) {
+    const p = series[i];
+    let chg;
+    if (p.delta === null) chg = '<span class="af-meta" style="flex-basis:auto">start</span>';
+    else {
+      const cls = p.delta >= 0 ? 'af-gain' : 'af-loss';
+      const arrow = p.delta > 0 ? '▲' : p.delta < 0 ? '▼' : '·';
+      const pctTxt = p.pct === null ? '' : ' (' + (p.pct >= 0 ? '+' : '') + p.pct.toFixed(1) + '%)';
+      chg = '<span class="' + cls + '">' + arrow + ' ' + afFmtMoney(Math.abs(p.delta), inv.currency) + pctTxt + '</span>';
+    }
+    rows += '<div class="af-hist-row"><span>' + fmtDate(p.date) + '</span><b>' +
+      afFmtMoney(p.current, inv.currency) + '</b>' + chg + '</div>';
+  }
+  return '<div class="af-hist">' + afValTrendSVG(inv.history) + rows + '</div>';
+}
+
+// Value trend chart for one investment — same shape as the rate trend.
+function afValTrendSVG(history) {
+  const h = history || [];
+  if (h.length < 2) return '';
+  const W = 620, H = 150, L = 56, R = 12, T = 12, B = 22;
+  const vals = h.map(p => p.current);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const pad = (max - min) * 0.15 || max * 0.05 || 1;
+  const lo = min - pad, hi = max + pad;
+  const X = i => L + (i / (h.length - 1)) * (W - L - R);
+  const Y = v => H - B - ((v - lo) / (hi - lo)) * (H - T - B);
+  let g = '';
+  for (let i = 0; i <= 2; i++) {
+    const v = lo + (hi - lo) * i / 2, y = Y(v);
+    g += '<line x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (W - R) + '" y2="' + y.toFixed(1) +
+      '" stroke="currentColor" opacity="0.12"/>';
+    g += '<text x="' + (L - 6) + '" y="' + (y + 3.5).toFixed(1) + '" fill="currentColor" opacity="0.55" ' +
+      'font-size="9" text-anchor="end">' + v.toFixed(2) + '</text>';
+  }
+  let d = '';
+  h.forEach((p, i) => { d += (i ? ' L' : 'M') + X(i).toFixed(1) + ',' + Y(p.current).toFixed(1); });
+  g += '<path d="' + d + '" fill="none" stroke="currentColor" stroke-width="2" opacity="0.8"/>';
+  const li = h.length - 1;
+  g += '<circle cx="' + X(li).toFixed(1) + '" cy="' + Y(h[li].current).toFixed(1) + '" r="3.5" fill="currentColor"/>';
+  g += '<text x="' + L + '" y="' + (H - 6) + '" fill="currentColor" opacity="0.55" font-size="9">' +
+    fmtDate(h[0].date) + '</text>';
+  g += '<text x="' + (W - R) + '" y="' + (H - 6) + '" fill="currentColor" opacity="0.55" font-size="9" ' +
+    'text-anchor="end">' + fmtDate(h[li].date) + '</text>';
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="af-hist-chart" aria-hidden="true">' + g + '</svg>';
 }
 
 // compact "N updates ▲GH₵X (+Y%) since start" note from the tracked history

@@ -100,6 +100,24 @@ const CATEGORY_COLORS = {
 // preference — so it is NOT excluded here.
 const NON_EXPENSE_CATS = new Set(['Bill Reserve', 'Credit Card Payment']);
 
+// Categories excluded from income totals. 'Money from Last Month' is last
+// month's leftover arriving again, not new earnings — counting it would
+// re-count the same dollars every month and inflate yearly income.
+const NON_INCOME_CATS = new Set(['Money from Last Month']);
+
+// An expense paid straight out of a savings account is a savings withdrawal,
+// not monthly spending: it reduces that savings balance, not the budget.
+// These are excluded from Money Out / Net / budgets and reported separately.
+function isSavingsSpend(t) {
+  if (t.type !== 'expense') return false;
+  const a = ACCOUNTS.find(x => x.id === t.account);
+  return !!a && a.group === 'savings';
+}
+
+// The two gateways every income/expense total must go through.
+function isRealIncome(t)  { return t.type === 'income' && !NON_INCOME_CATS.has(t.category); }
+function isRealExpense(t) { return t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category) && !isSavingsSpend(t); }
+
 // ─── Google Drive Sync ───────────────────────────────────────────
 const GDRIVE_CLIENT_ID    = '394124622094-3cj4ho2ipp3m6pm0un09tg9knelhfqtu.apps.googleusercontent.com';
 const GDRIVE_SCOPE        = 'https://www.googleapis.com/auth/drive.file';
@@ -1298,8 +1316,8 @@ function computeSavingsRate3Month() {
       const td = new Date(t.date + 'T00:00:00');
       return td.getFullYear() === y && td.getMonth() === m;
     });
-    const income   = mt.filter(t => t.type === 'income').reduce((s, t) => s + safeAmt(t.amount), 0);
-    const expenses = mt.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category)).reduce((s, t) => s + safeAmt(t.amount), 0);
+    const income   = mt.filter(isRealIncome).reduce((s, t) => s + safeAmt(t.amount), 0);
+    const expenses = mt.filter(isRealExpense).reduce((s, t) => s + safeAmt(t.amount), 0);
     return income > 0 ? (income - expenses) / income : null;
   });
   const valid = rates.filter(r => r !== null);
@@ -1325,7 +1343,7 @@ function renderFinancialRatios() {
   const monthlyExpenses = last3.map(({ y, m }) =>
     txns.filter(t => {
       const td = new Date(t.date + 'T00:00:00');
-      return td.getFullYear() === y && td.getMonth() === m && t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category);
+      return td.getFullYear() === y && td.getMonth() === m && isRealExpense(t);
     }).reduce((s, t) => s + safeAmt(t.amount), 0)
   );
   const activeExpMonths = monthlyExpenses.filter(e => e > 0).length || 1;
@@ -1525,8 +1543,8 @@ function renderSavingsGoals() {
     const avgMonthlySavings = (() => {
       const rates = last3.map(({ y, m }) => {
         const mt = txns.filter(t => { const td = new Date(t.date + 'T00:00:00'); return td.getFullYear() === y && td.getMonth() === m; });
-        const inc = mt.filter(t => t.type === 'income').reduce((s, t) => s + safeAmt(t.amount), 0);
-        const exp = mt.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category)).reduce((s, t) => s + safeAmt(t.amount), 0);
+        const inc = mt.filter(isRealIncome).reduce((s, t) => s + safeAmt(t.amount), 0);
+        const exp = mt.filter(isRealExpense).reduce((s, t) => s + safeAmt(t.amount), 0);
         return inc > 0 ? inc - exp : null;
       }).filter(r => r !== null);
       return rates.length ? rates.reduce((s, r) => s + r, 0) / rates.length : 0;
@@ -1776,14 +1794,16 @@ function getFilteredTxns() {
 }
 
 function renderTrackerSummary(txns) {
-  let income = 0, expense = 0;
+  let income = 0, expense = 0, savingsSpend = 0;
   txns.forEach(t => {
     // Transfers excluded — internal moves don't affect income or expense totals
-    if (t.type === 'income')       income  += safeAmt(t.amount);
-    else if (t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category)) expense += safeAmt(t.amount);
+    if (isRealIncome(t))       income  += safeAmt(t.amount);
+    else if (isRealExpense(t)) expense += safeAmt(t.amount);
+    else if (isSavingsSpend(t)) savingsSpend += safeAmt(t.amount);
   });
   income  = roundMoney(income);
   expense = roundMoney(expense);
+  savingsSpend = roundMoney(savingsSpend);
   const net  = roundMoney(income - expense);
   const rate = income > 0 ? Math.round(net / income * 100) : null;
 
@@ -1791,9 +1811,14 @@ function renderTrackerSummary(txns) {
   const outEl  = document.getElementById('stat-out');
   const netEl  = document.getElementById('stat-net');
   const rateEl = document.getElementById('stat-rate');
+  const savEl  = document.getElementById('stat-savings-spend');
 
   if (inEl)  inEl.textContent  = fmt(income);
   if (outEl) outEl.textContent = fmt(expense);
+  if (savEl) {
+    savEl.textContent = savingsSpend > 0 ? `Spent from savings: ${fmt(savingsSpend)} (not counted in Money Out)` : '';
+    savEl.classList.toggle('hidden', savingsSpend <= 0);
+  }
   if (netEl) {
     netEl.textContent = fmt(net);
     netEl.style.color = net >= 0 ? 'var(--green)' : 'var(--red)';
@@ -1811,8 +1836,8 @@ function renderCategoryBreakdown(txns) {
   const el = document.getElementById('cat-breakdown');
   if (!el) return;
 
-  // Only real expenses (exclude savings/investment/loan transfers)
-  const expenses = txns.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category));
+  // Only real expenses (exclude card payments, reserves, savings-funded spends)
+  const expenses = txns.filter(isRealExpense);
   if (!expenses.length) {
     el.innerHTML = `<div class="empty-state" style="padding:20px 0"><div style="font-size:24px">📂</div><div>No expense data for this period.</div></div>`;
     return;
@@ -1864,7 +1889,7 @@ function renderDailyChart(txns) {
   const labelEl = document.getElementById('daily-period-label');
   if (!el) return;
 
-  const expenses = txns.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category));
+  const expenses = txns.filter(isRealExpense);
 
   // Build day buckets aligned to the active filter period
   const today = new Date(); today.setHours(0,0,0,0);
@@ -1921,7 +1946,7 @@ function renderAccountBreakdown(txns) {
   const el = document.getElementById('account-breakdown');
   if (!el) return;
 
-  const expenses = txns.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category));
+  const expenses = txns.filter(t => isRealExpense(t) || isSavingsSpend(t));
   if (!expenses.length) { el.innerHTML = ''; return; }
 
   const totals = {};
@@ -2007,8 +2032,8 @@ function renderMonthlyTrends() {
     const d = new Date(t.date + 'T00:00:00');
     const bucket = months.find(m => m.year === d.getFullYear() && m.month === d.getMonth());
     if (!bucket) return;
-    if (t.type === 'income')       bucket.income  += safeAmt(t.amount);
-    else if (t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category)) bucket.expense += safeAmt(t.amount);
+    if (isRealIncome(t))       bucket.income  += safeAmt(t.amount);
+    else if (isRealExpense(t)) bucket.expense += safeAmt(t.amount);
   });
 
   el.innerHTML = `<div style="overflow-x:auto"><table class="history-table">
@@ -2097,7 +2122,7 @@ function renderRecurringCard() {
   const el = document.getElementById('recurring-summary');
   if (!el) return;
   const all = loadTxns();
-  const recExpenses = all.filter(t => t.type === 'expense' && t.recurring === 'monthly' && safeAmt(t.amount) > 0 && !NON_EXPENSE_CATS.has(t.category));
+  const recExpenses = all.filter(t => isRealExpense(t) && t.recurring === 'monthly' && safeAmt(t.amount) > 0);
   const card = document.getElementById('recurring-card');
   if (!recExpenses.length) {
     el.innerHTML = '';
@@ -3269,14 +3294,14 @@ function anTxnsBetween(txns, start, end) {
 }
 
 function anRealExpenses(txns) {
-  return txns.filter(t => t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category));
+  return txns.filter(isRealExpense);
 }
 
 function anPeriodTotals(txns) {
   let income = 0, expense = 0;
   txns.forEach(t => {
-    if (t.type === 'income') income += safeAmt(t.amount);
-    else if (t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category)) expense += safeAmt(t.amount);
+    if (isRealIncome(t)) income += safeAmt(t.amount);
+    else if (isRealExpense(t)) expense += safeAmt(t.amount);
   });
   income  = roundMoney(income);
   expense = roundMoney(expense);
