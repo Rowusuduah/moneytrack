@@ -136,3 +136,22 @@ test('afValSeries: empty/null history gives empty array; zero prev gives null pc
   assert.equal(s[1].delta, 50);
   assert.equal(s[1].pct, null);
 });
+
+test('afValStats: overall change plus best and worst single update', () => {
+  const h = [
+    { date: '2026-07-01', current: 1000 },
+    { date: '2026-07-15', current: 1100 },
+    { date: '2026-08-01', current: 990 },
+    { date: '2026-08-10', current: 1200 },
+  ];
+  const s = A.afValStats(h);
+  assert.equal(s.change.abs, 200);
+  assert.equal(s.change.pct, 20);
+  assert.equal(s.best.date, '2026-08-10');
+  assert.equal(s.best.delta, 210);
+  assert.equal(s.worst.date, '2026-08-01');
+  assert.equal(s.worst.delta, -110);
+  assert.equal(s.steps, 3);
+  assert.equal(A.afValStats([{ date: '2026-07-01', current: 5 }]), null);
+  assert.equal(A.afValStats([]), null);
+});

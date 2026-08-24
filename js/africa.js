@@ -92,6 +92,20 @@ function afValSeries(history) {
   });
 }
 
+// Summary analysis of a value history: overall change plus the best and
+// worst single update. null until there are 2+ points.
+function afValStats(history) {
+  const change = afValChange(history);
+  if (!change) return null;
+  const steps = afValSeries(history).filter(p => p.delta !== null);
+  let best = steps[0], worst = steps[0];
+  steps.forEach(p => {
+    if (p.delta > best.delta) best = p;
+    if (p.delta < worst.delta) worst = p;
+  });
+  return { change, best, worst, steps: steps.length };
+}
+
 // Normalise one stored investment: guarantee a valid value history, seeding it
 // from the current value on first upgrade so older data isn't lost.
 function afSanitizeInv(inv) {
@@ -163,6 +177,16 @@ function bindAfricaTab() {
     }
     const val = t.closest('[data-af-valsave]');
     if (val) afQuickUpdate(val.dataset.afValsave);
+  });
+  // Keyboard toggle for the role=button history note (Enter / Space)
+  sec.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const hist = e.target.closest?.('[data-af-hist][role="button"]');
+    if (!hist) return;
+    e.preventDefault();
+    const id = hist.dataset.afHist;
+    afHistOpen.has(id) ? afHistOpen.delete(id) : afHistOpen.add(id);
+    renderAfricaTab();
   });
 }
 
@@ -308,10 +332,24 @@ function renderAfList(data) {
   el.innerHTML = html;
 }
 
-// Expanded per-investment block: value trend chart + newest-first list of
-// every saved value with its change from the previous point.
+// Expanded per-investment block: value trend chart + analysis line +
+// newest-first list of every saved value with its change from the previous.
 function afHistBlockHTML(inv) {
   const series = afValSeries(inv.history);
+  const stats = afValStats(inv.history);
+  let analysis = '';
+  if (stats) {
+    const c = stats.change;
+    analysis = '<div class="af-hist-analysis">Since start: ' +
+      afGainHTML(c.abs, c.pct, inv.currency);
+    if (stats.steps >= 2) {
+      analysis += ' · best update: ' + afGainHTML(stats.best.delta, stats.best.pct, inv.currency) +
+        ' <span class="af-meta" style="flex-basis:auto">' + fmtDate(stats.best.date) + '</span>' +
+        ' · worst: ' + afGainHTML(stats.worst.delta, stats.worst.pct, inv.currency) +
+        ' <span class="af-meta" style="flex-basis:auto">' + fmtDate(stats.worst.date) + '</span>';
+    }
+    analysis += '</div>';
+  }
   let rows = '';
   for (let i = series.length - 1; i >= 0; i--) {
     const p = series[i];
@@ -326,7 +364,7 @@ function afHistBlockHTML(inv) {
     rows += '<div class="af-hist-row"><span>' + fmtDate(p.date) + '</span><b>' +
       afFmtMoney(p.current, inv.currency) + '</b>' + chg + '</div>';
   }
-  return '<div class="af-hist">' + afValTrendSVG(inv.history) + rows + '</div>';
+  return '<div class="af-hist">' + afValTrendSVG(inv.history) + analysis + rows + '</div>';
 }
 
 // Value trend chart for one investment — same shape as the rate trend.
@@ -360,14 +398,18 @@ function afValTrendSVG(history) {
   return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="af-hist-chart" aria-hidden="true">' + g + '</svg>';
 }
 
-// compact "N updates ▲GH₵X (+Y%) since start" note from the tracked history
+// compact "N updates ▲GH₵X (+Y%) since start" note from the tracked history —
+// clickable: opens the same chart + analysis block as the 📈 button.
 function afInvHistNote(inv) {
   const chg = afValChange(inv && inv.history);
   if (!chg) return '';
   const arrow = chg.abs > 0 ? '▲' : chg.abs < 0 ? '▼' : '·';
   const pct = chg.pct === null ? '' : ' (' + (chg.pct >= 0 ? '+' : '') + chg.pct + '%)';
-  return ' · ' + chg.points + ' update' + (chg.points === 1 ? '' : 's') + ' ' +
-    arrow + ' ' + afFmtMoney(Math.abs(chg.abs), inv.currency) + pct + ' since start';
+  return ' · <span class="af-hist-link" role="button" tabindex="0" data-af-hist="' + escapeHTML(inv.id) +
+    '" aria-expanded="' + (afHistOpen.has(inv.id) ? 'true' : 'false') +
+    '" aria-label="Show price history chart for ' + escapeHTML(inv.name) + '">' +
+    chg.points + ' update' + (chg.points === 1 ? '' : 's') + ' ' +
+    arrow + ' ' + afFmtMoney(Math.abs(chg.abs), inv.currency) + pct + ' since start</span>';
 }
 
 function afShowForm() {
