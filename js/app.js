@@ -1794,16 +1794,18 @@ function getFilteredTxns() {
 }
 
 function renderTrackerSummary(txns) {
-  let income = 0, expense = 0, savingsSpend = 0;
+  let income = 0, expense = 0, savingsSpend = 0, carryover = 0;
   txns.forEach(t => {
     // Transfers excluded — internal moves don't affect income or expense totals
     if (isRealIncome(t))       income  += safeAmt(t.amount);
     else if (isRealExpense(t)) expense += safeAmt(t.amount);
     else if (isSavingsSpend(t)) savingsSpend += safeAmt(t.amount);
+    else if (t.type === 'income' && NON_INCOME_CATS.has(t.category)) carryover += safeAmt(t.amount);
   });
   income  = roundMoney(income);
   expense = roundMoney(expense);
   savingsSpend = roundMoney(savingsSpend);
+  carryover = roundMoney(carryover);
   const net  = roundMoney(income - expense);
   const rate = income > 0 ? Math.round(net / income * 100) : null;
 
@@ -1812,9 +1814,18 @@ function renderTrackerSummary(txns) {
   const netEl  = document.getElementById('stat-net');
   const rateEl = document.getElementById('stat-rate');
   const savEl  = document.getElementById('stat-savings-spend');
+  const carEl  = document.getElementById('stat-carryover');
 
   if (inEl)  inEl.textContent  = fmt(income);
   if (outEl) outEl.textContent = fmt(expense);
+  if (carEl) {
+    // Carryover is excluded from Money In (it is not new earnings) but it is
+    // still real money in the account — show it so the month adds up.
+    carEl.textContent = carryover > 0
+      ? `Carried over from last month: ${fmt(carryover)} → total left: ${fmt(roundMoney(carryover + net))} (carryover + Net)`
+      : '';
+    carEl.classList.toggle('hidden', carryover <= 0);
+  }
   if (savEl) {
     savEl.textContent = savingsSpend > 0 ? `Spent from savings: ${fmt(savingsSpend)} (not counted in Money Out)` : '';
     savEl.classList.toggle('hidden', savingsSpend <= 0);

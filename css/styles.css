@@ -299,6 +299,7 @@ select option { background: var(--surf2); color: var(--text); }
 .ts-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 6px; }
 .ts-value { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .ts-note { margin: -8px 0 16px; font-size: 12px; color: var(--green); }
+.ts-note--carry { color: var(--blue); }
 
 /* ─── Category Breakdown ─────────────────────────────────────── */
 .cat-row {
@@ -887,6 +888,8 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 .af-val-input { width: 110px; }
 .af-row-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 .af-hist { flex-basis: 100%; padding: 8px 0 4px; }
+.af-hist-link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+.af-hist-analysis { font-size: 13px; margin-bottom: 6px; }
 .af-hist-chart { width: 100%; height: auto; display: block; margin-bottom: 8px; }
 .af-hist-row { display: flex; gap: 12px; align-items: baseline; font-size: 13px;
   padding: 3px 0; border-top: 1px dashed var(--surf2); font-variant-numeric: tabular-nums; }
