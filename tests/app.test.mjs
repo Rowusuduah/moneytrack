@@ -88,6 +88,30 @@ test('NON_EXPENSE_CATS excludes Credit Card Payment + Bill Reserve, but NOT Loan
   assert.ok(!/'Loan Payment'/.test(line), 'Loan Payment must NOT be in NON_EXPENSE_CATS');
 });
 
+// ── income/expense gateways: carryover is not income; savings spends are not monthly spending ──
+
+test('isRealIncome excludes the Money from Last Month carryover', () => {
+  assert.equal(A.isRealIncome({ type: 'income', category: 'Paycheck', amount: 500 }), true);
+  assert.equal(A.isRealIncome({ type: 'income', category: 'Money from Last Month', amount: 200 }), false);
+  assert.equal(A.isRealIncome({ type: 'expense', category: 'Paycheck' }), false);
+});
+
+test('isSavingsSpend: true only for an expense whose account group is savings', () => {
+  A.refreshAccountConfig();   // ACCOUNTS is built during init in the browser
+  assert.equal(A.isSavingsSpend({ type: 'expense', account: 'usf_savings_1', category: 'Groceries' }), true);
+  assert.equal(A.isSavingsSpend({ type: 'expense', account: 'chase_checking', category: 'Groceries' }), false);
+  assert.equal(A.isSavingsSpend({ type: 'transfer', account: 'usf_savings_1' }), false);
+  assert.equal(A.isSavingsSpend({ type: 'expense', account: 'no_such_account' }), false);
+});
+
+test('isRealExpense excludes card payments, reserves, and savings-funded spends', () => {
+  A.refreshAccountConfig();
+  assert.equal(A.isRealExpense({ type: 'expense', account: 'chase_checking', category: 'Groceries' }), true);
+  assert.equal(A.isRealExpense({ type: 'expense', account: 'chase_checking', category: 'Credit Card Payment' }), false);
+  assert.equal(A.isRealExpense({ type: 'expense', account: 'usf_savings_2', category: 'Groceries' }), false);
+  assert.equal(A.isRealExpense({ type: 'income', account: 'chase_checking', category: 'Paycheck' }), false);
+});
+
 // ── cardOwedNow: live card balance = snapshot + charges since − payments since ──
 
 const CARD = { id: 'discover', label: 'Discover (Owed)', group: 'debt' };

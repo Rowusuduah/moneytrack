@@ -115,3 +115,24 @@ test('afSanitizeInv seeds history from current/updated, keeps + filters valid po
     history: [{ date: '2026-07-02', current: 10 }, { date: 'bad', current: 1 }, { date: '2026-07-01', current: 8 }] });
   assert.deepEqual(kept.history, [{ date: '2026-07-01', current: 8 }, { date: '2026-07-02', current: 10 }]);
 });
+
+test('afValSeries: per-step delta and pct, first point null', () => {
+  const s = A.afValSeries([
+    { date: '2026-07-01', current: 1000 },
+    { date: '2026-07-15', current: 1100 },
+    { date: '2026-08-01', current: 990 },
+  ]);
+  assert.deepEqual(s, [
+    { date: '2026-07-01', current: 1000, delta: null, pct: null },
+    { date: '2026-07-15', current: 1100, delta: 100,  pct: 10 },
+    { date: '2026-08-01', current: 990,  delta: -110, pct: -10 },
+  ]);
+});
+
+test('afValSeries: empty/null history gives empty array; zero prev gives null pct', () => {
+  assert.deepEqual(A.afValSeries([]), []);
+  assert.deepEqual(A.afValSeries(null), []);
+  const s = A.afValSeries([{ date: '2026-07-01', current: 0 }, { date: '2026-07-02', current: 50 }]);
+  assert.equal(s[1].delta, 50);
+  assert.equal(s[1].pct, null);
+});
