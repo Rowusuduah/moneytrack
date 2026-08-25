@@ -1798,11 +1798,15 @@ function getFilteredTxns() {
 
 function renderTrackerSummary(txns) {
   let income = 0, expense = 0, savingsSpend = 0, carryover = 0;
+  const savingsSpendBy = {};   // savings account id → amount taken this period
   txns.forEach(t => {
     // Transfers excluded — internal moves don't affect income or expense totals
     if (isRealIncome(t))       income  += safeAmt(t.amount);
     else if (isRealExpense(t)) expense += safeAmt(t.amount);
-    else if (isSavingsSpend(t)) savingsSpend += safeAmt(t.amount);
+    else if (isSavingsSpend(t)) {
+      savingsSpend += safeAmt(t.amount);
+      savingsSpendBy[t.account] = (savingsSpendBy[t.account] || 0) + safeAmt(t.amount);
+    }
     else if (t.type === 'income' && t.category === 'Money from Last Month') carryover += safeAmt(t.amount);
   });
   income  = roundMoney(income);
@@ -1839,13 +1843,16 @@ function renderTrackerSummary(txns) {
   if (savEl) {
     let savTxt = '';
     if (savingsSpend > 0) {
+      // Name each savings account touched, with the share of ITS balance
       const snap = getLatestSnapshot();
       const b = snap ? (snap.accounts || {}) : {};
-      const savBal = roundMoney(ACCOUNTS.filter(a => a.group === 'savings').reduce((s, a) => s + safeAmt(b[a.id]), 0));
-      const pct = savBal > 0 ? Math.round(savingsSpend / savBal * 1000) / 10 : null;
-      savTxt = `Taken from savings: ${fmt(savingsSpend)}` +
-        (pct !== null ? ` — ${pct}% of your ${fmt(savBal)} savings` : '') +
-        ' (not counted in Money Out)';
+      const parts = Object.entries(savingsSpendBy).map(([id, amt]) => {
+        const bal = safeAmt(b[id]);
+        const pct = bal > 0 ? Math.round(amt / bal * 1000) / 10 : null;
+        return `${ACCOUNT_LABELS[id] || id}: ${fmt(roundMoney(amt))}` +
+          (pct !== null ? ` (${pct}% of its ${fmt(bal)})` : '');
+      });
+      savTxt = `Taken from savings — ${parts.join(' · ')} (not counted in Money Out)`;
     }
     savEl.textContent = savTxt;
     savEl.classList.toggle('hidden', savingsSpend <= 0);
@@ -3608,12 +3615,19 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
     insights.push({ icon: '🏆', html: `<b>${escapeHTML(cat)}</b> was your biggest spending category — ${fmt(roundMoney(amt))} (${Math.round(amt / c.expense * 100)}% of the total).` });
   }
 
-  // Savings withdrawals — every touch of savings, with amount and share
+  // Savings withdrawals — name each account touched, with the share of ITS balance
   if (c.savingsSpend > 0) {
-    const savBal = anGroupTotals(snapPair.endSnap).savings;
-    const pct = savBal > 0 ? Math.round(c.savingsSpend / savBal * 1000) / 10 : null;
-    insights.push({ icon: '🏧', html: `You took <b>${fmt(c.savingsSpend)}</b> out of savings this ${mode}` +
-      (pct !== null ? ` — <b>${pct}%</b> of your ${fmt(savBal)} savings balance` : '') + '.' });
+    const b = (snapPair.endSnap && snapPair.endSnap.accounts) || {};
+    const by = {};
+    cur.filter(isSavingsSpend).forEach(t => { by[t.account] = (by[t.account] || 0) + safeAmt(t.amount); });
+    const parts = Object.entries(by).map(([id, amt]) => {
+      const bal = safeAmt(b[id]);
+      const pct = bal > 0 ? Math.round(amt / bal * 1000) / 10 : null;
+      return `<b>${escapeHTML(ACCOUNT_LABELS[id] || id)}</b>: ${fmt(roundMoney(amt))}` +
+        (pct !== null ? ` (${pct}% of its ${fmt(bal)})` : '');
+    });
+    insights.push({ icon: '🏧', html: `You took <b>${fmt(c.savingsSpend)}</b> out of savings this ${mode} — ` +
+      parts.join(' · ') + '.' });
   }
 
   // Fastest-growing category vs previous period (needs ≥ $20 baseline)
