@@ -578,7 +578,7 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 
 /* ─── Loans Out ─────────────────────────────────────────────── */
 .loan-item {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 10px 0;
   border-bottom: 1px solid var(--border);
 }
@@ -594,6 +594,12 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
   border-bottom: 1px solid var(--border);
 }
 .loan-paid-item:last-child { border-bottom: none; }
+.loan-detail { flex-basis: 100%; padding: 6px 0 2px 14px; }
+.loan-pay-row {
+  display: flex; gap: 12px; align-items: center; font-size: 12px;
+  padding: 3px 0; border-top: 1px dashed var(--surf2); font-variant-numeric: tabular-nums;
+}
+.loan-pay-row > span:first-child { color: var(--muted); }
 
 /* ─── Recurring Badge ────────────────────────────────────────── */
 .recurring-badge {
