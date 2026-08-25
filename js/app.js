@@ -623,8 +623,11 @@ function calcNetWorth(snap, loans, atDate) {
   const b = snap.accounts || {};
   const assets = roundMoney(ACCOUNTS.filter(a => a.group !== 'debt').reduce((s, a) => s + safeAmt(b[a.id]), 0));
   const debt   = roundMoney(ACCOUNTS.filter(a => a.group === 'debt').reduce((s, a) => s + safeAmt(b[a.id]), 0));
+  // A loan counts as an asset while outstanding; it stops counting once paid
+  // back (the money returned to an account) or forgiven (written off).
+  const closedAfter = (l, d) => (l.paidDate && l.paidDate > d) || (l.forgivenDate && l.forgivenDate > d);
   const loansOut = roundMoney((loans || [])
-    .filter(l => atDate ? (l.date <= atDate && (l.status === 'outstanding' || l.paidDate > atDate)) : l.status === 'outstanding')
+    .filter(l => atDate ? (l.date <= atDate && (l.status === 'outstanding' || closedAfter(l, atDate))) : l.status === 'outstanding')
     .reduce((s, l) => s + loanRemaining(l, atDate), 0));
   return roundMoney(assets + loansOut - debt);
 }
@@ -1113,6 +1116,7 @@ function renderLoansCard() {
   const loans = loadLoans();
   const outstanding = loans.filter(l => l.status === 'outstanding');
   const paid        = loans.filter(l => l.status === 'paid');
+  const forgiven    = loans.filter(l => l.status === 'forgiven');
 
   const outstandingTotal = roundMoney(outstanding.reduce((s, l) => s + loanRemaining(l), 0));
 
@@ -1138,6 +1142,7 @@ function renderLoansCard() {
                aria-label="Payment amount from ${escapeHTML(l.name)}">
         <button class="txn-btn" data-loan-pay="${escapeHTML(l.id)}" aria-label="Record payment from ${escapeHTML(l.name)}">＋</button>
         <button class="btn btn-green" style="padding:5px 10px;font-size:11px" data-loan-paid="${escapeHTML(l.id)}" aria-label="Mark as fully paid">✓ Paid</button>
+        <button class="btn btn-ghost btn-sm" data-loan-forgive="${escapeHTML(l.id)}" aria-label="Forgive what ${escapeHTML(l.name)} still owes">Forgive</button>
         <button class="txn-btn" data-loan-edit="${escapeHTML(l.id)}" aria-label="Edit loan for ${escapeHTML(l.name)}">✎</button>
         <button class="txn-btn del" data-loan-del="${escapeHTML(l.id)}" aria-label="Delete loan">✕</button>
         ${open ? loanDetailHTML(l) : ''}
@@ -1155,6 +1160,23 @@ function renderLoansCard() {
           <span style="flex:1;cursor:pointer" data-loan-toggle="${escapeHTML(l.id)}" role="button" tabindex="0"
                 aria-expanded="${open}" aria-label="Show payment details for ${escapeHTML(l.name)}">${open ? '▾' : '▸'} ${escapeHTML(l.name)} — ${fmt(l.amount)}${(l.payments || []).length > 1 ? ` (${l.payments.length} payments)` : ''}</span>
           <span>Paid ${escapeHTML(fmtDate(l.paidDate))}</span>
+          <button class="txn-btn del" data-loan-del="${escapeHTML(l.id)}" aria-label="Delete loan record" style="margin-left:4px">✕</button>
+          ${open ? loanDetailHTML(l) : ''}
+        </div>`;
+      }).join('')}
+    </div>` : '';
+
+  const forgivenHtml = forgiven.length ? `
+    <div class="loan-paid-section">
+      <div class="loan-paid-label">Forgiven (${forgiven.length})</div>
+      ${forgiven.map(l => {
+        const open = loanOpenIds.has(l.id);
+        return `
+        <div class="loan-paid-item" style="flex-wrap:wrap">
+          <span style="flex:1;cursor:pointer" data-loan-toggle="${escapeHTML(l.id)}" role="button" tabindex="0"
+                aria-expanded="${open}" aria-label="Show details for forgiven loan to ${escapeHTML(l.name)}">${open ? '▾' : '▸'} ${escapeHTML(l.name)} — ${fmt(loanRemaining(l))} written off · ${escapeHTML(l.forgivenReason || '')}</span>
+          <span>Forgiven ${escapeHTML(fmtDate(l.forgivenDate))}</span>
+          <button class="btn btn-ghost btn-sm" data-loan-unforgive="${escapeHTML(l.id)}" aria-label="Undo forgiving ${escapeHTML(l.name)}">Undo</button>
           <button class="txn-btn del" data-loan-del="${escapeHTML(l.id)}" aria-label="Delete loan record" style="margin-left:4px">✕</button>
           ${open ? loanDetailHTML(l) : ''}
         </div>`;
@@ -1189,7 +1211,7 @@ function renderLoansCard() {
       ${outstanding.length ? `<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Outstanding: <strong style="color:var(--teal)">${fmt(outstandingTotal)}</strong></div>` : ''}
       ${outstandingHtml}
     </div>
-    ${paidHtml}`;
+    ${paidHtml}${forgivenHtml}`;
 }
 
 let loanEditId = null;             // loan id currently open in the inline edit form
@@ -1216,9 +1238,11 @@ function loanDetailHTML(l) {
   const remaining = loanRemaining(l);
   const remainLine = l.status === 'outstanding'
     ? `<div class="loan-pay-row"><span>Still owed</span><b style="color:var(--teal)">${fmt(remaining)}</b></div>` : '';
+  const forgivenLine = l.status === 'forgiven'
+    ? `<div class="loan-pay-row"><span>Written off ${escapeHTML(fmtDate(l.forgivenDate))}</span><b>${fmt(remaining)}</b><span style="flex:1">${escapeHTML(l.forgivenReason || '')}</span></div>` : '';
   return `<div class="loan-detail">
     <div class="loan-meta" style="margin-bottom:4px">Loaned ${escapeHTML(fmtDate(l.date))} · ${fmt(l.amount)} total${l.dueDate ? ' · expected ' + escapeHTML(fmtDate(l.dueDate)) : ''}${l.note ? ' · ' + escapeHTML(l.note) : ''}</div>
-    ${rows}${remainLine}
+    ${rows}${remainLine}${forgivenLine}
   </div>`;
 }
 
@@ -1297,6 +1321,37 @@ function removeLoanPayment(id, index) {
     loan.status = 'outstanding';
     loan.paidDate = '';
   }
+  saveLoans(loans);
+  renderLoansCard();
+  renderAccountKPIs();
+}
+
+// Write a loan off: the borrower still owes it, but you are letting it go.
+// A reason is required so future-you knows why the money never came back.
+function forgiveLoan(id) {
+  const loans = loadLoans();
+  const loan = loans.find(l => String(l.id) === String(id));
+  if (!loan) return;
+  const raw = prompt(`Forgive the ${fmt(loanRemaining(loan))} that ${loan.name} still owes?\n\nState the reason (required):`);
+  if (raw === null) return;                       // cancelled
+  const reason = raw.trim();
+  if (!reason) { alert('A reason is required to forgive a loan.'); return; }
+  loan.status = 'forgiven';
+  loan.forgivenDate = todayISO();
+  loan.forgivenReason = reason;
+  saveLoans(loans);
+  renderLoansCard();
+  renderAccountKPIs();
+}
+
+function unforgiveLoan(id) {
+  const loans = loadLoans();
+  const loan = loans.find(l => String(l.id) === String(id));
+  if (!loan) return;
+  if (!confirm(`Put "${loan.name}" (${fmt(loanRemaining(loan))}) back as outstanding — they still owe it?`)) return;
+  loan.status = 'outstanding';
+  loan.forgivenDate = '';
+  loan.forgivenReason = '';
   saveLoans(loans);
   renderLoansCard();
   renderAccountKPIs();
@@ -4122,6 +4177,10 @@ function bindEvents() {
     }
     const loanUnpayBtn = e.target.closest('[data-loan-unpay]');
     if (loanUnpayBtn) undoLoanPaid(loanUnpayBtn.dataset.loanUnpay);
+    const loanForgiveBtn = e.target.closest('[data-loan-forgive]');
+    if (loanForgiveBtn) forgiveLoan(loanForgiveBtn.dataset.loanForgive);
+    const loanUnforgiveBtn = e.target.closest('[data-loan-unforgive]');
+    if (loanUnforgiveBtn) unforgiveLoan(loanUnforgiveBtn.dataset.loanUnforgive);
     const loanToggle = e.target.closest('[data-loan-toggle]');
     if (loanToggle) {
       const id = loanToggle.dataset.loanToggle;
