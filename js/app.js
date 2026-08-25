@@ -1826,7 +1826,7 @@ function renderTrackerSummary(txns) {
   if (outEl) outEl.textContent = fmt(expense);
   if (leftEl) {
     leftEl.textContent = fmt(totalLeft);
-    leftEl.style.color = totalLeft >= 0 ? 'var(--green)' : 'var(--red)';
+    leftEl.style.color = totalLeft >= 0 ? 'var(--blue)' : 'var(--red)';
   }
   if (carEl) {
     // Carryover is excluded from Money In (it is not new earnings) but it is
