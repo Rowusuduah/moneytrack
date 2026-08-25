@@ -1124,10 +1124,12 @@ function renderLoansCard() {
       const paidNote = paidSoFar > 0
         ? ` · paid ${fmt(paidSoFar)} of ${fmt(l.amount)} (${(l.payments || []).length} payment${(l.payments || []).length === 1 ? '' : 's'})`
         : '';
+      const open = loanOpenIds.has(l.id);
       return `
       <div class="loan-item" data-id="${escapeHTML(l.id)}">
-        <div style="flex:1;min-width:0">
-          <div class="loan-name">${escapeHTML(l.name)}</div>
+        <div style="flex:1;min-width:0;cursor:pointer" data-loan-toggle="${escapeHTML(l.id)}" role="button" tabindex="0"
+             aria-expanded="${open}" aria-label="Show details for ${escapeHTML(l.name)}">
+          <div class="loan-name">${open ? '▾' : '▸'} ${escapeHTML(l.name)}</div>
           <div class="loan-meta">${escapeHTML(fmtDate(l.date))}${loanDueBadge(l.dueDate)}${paidNote}${l.note ? ' · ' + escapeHTML(l.note) : ''}</div>
         </div>
         <div class="loan-amount">${fmt(remaining)}</div>
@@ -1138,6 +1140,7 @@ function renderLoansCard() {
         <button class="btn btn-green" style="padding:5px 10px;font-size:11px" data-loan-paid="${escapeHTML(l.id)}" aria-label="Mark as fully paid">✓ Paid</button>
         <button class="txn-btn" data-loan-edit="${escapeHTML(l.id)}" aria-label="Edit loan for ${escapeHTML(l.name)}">✎</button>
         <button class="txn-btn del" data-loan-del="${escapeHTML(l.id)}" aria-label="Delete loan">✕</button>
+        ${open ? loanDetailHTML(l) : ''}
       </div>`;
     }).join('')
     : `<div class="empty-state" style="padding:16px 0;font-size:12px">No outstanding loans — you're all clear!</div>`;
@@ -1145,12 +1148,17 @@ function renderLoansCard() {
   const paidHtml = paid.length ? `
     <div class="loan-paid-section">
       <div class="loan-paid-label">Repaid (${paid.length})</div>
-      ${paid.map(l => `
-        <div class="loan-paid-item">
-          <span style="flex:1">${escapeHTML(l.name)} — ${fmt(l.amount)}${(l.payments || []).length > 1 ? ` (${l.payments.length} payments)` : ''}</span>
+      ${paid.map(l => {
+        const open = loanOpenIds.has(l.id);
+        return `
+        <div class="loan-paid-item" style="flex-wrap:wrap">
+          <span style="flex:1;cursor:pointer" data-loan-toggle="${escapeHTML(l.id)}" role="button" tabindex="0"
+                aria-expanded="${open}" aria-label="Show payment details for ${escapeHTML(l.name)}">${open ? '▾' : '▸'} ${escapeHTML(l.name)} — ${fmt(l.amount)}${(l.payments || []).length > 1 ? ` (${l.payments.length} payments)` : ''}</span>
           <span>Paid ${escapeHTML(fmtDate(l.paidDate))}</span>
           <button class="txn-btn del" data-loan-del="${escapeHTML(l.id)}" aria-label="Delete loan record" style="margin-left:4px">✕</button>
-        </div>`).join('')}
+          ${open ? loanDetailHTML(l) : ''}
+        </div>`;
+      }).join('')}
     </div>` : '';
 
   el.innerHTML = `
@@ -1184,7 +1192,35 @@ function renderLoansCard() {
     ${paidHtml}`;
 }
 
-let loanEditId = null;   // loan id currently open in the inline edit form
+let loanEditId = null;             // loan id currently open in the inline edit form
+const loanOpenIds = new Set();     // loan ids with the details dropdown expanded
+
+// Expanded dropdown: full details + every payment with an undo button.
+function loanDetailHTML(l) {
+  const payments = l.payments || [];
+  let rows = '';
+  payments.forEach((p, i) => {
+    rows += `<div class="loan-pay-row">
+      <span>${escapeHTML(fmtDate(p.date))}</span>
+      <b>${fmt(p.amount)}</b>
+      <button class="txn-btn del" data-loan-payundo="${escapeHTML(l.id)}:${i}"
+        aria-label="Undo this ${fmt(p.amount)} payment from ${escapeHTML(l.name)}">✕</button>
+    </div>`;
+  });
+  if (!payments.length) {
+    rows = l.status === 'paid'
+      ? `<div class="loan-pay-row"><span>Marked paid ${escapeHTML(fmtDate(l.paidDate))} — no individual payments recorded</span>
+          <button class="btn btn-ghost btn-sm" data-loan-unpay="${escapeHTML(l.id)}">Undo — not actually paid</button></div>`
+      : `<div class="loan-pay-row"><span>No payments recorded yet.</span></div>`;
+  }
+  const remaining = loanRemaining(l);
+  const remainLine = l.status === 'outstanding'
+    ? `<div class="loan-pay-row"><span>Still owed</span><b style="color:var(--teal)">${fmt(remaining)}</b></div>` : '';
+  return `<div class="loan-detail">
+    <div class="loan-meta" style="margin-bottom:4px">Loaned ${escapeHTML(fmtDate(l.date))} · ${fmt(l.amount)} total${l.dueDate ? ' · expected ' + escapeHTML(fmtDate(l.dueDate)) : ''}${l.note ? ' · ' + escapeHTML(l.note) : ''}</div>
+    ${rows}${remainLine}
+  </div>`;
+}
 
 function loanEditFormHTML(l) {
   return `
@@ -1244,6 +1280,36 @@ function recordLoanPayment(id) {
   loan.payments = loan.payments || [];
   loan.payments.push({ date: todayISO(), amount: roundMoney(amt) });
   if (loanRemaining(loan) === 0) { loan.status = 'paid'; loan.paidDate = todayISO(); }
+  saveLoans(loans);
+  renderLoansCard();
+  renderAccountKPIs();
+}
+
+// Undo one recorded payment; if the loan was closed, it reopens automatically.
+function removeLoanPayment(id, index) {
+  const loans = loadLoans();
+  const loan = loans.find(l => String(l.id) === String(id));
+  if (!loan || !Array.isArray(loan.payments) || !loan.payments[index]) return;
+  const p = loan.payments[index];
+  if (!confirm(`Undo the ${fmt(p.amount)} payment from "${loan.name}" (${fmtDate(p.date)})?`)) return;
+  loan.payments.splice(index, 1);
+  if (loan.status === 'paid' && loanRemaining(loan) > 0) {
+    loan.status = 'outstanding';
+    loan.paidDate = '';
+  }
+  saveLoans(loans);
+  renderLoansCard();
+  renderAccountKPIs();
+}
+
+// Undo an old-style "marked paid" (no payment records): back to outstanding.
+function undoLoanPaid(id) {
+  const loans = loadLoans();
+  const loan = loans.find(l => String(l.id) === String(id));
+  if (!loan) return;
+  if (!confirm(`Mark "${loan.name}" (${fmt(loan.amount)}) as NOT paid — back to outstanding?`)) return;
+  loan.status = 'outstanding';
+  loan.paidDate = '';
   saveLoans(loans);
   renderLoansCard();
   renderAccountKPIs();
@@ -4049,8 +4115,32 @@ function bindEvents() {
     if (loanPayBtn)  recordLoanPayment(loanPayBtn.dataset.loanPay);
     const loanEditBtn = e.target.closest('[data-loan-edit]');
     if (loanEditBtn) { loanEditId = loanEditBtn.dataset.loanEdit; renderLoansCard(); }
+    const loanUndoBtn = e.target.closest('[data-loan-payundo]');
+    if (loanUndoBtn) {
+      const [lid, idx] = loanUndoBtn.dataset.loanPayundo.split(':');
+      removeLoanPayment(lid, parseInt(idx, 10));
+    }
+    const loanUnpayBtn = e.target.closest('[data-loan-unpay]');
+    if (loanUnpayBtn) undoLoanPaid(loanUnpayBtn.dataset.loanUnpay);
+    const loanToggle = e.target.closest('[data-loan-toggle]');
+    if (loanToggle) {
+      const id = loanToggle.dataset.loanToggle;
+      loanOpenIds.has(id) ? loanOpenIds.delete(id) : loanOpenIds.add(id);
+      renderLoansCard();
+    }
     const loanDelBtn  = e.target.closest('[data-loan-del]');
     if (loanDelBtn)  deleteLoan(loanDelBtn.dataset.loanDel);
+  });
+
+  // Keyboard toggle for the loan-details dropdowns (Enter / Space)
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const toggle = e.target.closest?.('[data-loan-toggle][role="button"]');
+    if (!toggle) return;
+    e.preventDefault();
+    const id = toggle.dataset.loanToggle;
+    loanOpenIds.has(id) ? loanOpenIds.delete(id) : loanOpenIds.add(id);
+    renderLoansCard();
   });
 
   // Bill Reminders card
