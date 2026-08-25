@@ -114,6 +114,21 @@ test('isRealExpense excludes card payments, reserves, loans given, and savings-f
   assert.equal(A.isRealExpense({ type: 'income', account: 'chase_checking', category: 'Paycheck' }), false);
 });
 
+test('anPeriodTotals separates savings withdrawals from income and spending', () => {
+  A.refreshAccountConfig();
+  const t = A.anPeriodTotals([
+    { type: 'income',  category: 'Paycheck',              account: 'chase_checking', amount: 1000 },
+    { type: 'income',  category: 'Money from Last Month', account: 'chase_checking', amount: 50 },
+    { type: 'expense', category: 'Groceries',             account: 'chase_checking', amount: 100 },
+    { type: 'expense', category: 'Groceries',             account: 'usf_savings_1',  amount: 250 },
+    { type: 'transfer', category: 'Savings Transfer',     account: 'chase_checking', toAccount: 'usf_savings_1', amount: 400 },
+  ]);
+  assert.equal(t.income, 1000);        // carryover not income
+  assert.equal(t.expense, 100);        // savings withdrawal not spending
+  assert.equal(t.savingsSpend, 250);
+  assert.equal(t.net, 900);
+});
+
 // ── cardOwedNow: live card balance = snapshot + charges since − payments since ──
 
 const CARD = { id: 'discover', label: 'Discover (Owed)', group: 'debt' };

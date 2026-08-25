@@ -1812,25 +1812,42 @@ function renderTrackerSummary(txns) {
   const net  = roundMoney(income - expense);
   const rate = income > 0 ? Math.round(net / income * 100) : null;
 
+  const totalLeft = roundMoney(carryover + net);
+
   const inEl   = document.getElementById('stat-in');
   const outEl  = document.getElementById('stat-out');
   const netEl  = document.getElementById('stat-net');
   const rateEl = document.getElementById('stat-rate');
+  const leftEl = document.getElementById('stat-left');
   const savEl  = document.getElementById('stat-savings-spend');
   const carEl  = document.getElementById('stat-carryover');
 
   if (inEl)  inEl.textContent  = fmt(income);
   if (outEl) outEl.textContent = fmt(expense);
+  if (leftEl) {
+    leftEl.textContent = fmt(totalLeft);
+    leftEl.style.color = totalLeft >= 0 ? 'var(--green)' : 'var(--red)';
+  }
   if (carEl) {
     // Carryover is excluded from Money In (it is not new earnings) but it is
-    // still real money in the account — show it so the month adds up.
+    // still real money in the account — show the equation so the month adds up.
     carEl.textContent = carryover > 0
-      ? `Carried over from last month: ${fmt(carryover)} → total left: ${fmt(roundMoney(carryover + net))} (carryover + Net)`
+      ? `Total Left = carried over ${fmt(carryover)} + Net ${fmt(net)} = ${fmt(totalLeft)} — check this against your bank`
       : '';
     carEl.classList.toggle('hidden', carryover <= 0);
   }
   if (savEl) {
-    savEl.textContent = savingsSpend > 0 ? `Spent from savings: ${fmt(savingsSpend)} (not counted in Money Out)` : '';
+    let savTxt = '';
+    if (savingsSpend > 0) {
+      const snap = getLatestSnapshot();
+      const b = snap ? (snap.accounts || {}) : {};
+      const savBal = roundMoney(ACCOUNTS.filter(a => a.group === 'savings').reduce((s, a) => s + safeAmt(b[a.id]), 0));
+      const pct = savBal > 0 ? Math.round(savingsSpend / savBal * 1000) / 10 : null;
+      savTxt = `Taken from savings: ${fmt(savingsSpend)}` +
+        (pct !== null ? ` — ${pct}% of your ${fmt(savBal)} savings` : '') +
+        ' (not counted in Money Out)';
+    }
+    savEl.textContent = savTxt;
     savEl.classList.toggle('hidden', savingsSpend <= 0);
   }
   if (netEl) {
@@ -3312,16 +3329,18 @@ function anRealExpenses(txns) {
 }
 
 function anPeriodTotals(txns) {
-  let income = 0, expense = 0;
+  let income = 0, expense = 0, savingsSpend = 0;
   txns.forEach(t => {
     if (isRealIncome(t)) income += safeAmt(t.amount);
     else if (isRealExpense(t)) expense += safeAmt(t.amount);
+    else if (isSavingsSpend(t)) savingsSpend += safeAmt(t.amount);
   });
   income  = roundMoney(income);
   expense = roundMoney(expense);
+  savingsSpend = roundMoney(savingsSpend);
   const net  = roundMoney(income - expense);
   const rate = income > 0 ? Math.round(net / income * 100) : null;
-  return { income, expense, net, rate };
+  return { income, expense, net, rate, savingsSpend };
 }
 
 function anPctDelta(cur, prev) {
@@ -3396,6 +3415,9 @@ function renderAnalysisScorecard(cur, prev) {
     { label: 'Saved',     value: c.rate === null ? '—' : c.rate + '%',
       color: c.rate === null ? 'var(--muted)' : c.rate >= 20 ? 'var(--green)' : c.rate >= 0 ? 'var(--gold)' : 'var(--red)',
       badge: anDeltaBadge(rateDelta, true, ' pts') },
+    { label: 'From Savings', value: fmt(c.savingsSpend),
+      color: c.savingsSpend > 0 ? 'var(--gold)' : 'var(--muted)',
+      badge: anDeltaBadge(anPctDelta(c.savingsSpend, p.savingsSpend), false) },
   ];
   el.innerHTML = cards.map(k => `<div class="ts-card">
     <div class="ts-label">${k.label}</div>
@@ -3584,6 +3606,14 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
   if (sortedCats.length && c.expense > 0) {
     const [cat, amt] = sortedCats[0];
     insights.push({ icon: '🏆', html: `<b>${escapeHTML(cat)}</b> was your biggest spending category — ${fmt(roundMoney(amt))} (${Math.round(amt / c.expense * 100)}% of the total).` });
+  }
+
+  // Savings withdrawals — every touch of savings, with amount and share
+  if (c.savingsSpend > 0) {
+    const savBal = anGroupTotals(snapPair.endSnap).savings;
+    const pct = savBal > 0 ? Math.round(c.savingsSpend / savBal * 1000) / 10 : null;
+    insights.push({ icon: '🏧', html: `You took <b>${fmt(c.savingsSpend)}</b> out of savings this ${mode}` +
+      (pct !== null ? ` — <b>${pct}%</b> of your ${fmt(savBal)} savings balance` : '') + '.' });
   }
 
   // Fastest-growing category vs previous period (needs ≥ $20 baseline)
