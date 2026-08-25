@@ -82,7 +82,7 @@ const WEALTH_CATEGORY_MAP = {
   'Tuition': 'profdev', 'Textbooks': 'profdev', 'Courses': 'profdev', 'Student Loan': 'profdev',
 };
 const WEALTH_SAVINGS_CATS  = ['Savings Transfer', 'Investment'];
-const WEALTH_EXCLUDED_CATS = ['Bill Reserve', 'Loan Payment', 'Credit Card Payment', 'Bank Fee'];
+const WEALTH_EXCLUDED_CATS = ['Bill Reserve', 'Loan Payment', 'Credit Card Payment', 'Bank Fee', 'Loan Given'];
 
 function wlRound(n) { return Math.round(n * 100) / 100; }   // local: no app.js at top level
 function wlPlan() { return PLAN; }

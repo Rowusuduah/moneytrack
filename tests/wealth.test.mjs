@@ -127,14 +127,15 @@ test('every expense category in the txn form is mapped, excluded, or savings', (
   const sel = html.match(/<select id="txn-category"[\s\S]*?<\/select>/);
   assert.ok(sel, 'txn-category select not found');
   const income = new Set(['Paycheck', 'Freelance', 'Transfer In', 'Other Income',
-    'Money from Last Month', 'Bonus', 'Refund', 'Reimbursement', 'Cash Back', 'Interest Earned', 'Selling / Resale']);
+    'Money from Last Month', 'Bonus', 'Refund', 'Reimbursement', 'Cash Back', 'Interest Earned', 'Selling / Resale',
+    'Loan Repaid to Me']);
   const decode = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
   const cats = [...sel[0].matchAll(/<option[^>]*>([^<]+)<\/option>/g)]
     .map(m => decode(m[1].trim())).filter(c => !income.has(c));
   const map = W.wlCatToGroup();
   const known = c => c in map ||
     ['Savings Transfer', 'Investment'].includes(c) ||
-    ['Bill Reserve', 'Loan Payment', 'Credit Card Payment', 'Bank Fee'].includes(c);
+    ['Bill Reserve', 'Loan Payment', 'Credit Card Payment', 'Bank Fee', 'Loan Given'].includes(c);
   const unknown = cats.filter(c => !known(c));
   assert.deepEqual(unknown, [], 'unmapped dropdown categories: ' + unknown.join(', '));
 });

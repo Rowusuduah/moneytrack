@@ -90,9 +90,10 @@ test('NON_EXPENSE_CATS excludes Credit Card Payment + Bill Reserve, but NOT Loan
 
 // ── income/expense gateways: carryover is not income; savings spends are not monthly spending ──
 
-test('isRealIncome excludes the Money from Last Month carryover', () => {
+test('isRealIncome excludes the Money from Last Month carryover and loan repayments', () => {
   assert.equal(A.isRealIncome({ type: 'income', category: 'Paycheck', amount: 500 }), true);
   assert.equal(A.isRealIncome({ type: 'income', category: 'Money from Last Month', amount: 200 }), false);
+  assert.equal(A.isRealIncome({ type: 'income', category: 'Loan Repaid to Me', amount: 500 }), false);
   assert.equal(A.isRealIncome({ type: 'expense', category: 'Paycheck' }), false);
 });
 
@@ -104,10 +105,11 @@ test('isSavingsSpend: true only for an expense whose account group is savings', 
   assert.equal(A.isSavingsSpend({ type: 'expense', account: 'no_such_account' }), false);
 });
 
-test('isRealExpense excludes card payments, reserves, and savings-funded spends', () => {
+test('isRealExpense excludes card payments, reserves, loans given, and savings-funded spends', () => {
   A.refreshAccountConfig();
   assert.equal(A.isRealExpense({ type: 'expense', account: 'chase_checking', category: 'Groceries' }), true);
   assert.equal(A.isRealExpense({ type: 'expense', account: 'chase_checking', category: 'Credit Card Payment' }), false);
+  assert.equal(A.isRealExpense({ type: 'expense', account: 'chase_checking', category: 'Loan Given' }), false);
   assert.equal(A.isRealExpense({ type: 'expense', account: 'usf_savings_2', category: 'Groceries' }), false);
   assert.equal(A.isRealExpense({ type: 'income', account: 'chase_checking', category: 'Paycheck' }), false);
 });

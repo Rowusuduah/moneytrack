@@ -64,7 +64,7 @@ const CATEGORY_COLORS = {
   'Treating Friends': '#e879f9',
   'Gifts':           '#e879f9', 'Donations':     '#e879f9',
   'Savings Transfer':'#4ade80', 'Bill Reserve':'#60a5fa', 'Investment':'#4ade80', 'Loan Payment':'#f87171',
-  'Credit Card Payment': '#f87171',
+  'Credit Card Payment': '#f87171', 'Loan Given': '#2dd4bf', 'Loan Repaid to Me': '#2dd4bf',
   'Bank Fee':        '#f87171', 'Subscriptions': '#fb923c',
   'Education':       '#fbbf24', 'Personal Care': '#a78bfa', 'Miscellaneous':'#8a8aa6',
   // ── income (green) ──
@@ -98,12 +98,15 @@ const CATEGORY_COLORS = {
 // excluded because the spending was already counted when the card was charged.
 // Loan Payment counts as a real expense (money leaving your account) — user
 // preference — so it is NOT excluded here.
-const NON_EXPENSE_CATS = new Set(['Bill Reserve', 'Credit Card Payment']);
+// 'Loan Given' is money lent to someone (an asset you expect back), not
+// spending — and its 'Loan Repaid to Me' return leg is not new earnings.
+// Together they keep personal loans from inflating both In and Out.
+const NON_EXPENSE_CATS = new Set(['Bill Reserve', 'Credit Card Payment', 'Loan Given']);
 
 // Categories excluded from income totals. 'Money from Last Month' is last
 // month's leftover arriving again, not new earnings — counting it would
 // re-count the same dollars every month and inflate yearly income.
-const NON_INCOME_CATS = new Set(['Money from Last Month']);
+const NON_INCOME_CATS = new Set(['Money from Last Month', 'Loan Repaid to Me']);
 
 // An expense paid straight out of a savings account is a savings withdrawal,
 // not monthly spending: it reduces that savings balance, not the budget.
@@ -1800,7 +1803,7 @@ function renderTrackerSummary(txns) {
     if (isRealIncome(t))       income  += safeAmt(t.amount);
     else if (isRealExpense(t)) expense += safeAmt(t.amount);
     else if (isSavingsSpend(t)) savingsSpend += safeAmt(t.amount);
-    else if (t.type === 'income' && NON_INCOME_CATS.has(t.category)) carryover += safeAmt(t.amount);
+    else if (t.type === 'income' && t.category === 'Money from Last Month') carryover += safeAmt(t.amount);
   });
   income  = roundMoney(income);
   expense = roundMoney(expense);
