@@ -93,7 +93,9 @@ function afValSeries(history) {
 }
 
 // Summary analysis of a value history: overall change plus the best and
-// worst single update. null until there are 2+ points.
+// worst single update. `changes` counts only steps where the value actually
+// moved — re-saving the same value is a check-in, not a price change.
+// null until there are 2+ points.
 function afValStats(history) {
   const change = afValChange(history);
   if (!change) return null;
@@ -103,7 +105,8 @@ function afValStats(history) {
     if (p.delta > best.delta) best = p;
     if (p.delta < worst.delta) worst = p;
   });
-  return { change, best, worst, steps: steps.length };
+  return { change, best, worst, steps: steps.length,
+           changes: steps.filter(p => p.delta !== 0).length };
 }
 
 // Normalise one stored investment: guarantee a valid value history, seeding it
@@ -341,7 +344,9 @@ function afHistBlockHTML(inv) {
   if (stats) {
     const c = stats.change;
     analysis = '<div class="af-hist-analysis">Since start: ' +
-      afGainHTML(c.abs, c.pct, inv.currency);
+      afGainHTML(c.abs, c.pct, inv.currency) +
+      ' · ' + stats.changes + ' price change' + (stats.changes === 1 ? '' : 's') +
+      ' in ' + stats.steps + ' update' + (stats.steps === 1 ? '' : 's');
     if (stats.steps >= 2) {
       analysis += ' · best update: ' + afGainHTML(stats.best.delta, stats.best.pct, inv.currency) +
         ' <span class="af-meta" style="flex-basis:auto">' + fmtDate(stats.best.date) + '</span>' +
@@ -517,9 +522,13 @@ function afQuickUpdate(id) {
   const data = afLoad();
   const inv = data.investments.find(i => i.id === id);
   if (!inv) return;
-  inv.current = roundMoney(v);
+  const v2 = roundMoney(v);
+  // Same value as current: nothing changed — don't record a fake update
+  // (same guard as the edit form).
+  if (v2 === inv.current) { renderAfricaTab(); return; }
+  inv.current = v2;
   inv.updated = todayISO();
-  inv.history = afValHistoryAppend(inv.history, todayISO(), roundMoney(v));
+  inv.history = afValHistoryAppend(inv.history, todayISO(), v2);
   afSave(data);
   renderAfricaTab();
   renderAccountKPIs();
