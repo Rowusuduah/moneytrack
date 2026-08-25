@@ -170,6 +170,26 @@ test('cardOwedNow without a snapshot counts every dated txn from zero', () => {
   assert.equal(r.owed, 985.40);
 });
 
+// ── loans: partial payments reduce the remainder automatically ──
+
+test('loanRemaining: partial payments reduce the remainder; atDate honors payment dates', () => {
+  const loan = { amount: 500, status: 'outstanding', payments: [
+    { date: '2026-08-10', amount: 200 }, { date: '2026-08-20', amount: 100 }] };
+  assert.equal(A.loanPaidTotal(loan), 300);
+  assert.equal(A.loanRemaining(loan), 200);
+  assert.equal(A.loanRemaining(loan, '2026-08-15'), 300);          // only the first payment counted
+  assert.equal(A.loanRemaining({ amount: 500 }), 500);             // legacy loan without payments array
+  assert.equal(A.loanRemaining({ amount: 100, payments: [{ date: '2026-08-01', amount: 150 }] }), 0); // clamps at 0
+});
+
+test('calcNetWorth counts outstanding loans at their remaining value', () => {
+  A.refreshAccountConfig();
+  const snap = { accounts: { chase_checking: 100 } };
+  const loans = [{ date: '2026-08-01', status: 'outstanding', amount: 500,
+    payments: [{ date: '2026-08-10', amount: 200 }] }];
+  assert.equal(A.calcNetWorth(snap, loans), 400);                  // 100 assets + 300 still owed to me
+});
+
 // ── debtPayoff: interest must not be overstated by the final overpayment ──
 
 test('debtPayoff caps the final payment (correct total interest, not the min-payment sum)', () => {
