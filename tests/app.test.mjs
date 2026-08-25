@@ -190,6 +190,16 @@ test('calcNetWorth counts outstanding loans at their remaining value', () => {
   assert.equal(A.calcNetWorth(snap, loans), 400);                  // 100 assets + 300 still owed to me
 });
 
+test('calcNetWorth: a forgiven loan no longer counts, except before its forgiven date', () => {
+  A.refreshAccountConfig();
+  const snap = { accounts: { chase_checking: 100 } };
+  const loans = [{ date: '2026-08-01', status: 'forgiven', amount: 500,
+    paidDate: '', forgivenDate: '2026-08-20', forgivenReason: 'family' }];
+  assert.equal(A.calcNetWorth(snap, loans), 100);                  // written off today
+  assert.equal(A.calcNetWorth(snap, loans, '2026-08-10'), 600);    // still an asset back then
+  assert.equal(A.calcNetWorth(snap, loans, '2026-08-21'), 100);    // gone after write-off
+});
+
 // ── debtPayoff: interest must not be overstated by the final overpayment ──
 
 test('debtPayoff caps the final payment (correct total interest, not the min-payment sum)', () => {
