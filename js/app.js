@@ -625,8 +625,19 @@ function calcNetWorth(snap, loans, atDate) {
   const debt   = roundMoney(ACCOUNTS.filter(a => a.group === 'debt').reduce((s, a) => s + safeAmt(b[a.id]), 0));
   const loansOut = roundMoney((loans || [])
     .filter(l => atDate ? (l.date <= atDate && (l.status === 'outstanding' || l.paidDate > atDate)) : l.status === 'outstanding')
-    .reduce((s, l) => s + safeAmt(l.amount), 0));
+    .reduce((s, l) => s + loanRemaining(l, atDate), 0));
   return roundMoney(assets + loansOut - debt);
+}
+
+// Partial repayments: what a borrower has paid so far, and what is still owed.
+// Optional atDate limits to payments made on or before that date (history).
+function loanPaidTotal(l, atDate) {
+  return roundMoney((l.payments || [])
+    .filter(p => !atDate || p.date <= atDate)
+    .reduce((s, p) => s + safeAmt(p.amount), 0));
+}
+function loanRemaining(l, atDate) {
+  return Math.max(0, roundMoney(safeAmt(l.amount) - loanPaidTotal(l, atDate)));
 }
 
 // ─── Data Layer ──────────────────────────────────────────────────
@@ -871,7 +882,7 @@ function renderAccountKPIs() {
   const debt             = sum('debt');
   const allLoansKPI      = loadLoans();
   const outstandingLoans = allLoansKPI.filter(l => l.status === 'outstanding');
-  const loansOut         = roundMoney(outstandingLoans.reduce((s, l) => s + safeAmt(l.amount), 0));
+  const loansOut         = roundMoney(outstandingLoans.reduce((s, l) => s + loanRemaining(l), 0));
   const net              = snap ? calcNetWorth(snap, allLoansKPI) : 0;
 
   const loansSub = outstandingLoans.length
@@ -1103,19 +1114,32 @@ function renderLoansCard() {
   const outstanding = loans.filter(l => l.status === 'outstanding');
   const paid        = loans.filter(l => l.status === 'paid');
 
-  const outstandingTotal = roundMoney(outstanding.reduce((s, l) => s + safeAmt(l.amount), 0));
+  const outstandingTotal = roundMoney(outstanding.reduce((s, l) => s + loanRemaining(l), 0));
 
   const outstandingHtml = outstanding.length
-    ? outstanding.map(l => `
+    ? outstanding.map(l => {
+      if (loanEditId === l.id) return loanEditFormHTML(l);
+      const paidSoFar = loanPaidTotal(l);
+      const remaining = loanRemaining(l);
+      const paidNote = paidSoFar > 0
+        ? ` · paid ${fmt(paidSoFar)} of ${fmt(l.amount)} (${(l.payments || []).length} payment${(l.payments || []).length === 1 ? '' : 's'})`
+        : '';
+      return `
       <div class="loan-item" data-id="${escapeHTML(l.id)}">
         <div style="flex:1;min-width:0">
           <div class="loan-name">${escapeHTML(l.name)}</div>
-          <div class="loan-meta">${escapeHTML(fmtDate(l.date))}${loanDueBadge(l.dueDate)}${l.note ? ' · ' + escapeHTML(l.note) : ''}</div>
+          <div class="loan-meta">${escapeHTML(fmtDate(l.date))}${loanDueBadge(l.dueDate)}${paidNote}${l.note ? ' · ' + escapeHTML(l.note) : ''}</div>
         </div>
-        <div class="loan-amount">${fmt(l.amount)}</div>
-        <button class="btn btn-green" style="padding:5px 10px;font-size:11px" data-loan-paid="${escapeHTML(l.id)}" aria-label="Mark as paid">✓ Paid</button>
+        <div class="loan-amount">${fmt(remaining)}</div>
+        <input type="number" class="acct-input af-val-input" min="0.01" step="0.01"
+               data-loan-payamt="${escapeHTML(l.id)}" placeholder="payment"
+               aria-label="Payment amount from ${escapeHTML(l.name)}">
+        <button class="txn-btn" data-loan-pay="${escapeHTML(l.id)}" aria-label="Record payment from ${escapeHTML(l.name)}">＋</button>
+        <button class="btn btn-green" style="padding:5px 10px;font-size:11px" data-loan-paid="${escapeHTML(l.id)}" aria-label="Mark as fully paid">✓ Paid</button>
+        <button class="txn-btn" data-loan-edit="${escapeHTML(l.id)}" aria-label="Edit loan for ${escapeHTML(l.name)}">✎</button>
         <button class="txn-btn del" data-loan-del="${escapeHTML(l.id)}" aria-label="Delete loan">✕</button>
-      </div>`).join('')
+      </div>`;
+    }).join('')
     : `<div class="empty-state" style="padding:16px 0;font-size:12px">No outstanding loans — you're all clear!</div>`;
 
   const paidHtml = paid.length ? `
@@ -1123,7 +1147,7 @@ function renderLoansCard() {
       <div class="loan-paid-label">Repaid (${paid.length})</div>
       ${paid.map(l => `
         <div class="loan-paid-item">
-          <span style="flex:1">${escapeHTML(l.name)} — ${fmt(l.amount)}</span>
+          <span style="flex:1">${escapeHTML(l.name)} — ${fmt(l.amount)}${(l.payments || []).length > 1 ? ` (${l.payments.length} payments)` : ''}</span>
           <span>Paid ${escapeHTML(fmtDate(l.paidDate))}</span>
           <button class="txn-btn del" data-loan-del="${escapeHTML(l.id)}" aria-label="Delete loan record" style="margin-left:4px">✕</button>
         </div>`).join('')}
@@ -1160,6 +1184,30 @@ function renderLoansCard() {
     ${paidHtml}`;
 }
 
+let loanEditId = null;   // loan id currently open in the inline edit form
+
+function loanEditFormHTML(l) {
+  return `
+    <div class="loan-item" data-id="${escapeHTML(l.id)}" style="flex-wrap:wrap">
+      <div class="debt-meta-grid" style="flex-basis:100%">
+        <div class="form-group"><label for="loan-edit-name">Borrower Name</label>
+          <input type="text" id="loan-edit-name" class="acct-input" maxlength="60" value="${escapeHTML(l.name)}"></div>
+        <div class="form-group"><label for="loan-edit-amount">Amount ($)</label>
+          <input type="number" id="loan-edit-amount" class="acct-input" min="0.01" step="0.01" value="${safeAmt(l.amount)}"></div>
+        <div class="form-group"><label for="loan-edit-date">Date Loaned</label>
+          <input type="date" id="loan-edit-date" class="acct-input" value="${escapeHTML(l.date)}" max="${todayISO()}"></div>
+        <div class="form-group"><label for="loan-edit-due">Expected Repayment</label>
+          <input type="date" id="loan-edit-due" class="acct-input" value="${escapeHTML(l.dueDate || '')}"></div>
+        <div class="form-group"><label for="loan-edit-note">What For</label>
+          <input type="text" id="loan-edit-note" class="acct-input" maxlength="80" value="${escapeHTML(l.note || '')}"></div>
+      </div>
+      <div class="flex gap-8" style="flex-basis:100%">
+        <button class="btn btn-green" id="loan-edit-save" style="padding:5px 12px;font-size:11px">Save changes</button>
+        <button class="btn btn-ghost btn-sm" id="loan-edit-cancel">Cancel</button>
+      </div>
+    </div>`;
+}
+
 function addLoan() {
   const name   = document.getElementById('loan-name')?.value.trim();
   const amtRaw = parseFloat(document.getElementById('loan-amount')?.value);
@@ -1173,18 +1221,74 @@ function addLoan() {
   }
 
   const loans = loadLoans();
-  loans.push({ id: crypto.randomUUID(), name, amount: roundMoney(amtRaw), date, dueDate, note, status: 'outstanding', paidDate: '' });
+  loans.push({ id: crypto.randomUUID(), name, amount: roundMoney(amtRaw), date, dueDate, note, status: 'outstanding', paidDate: '', payments: [] });
   saveLoans(loans);
   renderLoansCard();
   renderAccountKPIs(); // update Net Worth KPI
 }
 
+// Record a partial payment; the remainder updates automatically and the loan
+// closes itself when the remainder reaches zero.
+function recordLoanPayment(id) {
+  const inp = document.querySelector('[data-loan-payamt="' + CSS.escape(id) + '"]');
+  const amt = parseFloat(inp?.value);
+  const loans = loadLoans();
+  const loan = loans.find(l => String(l.id) === String(id));
+  if (!loan) return;
+  const remaining = loanRemaining(loan);
+  if (!(amt > 0)) { alert('Enter the payment amount first.'); return; }
+  if (roundMoney(amt) > remaining) {
+    alert(`That is more than the ${fmt(remaining)} still owed. Enter ${fmt(remaining)} or less.`);
+    return;
+  }
+  loan.payments = loan.payments || [];
+  loan.payments.push({ date: todayISO(), amount: roundMoney(amt) });
+  if (loanRemaining(loan) === 0) { loan.status = 'paid'; loan.paidDate = todayISO(); }
+  saveLoans(loans);
+  renderLoansCard();
+  renderAccountKPIs();
+}
+
+// "✓ Paid": records whatever is still owed as a final payment, then closes.
 function markLoanPaid(id) {
   const loans = loadLoans();
-  const idx   = loans.findIndex(l => String(l.id) === String(id));
-  if (idx === -1) return;
-  loans[idx].status   = 'paid';
-  loans[idx].paidDate = todayISO();
+  const loan  = loans.find(l => String(l.id) === String(id));
+  if (!loan) return;
+  const remaining = loanRemaining(loan);
+  if (remaining > 0) {
+    loan.payments = loan.payments || [];
+    loan.payments.push({ date: todayISO(), amount: remaining });
+  }
+  loan.status   = 'paid';
+  loan.paidDate = todayISO();
+  saveLoans(loans);
+  renderLoansCard();
+  renderAccountKPIs();
+}
+
+function saveLoanEdit() {
+  if (!loanEditId) return;
+  const loans = loadLoans();
+  const loan = loans.find(l => String(l.id) === String(loanEditId));
+  if (!loan) { loanEditId = null; renderLoansCard(); return; }
+  const name   = document.getElementById('loan-edit-name')?.value.trim();
+  const amtRaw = parseFloat(document.getElementById('loan-edit-amount')?.value);
+  const date   = document.getElementById('loan-edit-date')?.value;
+  const dueDate = document.getElementById('loan-edit-due')?.value || '';
+  const note   = document.getElementById('loan-edit-note')?.value.trim() || '';
+  if (!name || isNaN(amtRaw) || amtRaw <= 0 || !date) {
+    alert('Please enter a borrower name, positive amount, and date.');
+    return;
+  }
+  const paidSoFar = loanPaidTotal(loan);
+  if (roundMoney(amtRaw) < paidSoFar) {
+    alert(`Amount cannot be below the ${fmt(paidSoFar)} already paid back.`);
+    return;
+  }
+  loan.name = name; loan.amount = roundMoney(amtRaw);
+  loan.date = date; loan.dueDate = dueDate; loan.note = note;
+  if (loanRemaining(loan) === 0) { loan.status = 'paid'; loan.paidDate = loan.paidDate || todayISO(); }
+  loanEditId = null;
   saveLoans(loans);
   renderLoansCard();
   renderAccountKPIs();
@@ -3937,8 +4041,14 @@ function bindEvents() {
     if (e.target.id === 'save-debt-meta') saveDebtMetaAction();
     // Loans
     if (e.target.id === 'add-loan') addLoan();
+    if (e.target.id === 'loan-edit-save')   saveLoanEdit();
+    if (e.target.id === 'loan-edit-cancel') { loanEditId = null; renderLoansCard(); }
     const loanPaidBtn = e.target.closest('[data-loan-paid]');
     if (loanPaidBtn) markLoanPaid(loanPaidBtn.dataset.loanPaid);
+    const loanPayBtn  = e.target.closest('[data-loan-pay]');
+    if (loanPayBtn)  recordLoanPayment(loanPayBtn.dataset.loanPay);
+    const loanEditBtn = e.target.closest('[data-loan-edit]');
+    if (loanEditBtn) { loanEditId = loanEditBtn.dataset.loanEdit; renderLoansCard(); }
     const loanDelBtn  = e.target.closest('[data-loan-del]');
     if (loanDelBtn)  deleteLoan(loanDelBtn.dataset.loanDel);
   });
