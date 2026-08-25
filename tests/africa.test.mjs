@@ -169,4 +169,6 @@ test('afValStats: re-saved identical values count as updates but not price chang
   assert.equal(s.steps, 5);      // 5 steps after the starting point
   assert.equal(s.changes, 2);    // only two real price moves
   assert.equal(s.change.abs, -298.5);
+  assert.equal(s.best.delta, -37.31);    // least-bad real move, not a 0.00 check-in
+  assert.equal(s.worst.delta, -261.19);
 });

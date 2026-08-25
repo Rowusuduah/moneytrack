@@ -100,13 +100,16 @@ function afValStats(history) {
   const change = afValChange(history);
   if (!change) return null;
   const steps = afValSeries(history).filter(p => p.delta !== null);
-  let best = steps[0], worst = steps[0];
-  steps.forEach(p => {
+  // Best/worst are picked among real moves — a same-value check-in is not a
+  // "best update" just because everything else fell.
+  const moves = steps.filter(p => p.delta !== 0);
+  const pool = moves.length ? moves : steps;
+  let best = pool[0], worst = pool[0];
+  pool.forEach(p => {
     if (p.delta > best.delta) best = p;
     if (p.delta < worst.delta) worst = p;
   });
-  return { change, best, worst, steps: steps.length,
-           changes: steps.filter(p => p.delta !== 0).length };
+  return { change, best, worst, steps: steps.length, changes: moves.length };
 }
 
 // Normalise one stored investment: guarantee a valid value history, seeding it
