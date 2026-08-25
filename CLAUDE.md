@@ -66,9 +66,12 @@ snapshot-based.
 ### Income and savings-spend gateways
 Every income/expense total must go through `isRealIncome()` / `isRealExpense()`
 in app.js — never re-implement the type/category checks inline.
-`NON_INCOME_CATS` ('Money from Last Month') keeps the monthly carryover out of
-income totals: it is last month's money arriving again, not new earnings, so
-counting it would inflate yearly income. An expense whose account group is
+`NON_INCOME_CATS` ('Money from Last Month', 'Loan Repaid to Me') keeps the
+monthly carryover and returned personal loans out of income totals: neither is
+new earnings, so counting them would inflate yearly income. The matching
+'Loan Given' category is in `NON_EXPENSE_CATS` — lending money out is an
+asset move, not spending. The Tracker's carryover line counts only
+'Money from Last Month', never other excluded income. An expense whose account group is
 `savings` (`isSavingsSpend()`) is a savings withdrawal, not monthly spending —
 excluded from Money Out / Net / budgets / savings rate / Analysis, and shown
 as its own "Spent from savings" line on the Tracker summary. It still appears
