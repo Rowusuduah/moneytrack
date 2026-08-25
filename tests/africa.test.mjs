@@ -152,6 +152,21 @@ test('afValStats: overall change plus best and worst single update', () => {
   assert.equal(s.worst.date, '2026-08-01');
   assert.equal(s.worst.delta, -110);
   assert.equal(s.steps, 3);
+  assert.equal(s.changes, 3);
   assert.equal(A.afValStats([{ date: '2026-07-01', current: 5 }]), null);
   assert.equal(A.afValStats([]), null);
+});
+
+test('afValStats: re-saved identical values count as updates but not price changes', () => {
+  const s = A.afValStats([
+    { date: '2026-07-31', current: 7499.95 },
+    { date: '2026-08-03', current: 7462.64 },
+    { date: '2026-08-06', current: 7462.64 },
+    { date: '2026-08-14', current: 7462.64 },
+    { date: '2026-08-17', current: 7462.64 },
+    { date: '2026-08-24', current: 7201.45 },
+  ]);
+  assert.equal(s.steps, 5);      // 5 steps after the starting point
+  assert.equal(s.changes, 2);    // only two real price moves
+  assert.equal(s.change.abs, -298.5);
 });
