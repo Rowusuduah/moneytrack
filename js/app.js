@@ -585,6 +585,31 @@ function safeAmt(v) {
   return (isFinite(n) && n >= 0) ? roundMoney(n) : 0;
 }
 
+// ─── Savings-withdrawal share ────────────────────────────────────
+// The percentage a savings withdrawal represents must divide by the balance
+// the money came OUT of (its pre-withdrawal balance), never the depleted
+// balance left afterward. Dividing by the post-withdrawal balance overstates
+// the share — e.g. taking $500 out of a $1000 account must read 50%, not
+// "100% of the $500 left." `priorBal` is the start-of-period snapshot balance
+// where one exists, otherwise the current/end balance plus what was withdrawn
+// this period. Returns a percent rounded to 0.1, or null when the base is
+// unknown/zero.
+function savingsWithdrawalPct(amt, priorBal) {
+  return priorBal > 0 ? Math.round(amt / priorBal * 1000) / 10 : null;
+}
+
+// `byAccount`: { accountId: amountWithdrawn }. `priorBalOf(id, amt)` returns
+// that account's balance BEFORE the period's withdrawals. Returns
+// [{ id, amt, priorBal, pct }] so both the Tracker and Analysis renderers
+// build the "taken from savings" line the same way.
+function savingsWithdrawalParts(byAccount, priorBalOf) {
+  return Object.entries(byAccount).map(([id, amt]) => {
+    const a = roundMoney(amt);
+    const priorBal = roundMoney(priorBalOf(id, a));
+    return { id, amt: a, priorBal, pct: savingsWithdrawalPct(a, priorBal) };
+  });
+}
+
 function fmt(n) {
   if (!isFinite(n)) return '$0.00';
   const abs = Math.abs(n);
@@ -2071,12 +2096,13 @@ function renderTrackerSummary(txns) {
       // Name each savings account touched, with the share of ITS balance
       const snap = getLatestSnapshot();
       const b = snap ? (snap.accounts || {}) : {};
-      const parts = Object.entries(savingsSpendBy).map(([id, amt]) => {
-        const bal = safeAmt(b[id]);
-        const pct = bal > 0 ? Math.round(amt / bal * 1000) / 10 : null;
-        return `${ACCOUNT_LABELS[id] || id}: ${fmt(roundMoney(amt))}` +
-          (pct !== null ? ` (${pct}% of its ${fmt(bal)})` : '');
-      });
+      // Base each share on the balance BEFORE this period's withdrawals:
+      // the current snapshot balance is post-withdrawal, so add the amount
+      // taken back to recover what the account held before.
+      const parts = savingsWithdrawalParts(savingsSpendBy, (id, amt) => safeAmt(b[id]) + amt)
+        .map(({ id, amt, priorBal, pct }) =>
+          `${ACCOUNT_LABELS[id] || id}: ${fmt(amt)}` +
+          (pct !== null ? ` (${pct}% of its ${fmt(priorBal)})` : ''));
       savTxt = `Taken from savings — ${parts.join(' · ')} (not counted in Money Out)`;
     }
     savEl.textContent = savTxt;
@@ -3842,15 +3868,21 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
 
   // Savings withdrawals — name each account touched, with the share of ITS balance
   if (c.savingsSpend > 0) {
-    const b = (snapPair.endSnap && snapPair.endSnap.accounts) || {};
+    // Base each share on the pre-withdrawal balance. Prefer the start-of-
+    // period snapshot (what the account held before the withdrawals, matching
+    // the savings-growth insight below); if the period has no distinct start
+    // snapshot, recover it from the end balance plus what was withdrawn.
+    const startB = (snapPair.startSnap && snapPair.startSnap.accounts) || {};
+    const endB   = (snapPair.endSnap && snapPair.endSnap.accounts) || {};
+    const haveStart = snapPair.startSnap && snapPair.endSnap &&
+                      snapPair.startSnap.date !== snapPair.endSnap.date;
     const by = {};
     cur.filter(isSavingsSpend).forEach(t => { by[t.account] = (by[t.account] || 0) + safeAmt(t.amount); });
-    const parts = Object.entries(by).map(([id, amt]) => {
-      const bal = safeAmt(b[id]);
-      const pct = bal > 0 ? Math.round(amt / bal * 1000) / 10 : null;
-      return `<b>${escapeHTML(ACCOUNT_LABELS[id] || id)}</b>: ${fmt(roundMoney(amt))}` +
-        (pct !== null ? ` (${pct}% of its ${fmt(bal)})` : '');
-    });
+    const parts = savingsWithdrawalParts(by,
+      (id, amt) => haveStart ? safeAmt(startB[id]) : safeAmt(endB[id]) + amt)
+      .map(({ id, amt, priorBal, pct }) =>
+        `<b>${escapeHTML(ACCOUNT_LABELS[id] || id)}</b>: ${fmt(amt)}` +
+        (pct !== null ? ` (${pct}% of its ${fmt(priorBal)})` : ''));
     insights.push({ icon: '🏧', html: `You took <b>${fmt(c.savingsSpend)}</b> out of savings this ${mode} — ` +
       parts.join(' · ') + '.' });
   }
