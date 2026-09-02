@@ -105,3 +105,59 @@ test('monthlyRealTotals buckets the last 3 completed months and filters real in/
   ]);
   assert.equal(A.pooledSavingsRate(months), (2000 - 700) / 2000); // 0.65
 });
+
+// ── budget categories derive from the transaction form (no drift) ────────────
+
+function parseFormCats(html) {
+  const decode = s => s.replace(/&amp;/g, '&');
+  const sel = html.match(/<select id="txn-category"[\s\S]*?<\/select>/);
+  assert.ok(sel, 'txn-category select not found in index.html');
+  const cats = [];
+  for (const og of sel[0].matchAll(/<optgroup label="([^"]*)">([\s\S]*?)<\/optgroup>/g)) {
+    const group = decode(og[1]);
+    for (const o of og[2].matchAll(/<option value="([^"]*)"/g)) {
+      cats.push({ category: decode(o[1]), group });
+    }
+  }
+  return cats;
+}
+
+test('budgetableCategories dedups, drops income + transfers, preserves order', () => {
+  const cats = [
+    { category: 'Paycheck',        group: 'Income' },
+    { category: 'Rent',            group: 'Housing & Bills' },
+    { category: 'Rent',            group: 'Housing & Bills' }, // duplicate
+    { category: 'Savings Transfer', group: 'Finance' },
+    { category: 'Investment',      group: 'Finance' },
+    { category: 'Bank Fee',        group: 'Finance' },
+  ];
+  assert.deepEqual(A.budgetableCategories(cats), ['Rent', 'Bank Fee']);
+});
+
+test('budget grid derives from index.html: excludes income/transfers, includes new spend', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const budgetable = A.budgetableCategories(parseFormCats(html));
+  const set = new Set(budgetable);
+
+  for (const c of ['Paycheck', 'Bonus', 'Transfer In', 'Other Income'])
+    assert.ok(!set.has(c), `income category ${c} must be excluded`);
+  for (const c of ['Savings Transfer', 'Investment', 'Bill Reserve', 'Credit Card Payment', 'Loan Given'])
+    assert.ok(!set.has(c), `non-spending category ${c} must be excluded`);
+
+  // Categories the old hardcoded list could not budget — now covered.
+  for (const c of ['Mortgage', 'Internet', 'Phone', 'Car Payment', 'Pet Food', 'Vet',
+                   'Childcare', 'Tuition', 'Dental', 'Taxes'])
+    assert.ok(set.has(c), `new spending category ${c} must be budgetable`);
+
+  // Every category from the old hardcoded list is still covered.
+  for (const c of ['Rent', 'Utilities', 'Insurance', 'Groceries', 'Dining Out', 'Coffee',
+                   'Gas', 'Rideshare', 'Car Insurance', 'Parking', 'Medical', 'Pharmacy', 'Gym',
+                   'Clothing', 'Electronics', 'Amazon', 'Streaming', 'Events', 'Hobbies',
+                   'Tithe', 'Offering', 'Family Support (US)', 'Family Support (Ghana)',
+                   'Treating Friends', 'Donations', 'Loan Payment', 'Bank Fee', 'Subscriptions',
+                   'Education', 'Personal Care', 'Miscellaneous'])
+    assert.ok(set.has(c), `previously-budgetable category ${c} was dropped`);
+
+  assert.equal(budgetable.length, set.size, 'duplicate categories in budget grid');
+  assert.ok(budgetable.length > 45, `expected the grid to grow well past the old 31, got ${budgetable.length}`);
+});
