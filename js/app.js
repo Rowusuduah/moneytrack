@@ -121,6 +121,29 @@ function isSavingsSpend(t) {
 function isRealIncome(t)  { return t.type === 'income' && !NON_INCOME_CATS.has(t.category); }
 function isRealExpense(t) { return t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category) && !isSavingsSpend(t); }
 
+// Categories that sit inside expense-side optgroups but never get a budget
+// field — they are money-movement / reserve / lending buckets, not
+// discretionary spending you'd cap. (Income is dropped by its optgroup.)
+const NON_BUDGET_CATS = new Set([
+  'Savings Transfer', 'Investment', 'Bill Reserve', 'Credit Card Payment', 'Loan Given',
+]);
+
+// The expense categories that get a budget field, derived from the transaction
+// form so the budget grid and the form never drift. `formCats` is
+// [{ category, group }] where group is the optgroup label; the Income group and
+// NON_BUDGET_CATS are dropped, duplicates collapsed, form order preserved.
+// Pure so it can be unit-tested against index.html's markup.
+function budgetableCategories(formCats) {
+  const seen = new Set();
+  const out = [];
+  for (const { category, group } of formCats) {
+    if (group === 'Income' || NON_BUDGET_CATS.has(category) || seen.has(category)) continue;
+    seen.add(category);
+    out.push(category);
+  }
+  return out;
+}
+
 // ─── Google Drive Sync ───────────────────────────────────────────
 const GDRIVE_CLIENT_ID    = '394124622094-3cj4ho2ipp3m6pm0un09tg9knelhfqtu.apps.googleusercontent.com';
 const GDRIVE_SCOPE        = 'https://www.googleapis.com/auth/drive.file';
@@ -2356,17 +2379,29 @@ function renderMonthlyTrends() {
   </table></div>`;
 }
 
+// Read the transaction form's category <optgroup>s and return the budgetable
+// spending categories (see budgetableCategories). Empty only if the form is
+// absent, which does not happen once the DOM has loaded.
+function formExpenseCategories() {
+  const sel = document.getElementById('txn-category');
+  if (!sel) return [];
+  const cats = [];
+  sel.querySelectorAll('optgroup').forEach(og => {
+    og.querySelectorAll('option').forEach(o => cats.push({ category: o.value, group: og.label }));
+  });
+  return budgetableCategories(cats);
+}
+
 function renderBudgetCard() {
   const el = document.getElementById('budget-setup');
   if (!el) return;
   const budgets = loadBudgets();
-  const expenseCats = [
-    'Rent','Utilities','Insurance','Groceries','Dining Out','Coffee',
-    'Gas','Rideshare','Car Insurance','Parking','Medical','Pharmacy','Gym',
-    'Clothing','Electronics','Amazon','Streaming','Events','Hobbies',
-    'Tithe','Offering','Family Support (US)','Family Support (Ghana)','Treating Friends','Donations','Loan Payment','Bank Fee','Subscriptions',
-    'Education','Personal Care','Miscellaneous',
-  ];
+  // Derive budgetable categories from the transaction form so new spending
+  // categories automatically get a budget field. Also surface any category that
+  // already has a saved budget, so a value set before a category was renamed or
+  // removed stays visible and editable rather than silently orphaned.
+  const formCats = formExpenseCategories();
+  const expenseCats = [...formCats, ...Object.keys(budgets).filter(c => !formCats.includes(c))];
   el.innerHTML = `<div class="budget-grid">${expenseCats.map(cat => {
     const color = safeColor(CATEGORY_COLORS[cat], '#8a8aa6');
     const safeId = cat.replace(/\s+/g, '_');
