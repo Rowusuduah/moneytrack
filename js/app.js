@@ -1556,25 +1556,44 @@ function deleteCustomAccount(id) {
 }
 
 // ─── Financial Ratios ────────────────────────────────────────────
-function computeSavingsRate3Month() {
-  const today = new Date();
-  const months = [];
-  for (let i = 1; i <= 3; i++) {
+// Real income and expense totals for each of the last `n` completed calendar
+// months (most recent first, current month excluded). This windowing used to
+// live in three near-identical copies — the savings rate, the emergency-fund
+// expense average, and the goal-completion projection — which is how they
+// drifted; they now share this one source. `refDate` is injectable for tests.
+function monthlyRealTotals(txns, n, refDate) {
+  const today = refDate || new Date();
+  const out = [];
+  for (let i = 1; i <= n; i++) {
     const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-    months.push({ y: d.getFullYear(), m: d.getMonth() });
-  }
-  const txns = loadTxns();
-  const rates = months.map(({ y, m }) => {
+    const y = d.getFullYear(), m = d.getMonth();
     const mt = txns.filter(t => {
       const td = new Date(t.date + 'T00:00:00');
       return td.getFullYear() === y && td.getMonth() === m;
     });
-    const income   = mt.filter(isRealIncome).reduce((s, t) => s + safeAmt(t.amount), 0);
-    const expenses = mt.filter(isRealExpense).reduce((s, t) => s + safeAmt(t.amount), 0);
-    return income > 0 ? (income - expenses) / income : null;
-  });
-  const valid = rates.filter(r => r !== null);
-  return valid.length ? valid.reduce((s, r) => s + r, 0) / valid.length : null;
+    out.push({
+      y, m,
+      income:  mt.filter(isRealIncome).reduce((s, t) => s + safeAmt(t.amount), 0),
+      expense: mt.filter(isRealExpense).reduce((s, t) => s + safeAmt(t.amount), 0),
+    });
+  }
+  return out;
+}
+
+// Pooled savings rate: total saved / total earned across the given months —
+// deliberately NOT the average of each month's rate. Averaging ratios lets a
+// low-income month swing the result far past what the dollars justify (a $200
+// month at 50% and a $5,000 month at 10% pool to ~11.5%, not the 30% a simple
+// average reports). `months` is the output of monthlyRealTotals. Returns null
+// when nothing was earned.
+function pooledSavingsRate(months) {
+  const income  = months.reduce((s, x) => s + x.income, 0);
+  const expense = months.reduce((s, x) => s + x.expense, 0);
+  return income > 0 ? (income - expense) / income : null;
+}
+
+function computeSavingsRate3Month() {
+  return pooledSavingsRate(monthlyRealTotals(loadTxns(), 3));
 }
 
 function renderFinancialRatios() {
@@ -1587,18 +1606,8 @@ function renderFinancialRatios() {
   const debt    = sum('debt');
 
   const txns = loadTxns();
-  const today = new Date();
-  const last3 = [];
-  for (let i = 1; i <= 3; i++) {
-    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-    last3.push({ y: d.getFullYear(), m: d.getMonth() });
-  }
-  const monthlyExpenses = last3.map(({ y, m }) =>
-    txns.filter(t => {
-      const td = new Date(t.date + 'T00:00:00');
-      return td.getFullYear() === y && td.getMonth() === m && isRealExpense(t);
-    }).reduce((s, t) => s + safeAmt(t.amount), 0)
-  );
+  const months3 = monthlyRealTotals(txns, 3);
+  const monthlyExpenses = months3.map(x => x.expense);
   const activeExpMonths = monthlyExpenses.filter(e => e > 0).length || 1;
   const avgMonthlyExpense = monthlyExpenses.reduce((s, e) => s + e, 0) / activeExpMonths;
   const emergencyMonths = avgMonthlyExpense > 0 ? roundMoney(savings / avgMonthlyExpense) : null;
@@ -1622,7 +1631,7 @@ function renderFinancialRatios() {
     {
       label: '3-Month Savings Rate',
       value: savingsRate !== null ? Math.round(savingsRate * 100) + '%' : '—',
-      sub:   'Avg (income − expenses) / income',
+      sub:   '(3-mo income − expenses) ÷ income',
       color: savingsRate === null ? 'var(--muted)' : savingsRate >= 0.2 ? 'var(--green)' : savingsRate >= 0 ? 'var(--gold)' : 'var(--red)',
     },
     {
@@ -1788,19 +1797,14 @@ function renderSavingsGoals() {
   } else {
     const txns = loadTxns();
     const today = new Date();
-    const last3 = [];
-    for (let i = 1; i <= 3; i++) {
-      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-      last3.push({ y: d.getFullYear(), m: d.getMonth() });
-    }
+    // Average monthly net across the last 3 months that had income (a month
+    // with no income would otherwise drag the pace toward zero). Uses the same
+    // windowing helper as the savings rate and emergency fund.
     const avgMonthlySavings = (() => {
-      const rates = last3.map(({ y, m }) => {
-        const mt = txns.filter(t => { const td = new Date(t.date + 'T00:00:00'); return td.getFullYear() === y && td.getMonth() === m; });
-        const inc = mt.filter(isRealIncome).reduce((s, t) => s + safeAmt(t.amount), 0);
-        const exp = mt.filter(isRealExpense).reduce((s, t) => s + safeAmt(t.amount), 0);
-        return inc > 0 ? inc - exp : null;
-      }).filter(r => r !== null);
-      return rates.length ? rates.reduce((s, r) => s + r, 0) / rates.length : 0;
+      const months = monthlyRealTotals(txns, 3, today).filter(x => x.income > 0);
+      if (!months.length) return 0;
+      const net = months.reduce((s, x) => s + (x.income - x.expense), 0);
+      return net / months.length;
     })();
 
     el.innerHTML = goals.map(g => {
