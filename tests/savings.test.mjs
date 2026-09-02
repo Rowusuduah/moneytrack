@@ -161,3 +161,48 @@ test('budget grid derives from index.html: excludes income/transfers, includes n
   assert.equal(budgetable.length, set.size, 'duplicate categories in budget grid');
   assert.ok(budgetable.length > 45, `expected the grid to grow well past the old 31, got ${budgetable.length}`);
 });
+
+// ── goal projection: pace = money moved into the goal's accounts, not net income
+
+test('avgMonthlyContribution counts money moved into the accounts, not net income', () => {
+  const refDate = new Date(2026, 5, 15); // window = Mar/Apr/May 2026
+  const txns = [
+    { date: '2026-05-01', type: 'income',   amount: 5000, account: 'chase_checking', category: 'Paycheck' },
+    { date: '2026-05-03', type: 'expense',  amount: 4000, account: 'chase_checking', category: 'Rent' },
+    { date: '2026-05-10', type: 'transfer', amount: 500,  account: 'chase_checking', toAccount: 'usf_savings_1' },
+  ];
+  // Net income for May is $1,000, but only $500 actually reached savings — the
+  // old projection used $1,000, this uses $500.
+  assert.equal(A.avgMonthlyContribution(txns, ['usf_savings_1'], 3, refDate), 500);
+});
+
+test('avgMonthlyContribution: internal moves net to zero, withdrawals reduce', () => {
+  const refDate = new Date(2026, 5, 15);
+  const txns = [
+    { date: '2026-05-02', type: 'transfer', amount: 600, account: 'chase_checking', toAccount: 'usf_savings_1' },
+    { date: '2026-05-20', type: 'expense',  amount: 100, account: 'usf_savings_1', category: 'Medical' },
+    { date: '2026-04-10', type: 'transfer', amount: 300, account: 'usf_savings_1', toAccount: 'usf_savings_2' }, // internal
+  ];
+  // May net = 600 - 100 = 500; Apr internal move nets 0. Active months = 2 → 250.
+  assert.equal(A.avgMonthlyContribution(txns, ['usf_savings_1', 'usf_savings_2'], 3, refDate), 250);
+});
+
+test('avgMonthlyContribution: ignores unrelated accounts and empty history', () => {
+  const refDate = new Date(2026, 5, 15);
+  const txns = [
+    { date: '2026-05-05', type: 'transfer', amount: 400, account: 'chase_checking', toAccount: 'usf_checking' },
+    { date: '2026-05-06', type: 'expense',  amount: 50,  account: 'chase_checking', category: 'Coffee' },
+  ];
+  assert.equal(A.avgMonthlyContribution(txns, ['usf_savings_1'], 3, refDate), 0);
+  assert.equal(A.avgMonthlyContribution([], ['usf_savings_1'], 3, refDate), 0);
+});
+
+test('avgMonthlyContribution windows to the last 3 completed months', () => {
+  const refDate = new Date(2026, 5, 15); // window = Mar/Apr/May; current (Jun) excluded
+  const txns = [
+    { date: '2026-06-01', type: 'transfer', amount: 999, account: 'chase_checking', toAccount: 'usf_savings_1' },
+    { date: '2026-02-01', type: 'transfer', amount: 999, account: 'chase_checking', toAccount: 'usf_savings_1' },
+    { date: '2026-04-15', type: 'transfer', amount: 300, account: 'chase_checking', toAccount: 'usf_savings_1' },
+  ];
+  assert.equal(A.avgMonthlyContribution(txns, ['usf_savings_1'], 3, refDate), 300); // only April counts
+});
