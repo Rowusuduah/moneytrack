@@ -29,10 +29,13 @@ The `ACCOUNTS` array in `js/app.js` (line 10) is the **only** place account defi
 - Account `<select>` dropdowns (`#txn-account`, `#filter-account`) must be populated dynamically from `ACCOUNTS`
 - KPI calculations, NW trend, and export must derive group totals using `.filter(a => a.group === '...')` on `ACCOUNTS`
 
-### Single source of truth for plan numbers
-The `PLAN` object at the top of `js/wealth.js` is the **only** place Wealth-plan
-numbers live (net per check, payAnchor, group allocations, milestones, savings
-target). Pay or rent changes are one-line edits there. `WEALTH_CATEGORY_MAP`
+### Private Wealth plan
+`WL_EMPTY_PLAN` in `js/wealth.js` is a zero-valued public schema, not a real
+person's plan. Real plan values are imported or edited in the Wealth tab and
+stored under `moneytrack_wealth_plan_v1` in browser `localStorage`. The user can
+export/import a private JSON backup. Never put real pay, allocations, milestones,
+or personal immigration/tax details in source, tests, docs, or any deployed file.
+`WEALTH_CATEGORY_MAP`
 in the same file maps transaction categories to plan groups; a category missing
 from the map shows up in the Wealth tab's "not counted" footer — add it to the
 map rather than special-casing renderers. Top-level code in wealth.js must stay
@@ -42,6 +45,12 @@ factors (12/365.25, 12/52, 1, 12); weeks run Sunday–Saturday; paid chips are
 Month-view only. The Tracker Budget card's "Fill from Wealth plan" button
 merges `wlPlanBudgets()` (bill-level amounts, first category per bill) into
 the saved budgets — it never clears categories the plan doesn't price.
+
+### Local screen lock
+Each browser creates its own password verifier in `moneytrack_auth_record_v2`;
+no verifier belongs in public source. This gate is not encryption: localStorage
+data and exported or Drive backups need separate protection. A fresh browser
+prompts for a new password and leaves existing finance data untouched.
 
 ### Africa investments
 The Africa tab (`js/africa.js`, storage key `moneytrack_africa`) tracks

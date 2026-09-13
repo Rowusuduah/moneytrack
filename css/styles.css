@@ -165,6 +165,7 @@ main { margin-top: var(--nav-h); padding: 20px 16px; max-width: 900px; margin-le
   gap: 12px;
 }
 .form-group { display: flex; flex-direction: column; gap: 5px; }
+.form-group[hidden] { display: none; }
 .form-group label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .form-group input,
 .form-group select,
@@ -904,3 +905,13 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 /* ── Debt: live owed line ───────────────────────────────────── */
 .debt-owed-now { margin: 6px 0 10px; font-size: 14px; }
 .debt-owed-break { font-size: 12px; color: var(--muted); margin-top: 2px; }
+/* Private Wealth plan editor */
+#wl-config summary { cursor: pointer; }
+#wl-config .wl-sub { margin: 10px 0; }
+.wl-config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 14px 0; }
+.wl-config-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+.wl-config-field input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surf2); color: var(--text); font: inherit; }
+.wl-config-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.wl-config-actions button, .wl-config-import { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surf2); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.wl-config-import input { display: block; margin-top: 6px; max-width: 100%; }
+.wl-unconfigured > .card:not(#wl-config), .wl-unconfigured > .wl-mode { display: none; }

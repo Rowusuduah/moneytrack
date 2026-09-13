@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'moneytrack-v30';
+const CACHE_NAME = 'moneytrack-v31';
 const APP_SHELL  = [
   './index.html',
   './css/styles.css',
@@ -35,11 +35,12 @@ self.addEventListener('fetch', e => {
   const url = e.request.url;
   if (url.includes('googleapis.com') || url.includes('accounts.google.com')) return;
   if (e.request.method !== 'GET') return;
+  const cacheable = APP_SHELL.some(path => new URL(path, self.registration.scope).href === url);
 
   e.respondWith(
     fetch(e.request)
       .then(response => {
-        if (response && response.status === 200 && response.type === 'basic') {
+        if (cacheable && response && response.status === 200 && response.type === 'basic') {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
         }
