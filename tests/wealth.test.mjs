@@ -85,6 +85,69 @@ test('aggregation classifies income, bills, savings and unmapped expenses', () =
   assert.deepEqual(a.unmapped, [{ category: 'Unmapped', total: 15 }]);
 });
 
+test('savings transfers use account direction and internal moves net to zero', () => {
+  const accounts = [
+    { id: 'checking', group: 'checking' },
+    { id: 'savings1', group: 'savings' },
+    { id: 'savings2', group: 'savings' },
+    { id: 'brokerage', group: 'investment' },
+  ];
+  const txns = [
+    { date: '2025-04-02', type: 'transfer', amount: 500, category: 'Savings Transfer', account: 'checking', toAccount: 'savings1' },
+    { date: '2025-04-03', type: 'transfer', amount: 300, category: 'Savings Transfer', account: 'savings1', toAccount: 'savings2' },
+    { date: '2025-04-04', type: 'transfer', amount: 200, category: 'Investment', account: 'savings2', toAccount: 'brokerage' },
+    { date: '2025-04-05', type: 'transfer', amount: 125, category: 'Savings Transfer', account: 'savings1', toAccount: 'checking' },
+  ];
+  const a = W.wlAggregateRange(txns, '2025-04-01', '2025-04-30', accounts);
+  assert.equal(a.savingsThisMonth, 375); // +500 inbound, two internal moves, -125 outbound
+  assert.equal(W.wlSavingsByMonth(txns, '2025-04-20', 1, accounts)[0].total, 375);
+
+  const withoutInternal = W.wlAggregateRange([txns[0]], '2025-04-01', '2025-04-30', accounts);
+  const withInternal = W.wlAggregateRange(txns.slice(0, 3), '2025-04-01', '2025-04-30', accounts);
+  assert.equal(withInternal.savingsThisMonth, withoutInternal.savingsThisMonth);
+});
+
+test('current Wealth totals and savings trend ignore future-dated transactions', () => {
+  const accounts = [
+    { id: 'checking', group: 'checking' },
+    { id: 'savings', group: 'savings' },
+  ];
+  const txns = [
+    { date: '2025-04-10', type: 'expense', amount: 100, category: 'Groceries', account: 'checking' },
+    { date: '2025-04-30', type: 'expense', amount: 900, category: 'Groceries', account: 'checking' },
+    { date: '2025-04-11', type: 'transfer', amount: 200, category: 'Savings Transfer', account: 'checking', toAccount: 'savings' },
+    { date: '2025-04-29', type: 'transfer', amount: 800, category: 'Savings Transfer', account: 'checking', toAccount: 'savings' },
+  ];
+  const a = W.wlAggregate(txns, '2025-04-15', accounts);
+  assert.equal(a.groups.living, 100);
+  assert.equal(a.savingsThisMonth, 200);
+  assert.equal(W.wlSavingsByMonth(txns, '2025-04-15', 1, accounts)[0].total, 200);
+});
+
+test('savings trend renders a withdrawal as a visible negative bar', () => {
+  const markup = W.wlSavingsTrendMarkup([
+    { label: 'Mar', total: 400 },
+    { label: 'Apr', total: -500 },
+  ], 400);
+  assert.match(markup, /class="wl-ch-col negative"/);
+  assert.match(markup, />-\$500<\/text>/);
+  assert.match(markup, /class="wl-ch-zero"/);
+});
+
+test('loan payments and bank fees are surfaced as unmapped spending', () => {
+  const txns = [
+    { date: '2025-04-02', type: 'expense', amount: 100, category: 'Loan Payment' },
+    { date: '2025-04-03', type: 'expense', amount: 25, category: 'Bank Fee' },
+  ];
+  const a = W.wlAggregateRange(txns, '2025-04-01', '2025-04-30');
+  assert.deepEqual(a.unmapped, [
+    { category: 'Loan Payment', total: 100 },
+    { category: 'Bank Fee', total: 25 },
+  ]);
+  const pace = W.wlPaceSeries(txns, { startIso: '2025-04-01', endIso: '2025-04-03' });
+  assert.equal(pace.cumulative.at(-1), 125);
+});
+
 test('windows and pace use the selected calendar range', () => {
   const week = W.wlWindowBounds('week', '2025-04-12');
   assert.equal(week.startIso, '2025-04-06');
@@ -104,13 +167,32 @@ test('milestones and projection use the imported amounts', () => {
   assert.equal(stages[1].filled, 400);
   assert.equal(stages[1].active, true);
   const p = W.wlProject(400, 5, 20);
-  assert.equal(p.fundM, 17);
+  assert.equal(p.fundM, 16); // reserve interest helps reach $6,500 during month 16
+  assert.equal(p.funded, true);
   assert.equal(p.contrib, 120000);
   assert.ok(p.total > p.contrib);
-  assert.equal(W.wlProject(0, 5, 20).fundM, 240);
+  const zero = W.wlProject(0, 5, 20);
+  assert.equal(zero.funded, false);
+  assert.equal(zero.fundM, null);
+  assert.equal(zero.reserveMonths, 240);
 });
 
-test('every expense option in the transaction form is mapped or excluded', () => {
+test('projection identifies a reserve target unreachable within the horizon', () => {
+  const p = examplePlan();
+  p.savingsTargetMo = 100;
+  p.years = 10;
+  p.kMo = 0;
+  p.milestones.forEach((m, i) => { m.amount = i === 0 ? 100000 : 0; });
+  W.wlApplyPlan(p);
+  const projected = W.wlProject(100, 5, 10);
+  assert.equal(projected.reserve, 100000);
+  assert.equal(projected.funded, false);
+  assert.equal(projected.fundM, null);
+  assert.equal(projected.reserveMonths, 120);
+  assert.ok(projected.total < projected.reserve);
+});
+
+test('every expense option is mapped, movement-only, or intentionally surfaced', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const select = html.match(/<select id="txn-category"[\s\S]*?<\/select>/);
   assert.ok(select);
@@ -121,8 +203,9 @@ test('every expense option in the transaction form is mapped or excluded', () =>
     .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
   const categories = [...select[0].matchAll(/<option[^>]*>([^<]+)<\/option>/g)]
     .map(m => decode(m[1].trim())).filter(c => !income.has(c));
-  const known = c => c in W.wlCatToGroup() ||
-    ['Savings Transfer', 'Investment', 'Bill Reserve', 'Loan Payment',
-      'Credit Card Payment', 'Bank Fee', 'Loan Given'].includes(c);
+  const movementOnly = ['Savings Transfer', 'Investment', 'Bill Reserve',
+    'Credit Card Payment', 'Loan Given'];
+  const surfacedUnmapped = ['Loan Payment', 'Bank Fee'];
+  const known = c => c in W.wlCatToGroup() || movementOnly.includes(c) || surfacedUnmapped.includes(c);
   assert.deepEqual(categories.filter(c => !known(c)), []);
 });

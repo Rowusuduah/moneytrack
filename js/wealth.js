@@ -131,7 +131,7 @@ const WEALTH_CATEGORY_MAP = {
   'Tuition': 'profdev', 'Textbooks': 'profdev', 'Courses': 'profdev', 'Student Loan': 'profdev',
 };
 const WEALTH_SAVINGS_CATS  = ['Savings Transfer', 'Investment'];
-const WEALTH_EXCLUDED_CATS = ['Bill Reserve', 'Loan Payment', 'Credit Card Payment', 'Bank Fee', 'Loan Given'];
+const WEALTH_EXCLUDED_CATS = ['Bill Reserve', 'Credit Card Payment', 'Loan Given'];
 
 function wlRound(n) { return Math.round(n * 100) / 100; }   // local: no app.js at top level
 function wlPlan() { return PLAN; }
@@ -156,6 +156,24 @@ const WL_MON3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','No
 
 function wlSpendBudget(mode) {
   return wlRound((wlFixedMo() + wlDailyLivingMo()) * WL_FACTORS[mode]);
+}
+
+// Signed change in total savings/investment assets represented by a
+// savings-category transaction. Legacy expense entries use the category as
+// their intent and remain positive. Real transfers use account direction:
+// checking -> savings/investment adds, the reverse subtracts, and moves within
+// savings/investments net to zero. Without account metadata, preserve the
+// legacy category-only behaviour for callers outside the browser.
+function wlSavingsTxnDelta(t, accounts) {
+  if (!t || t.type === 'income' || !WEALTH_SAVINGS_CATS.includes(t.category)) return null;
+  const amt = Number(t.amount) || 0;
+  if (t.type !== 'transfer' || !Array.isArray(accounts)) return amt;
+  const groups = Object.fromEntries(accounts.map(a => [a.id, a.group]));
+  const isSaved = id => groups[id] === 'savings' || groups[id] === 'investment';
+  const leavesSaved = isSaved(t.account);
+  const entersSaved = isSaved(t.toAccount);
+  if (leavesSaved === entersSaved) return 0;
+  return entersSaved ? amt : -amt;
 }
 
 // Calendar window containing todayIso. Weeks run Sunday–Saturday.
@@ -213,7 +231,7 @@ function wlPaydays(anchorIso, todayIso) {
 
 // One pass over the txn log → everything the live blocks need.
 // Inclusive ISO date range; string comparison is safe for YYYY-MM-DD.
-function wlAggregateRange(txns, startIso, endIso) {
+function wlAggregateRange(txns, startIso, endIso, accounts) {
   const groups = {};
   PLAN.groups.forEach(g => { groups[g.id] = 0; });
   groups.living = 0;
@@ -232,8 +250,9 @@ function wlAggregateRange(txns, startIso, endIso) {
       if (t.category === 'Paycheck') { paychecksLanded++; netLanded = wlRound(netLanded + amt); }
       continue;                                    // other income is outside the plan
     }
-    if (WEALTH_SAVINGS_CATS.includes(t.category)) { // counts whether logged as transfer or expense
-      savingsThisMonth = wlRound(savingsThisMonth + amt);
+    const savingsDelta = wlSavingsTxnDelta(t, accounts);
+    if (savingsDelta !== null) {
+      savingsThisMonth = wlRound(savingsThisMonth + savingsDelta);
       continue;
     }
     if (t.type === 'transfer') continue;            // account moves are not spending
@@ -262,9 +281,9 @@ function wlAggregateRange(txns, startIso, endIso) {
 }
 
 // v1 signature preserved: calendar month of todayIso.
-function wlAggregate(txns, todayIso) {
+function wlAggregate(txns, todayIso, accounts) {
   const b = wlWindowBounds('month', todayIso);
-  const agg = wlAggregateRange(txns, b.startIso, b.endIso);
+  const agg = wlAggregateRange(txns, b.startIso, todayIso < b.endIso ? todayIso : b.endIso, accounts);
   agg.month = todayIso.slice(0, 7);
   return agg;
 }
@@ -297,7 +316,7 @@ function wlPaceSeries(txns, bounds) {
 
 // Savings Transfer + Investment totals for the last n calendar months
 // (including the current one), zero-filled, oldest first.
-function wlSavingsByMonth(txns, todayIso, n) {
+function wlSavingsByMonth(txns, todayIso, n, accounts) {
   const count = n || 6;
   const t = new Date(todayIso + 'T00:00:00');
   const out = [];
@@ -309,10 +328,11 @@ function wlSavingsByMonth(txns, todayIso, n) {
   const byYm = {};
   out.forEach(o => { byYm[o.ym] = o; });
   for (const t2 of txns) {
-    // income-typed savings txns are treated as income (matches wlAggregateRange), not saved money
-    if (!t2.date || t2.type === 'income' || !WEALTH_SAVINGS_CATS.includes(t2.category)) continue;
+    if (!t2.date || t2.date > todayIso) continue;
+    const savingsDelta = wlSavingsTxnDelta(t2, accounts);
+    if (savingsDelta === null) continue;
     const o = byYm[t2.date.slice(0, 7)];
-    if (o) o.total = wlRound(o.total + (Number(t2.amount) || 0));
+    if (o) o.total = wlRound(o.total + savingsDelta);
   }
   return out;
 }
@@ -346,13 +366,25 @@ function wlFV(p, r, n) { const i = r / 12; return i === 0 ? p * n : p * ((Math.p
 function wlProject(savMo, retPct, years) {
   const n = years * 12, r = retPct / 100;
   const reserve = PLAN.milestones.reduce((s, m) => s + m.amount, 0);
-  const fundM = reserve > 0 ? (savMo > 0 ? Math.min(Math.ceil(reserve / savMo), n) : n) : 0;
-  const res   = wlFV(savMo, 0.04, fundM) * Math.pow(1 + 0.04 / 12, Math.max(0, n - fundM));
-  const brok  = wlFV(savMo, r, Math.max(0, n - fundM));
+  let fundM = reserve === 0 ? 0 : null;
+  // Use the same 4% reserve growth shown in the projection when deciding
+  // whether (and when) the target is reached. The horizon is at most 1,200
+  // months, so this bounded scan is simple and avoids formula edge cases.
+  if (reserve > 0 && savMo > 0) {
+    for (let month = 1; month <= n; month++) {
+      if (wlFV(savMo, 0.04, month) >= reserve) { fundM = month; break; }
+    }
+  }
+  const funded = fundM !== null;
+  // Savings stay in the reserve bucket for the whole projection when the
+  // target cannot be reached inside the selected horizon.
+  const reserveMonths = funded ? fundM : n;
+  const res   = wlFV(savMo, 0.04, reserveMonths) * Math.pow(1 + 0.04 / 12, Math.max(0, n - reserveMonths));
+  const brok  = wlFV(savMo, r, Math.max(0, n - reserveMonths));
   const k     = wlFV(PLAN.kMo, r, n);
   const total = res + brok + k;
   const contrib = savMo * n + PLAN.kMo * n;
-  return { total, contrib, growth: total - contrib, fundM };
+  return { total, contrib, growth: total - contrib, reserve, funded, fundM, reserveMonths };
 }
 
 /* ── Renderers (browser only — app.js globals allowed from here down) ── */
@@ -500,7 +532,8 @@ function renderWealthTab() {
   const txns   = loadTxns();
   const today  = todayISO();
   const bounds = wlWindowBounds(wlView, today);
-  const agg    = wlAggregateRange(txns, bounds.startIso, bounds.endIso);
+  const aggEnd = bounds.endIso > today ? today : bounds.endIso;
+  const agg    = wlAggregateRange(txns, bounds.startIso, aggEnd, ACCOUNTS);
   const pay    = wlPaydays(PLAN.payAnchor, today);
   bindWlToggle();
   renderWlToggle();
@@ -553,7 +586,7 @@ function wlBarClass(spent, alloc) {
 
 function wlRowHTML(label, alloc, spent, chipsHTML) {
   const left = wlRound(alloc - spent);
-  const pct  = alloc > 0 ? Math.min(100, spent / alloc * 100) : (spent > 0 ? 100 : 0);
+  const pct  = alloc > 0 ? Math.max(0, Math.min(100, spent / alloc * 100)) : (spent > 0 ? 100 : 0);
   const cls  = wlBarClass(spent, alloc);
   const leftTxt = left >= 0
     ? '<span class="wl-left">' + fmt(left) + ' left</span>'
@@ -706,34 +739,51 @@ function renderWlVariance(agg, bounds) {
 }
 
 // Last 6 months of savings vs the monthly target line. Always monthly.
-function renderWlSavingsTrend(txns, today) {
-  const svg = document.getElementById('wl-sav-trend');
-  if (!svg) return;
-  const months = wlSavingsByMonth(txns, today, 6);
-  const target = PLAN.savingsTargetMo;
-  const max = Math.max(target * 1.25, ...months.map(m => m.total)) || 1;
+function wlSavingsTrendMarkup(months, target) {
   const W = 620, H = 150, L = 46, R = 12, T = 10, B = 22;
-  const bw = (W - L - R) / months.length;
-  const Y = v => H - B - (v / max) * (H - T - B);
-  let g = '';
+  const values = months.map(m => Number(m.total) || 0);
+  const max = Math.max(1, target * 1.25, ...values);
+  const min = Math.min(0, ...values);
+  const span = Math.max(1, max - min);
+  const bw = (W - L - R) / Math.max(1, months.length);
+  const Y = v => T + ((max - v) / span) * (H - T - B);
+  const zeroY = Y(0);
+  let g = '<line x1="' + L + '" y1="' + zeroY.toFixed(1) + '" x2="' + (W - R) +
+    '" y2="' + zeroY.toFixed(1) + '" class="wl-ch-zero"/>';
   months.forEach((m, i) => {
     const x = L + i * bw;
-    const met = m.total >= target;
-    if (m.total > 0) {
-      g += '<rect x="' + (x + bw * 0.18).toFixed(1) + '" y="' + Y(m.total).toFixed(1) +
-        '" width="' + (bw * 0.64).toFixed(1) + '" height="' + Math.max(0, H - B - Y(m.total)).toFixed(1) +
-        '" class="wl-ch-col' + (met ? '' : ' short') + '"/>';
-      g += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (Y(m.total) - 4).toFixed(1) +
-        '" fill="currentColor" opacity="0.7" font-size="9" text-anchor="middle">' + wlM0(m.total) + '</text>';
+    const amount = Number(m.total) || 0;
+    const met = amount >= target;
+    if (amount !== 0) {
+      const amountY = Y(amount);
+      const y = Math.min(zeroY, amountY);
+      const height = Math.abs(zeroY - amountY);
+      const cls = amount < 0 ? ' negative' : (met ? '' : ' short');
+      g += '<rect x="' + (x + bw * 0.18).toFixed(1) + '" y="' + y.toFixed(1) +
+        '" width="' + (bw * 0.64).toFixed(1) + '" height="' + Math.max(0, height).toFixed(1) +
+        '" class="wl-ch-col' + cls + '"/>';
+      const labelY = amount > 0
+        ? Math.max(T + 9, amountY - 4)
+        : Math.min(H - B - 3, amountY + 11);
+      g += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + labelY.toFixed(1) +
+        '" fill="currentColor" opacity="0.7" font-size="9" text-anchor="middle">' + wlM0(amount) + '</text>';
     }
     g += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) +
       '" fill="currentColor" opacity="0.55" font-size="9" text-anchor="middle">' + m.label + '</text>';
   });
   g += '<line x1="' + L + '" y1="' + Y(target).toFixed(1) + '" x2="' + (W - R) +
     '" y2="' + Y(target).toFixed(1) + '" class="wl-ch-target"/>';
-  g += '<text x="' + (W - R) + '" y="' + (Y(target) - 4).toFixed(1) +
+  g += '<text x="' + (W - R) + '" y="' + Math.max(T + 9, Y(target) - 4).toFixed(1) +
     '" fill="currentColor" opacity="0.7" font-size="9" text-anchor="end">target ' + wlM0(target) + '</text>';
-  svg.innerHTML = g;
+  return g;
+}
+
+function renderWlSavingsTrend(txns, today) {
+  const svg = document.getElementById('wl-sav-trend');
+  if (!svg) return;
+  const months = wlSavingsByMonth(txns, today, 6, ACCOUNTS);
+  const target = PLAN.savingsTargetMo;
+  svg.innerHTML = wlSavingsTrendMarkup(months, target);
 }
 
 // Filled in Task 5
@@ -793,7 +843,10 @@ function bindWlStudio() {
   });
 }
 
-function wlM0(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
+function wlM0(n) {
+  const rounded = Math.round(Number(n) || 0);
+  return (rounded < 0 ? '-' : '') + '$' + Math.abs(rounded).toLocaleString('en-US');
+}
 
 function renderWlStudio() {
   const savMo = +(document.getElementById('wl-sl-save')?.value || PLAN.savingsTargetMo);
@@ -833,7 +886,12 @@ function renderWlStudio() {
   const p = wlProject(savMo, ret, yrs);
   const set = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
   set('wl-proj-total', wlM0(p.total));
-  set('wl-proj-cap', 'in ' + yrs + " years · today's dollars · reserves full in " + p.fundM + ' mo');
+  const reserveStatus = p.reserve === 0
+    ? 'no reserve target'
+    : p.funded
+      ? 'reserves full in ' + p.fundM + ' mo'
+      : 'reserves not fully funded within ' + yrs + ' years';
+  set('wl-proj-cap', 'in ' + yrs + " years · today's dollars · " + reserveStatus);
   set('wl-proj-contrib', wlM0(p.contrib));
   set('wl-st-ret', ret.toFixed(1) + '% real');
   set('wl-st-yrs', yrs + ' yrs');
@@ -844,7 +902,7 @@ function renderWlStudio() {
   const W = 620, H = 210, L = 54, R = 12, T = 12, B = 24;
   const pts = [];
   for (let y = 0; y <= yrs; y++) {
-    const n = y * 12, fm = Math.min(p.fundM, n), r = ret / 100;
+    const n = y * 12, fm = Math.min(p.reserveMonths, n), r = ret / 100;
     pts.push([y,
       wlFV(savMo, 0.04, fm) * Math.pow(1 + 0.04 / 12, Math.max(0, n - fm)) +
       wlFV(savMo, r, Math.max(0, n - fm)) + wlFV(PLAN.kMo, r, n)]);

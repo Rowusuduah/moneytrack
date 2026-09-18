@@ -304,8 +304,9 @@ test('avgMonthlyContribution: internal moves net to zero, withdrawals reduce', (
     { date: '2026-05-20', type: 'expense',  amount: 100, account: 'usf_savings_1', category: 'Medical' },
     { date: '2026-04-10', type: 'transfer', amount: 300, account: 'usf_savings_1', toAccount: 'usf_savings_2' }, // internal
   ];
-  // May net = 600 - 100 = 500; Apr internal move nets 0. Active months = 2 → 250.
-  assert.equal(A.avgMonthlyContribution(txns, ['usf_savings_1', 'usf_savings_2'], 3, refDate), 250);
+  // May net = 600 - 100 = 500. April's internal move changes neither the
+  // goal balance nor its contribution pace, so it must not dilute the average.
+  assert.equal(A.avgMonthlyContribution(txns, ['usf_savings_1', 'usf_savings_2'], 3, refDate), 500);
 });
 
 test('avgMonthlyContribution: ignores unrelated accounts and empty history', () => {

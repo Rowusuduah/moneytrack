@@ -656,21 +656,60 @@ function savingsWithdrawalParts(byAccount, priorBalOf) {
 // snapshot are skipped so old/partial data cannot create a false withdrawal.
 function savingsBalanceDrops(priorSnap, currentSnap, accounts) {
   const byAccount = {};
-  let total = 0;
+  const increasesByAccount = {};
   const prior = priorSnap && priorSnap.accounts;
   const current = currentSnap && currentSnap.accounts;
   if (!prior || !current) return { total: 0, byAccount };
 
+  // Record every account-level decrease exactly, then also calculate the
+  // savings group's net change. The former answers "how much left this
+  // account?"; the latter provides context when other savings balances rose.
+  let priorTotal = 0, currentTotal = 0, grossTotal = 0, increaseTotal = 0;
   (accounts || []).filter(a => a.group === 'savings').forEach(a => {
     if (!Object.prototype.hasOwnProperty.call(prior, a.id) ||
         !Object.prototype.hasOwnProperty.call(current, a.id)) return;
-    const drop = roundMoney(safeAmt(prior[a.id]) - safeAmt(current[a.id]));
+    const priorAmt = safeAmt(prior[a.id]);
+    const currentAmt = safeAmt(current[a.id]);
+    priorTotal = roundMoney(priorTotal + priorAmt);
+    currentTotal = roundMoney(currentTotal + currentAmt);
+    const drop = roundMoney(priorAmt - currentAmt);
     if (drop > 0) {
       byAccount[a.id] = drop;
-      total = roundMoney(total + drop);
+      grossTotal = roundMoney(grossTotal + drop);
+    } else if (drop < 0) {
+      const increase = Math.abs(drop);
+      increasesByAccount[a.id] = increase;
+      increaseTotal = roundMoney(increaseTotal + increase);
     }
   });
-  return { total, byAccount };
+
+  const netTotal = Math.max(0, roundMoney(priorTotal - currentTotal));
+  // Preserve exact per-account decreases (the user's requested difference and
+  // percentage) as the primary total. Snapshot balances cannot prove whether
+  // an increase elsewhere was an internal transfer or a separate deposit, so
+  // never erase a real account decrease; expose the group net as extra context.
+  if (increaseTotal > 0 && grossTotal > 0) {
+    return { total: grossTotal, byAccount, netTotal, increasesByAccount };
+  }
+  return { total: grossTotal, byAccount };
+}
+
+// Stable chronological view of snapshots. Restored backups may contain a
+// valid but unsorted array; optional throughDate keeps future-dated records out
+// of today's dashboards without destroying them.
+function orderedSnapshots(snaps, throughDate) {
+  return (snaps || [])
+    .filter(s => s && typeof s.date === 'string' && (!throughDate || s.date <= throughDate))
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Inclusive calendar-day count that is immune to 23/25-hour DST days.
+function calendarDayCount(start, end) {
+  if (!(start instanceof Date) || !(end instanceof Date) || isNaN(start) || isNaN(end) || end < start) return 0;
+  const a = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const b = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.floor((b - a) / 86400000) + 1;
 }
 
 // Pick the balances that define a selected period. When there are two or more
@@ -712,7 +751,14 @@ function savingsDropText(drop) {
     .map(({ id, amt, priorBal, pct }) =>
       `${ACCOUNT_LABELS[id] || id}: ${fmt(amt)}` +
       (pct !== null ? ` (${pct}% of its ${fmt(priorBal)})` : ''));
-  return `Taken from savings — ${parts.join(' · ')} (${dates}; not counted in Money Out)`;
+  const netTotal = drop.netTotal == null ? drop.total : drop.netTotal;
+  if (netTotal <= 0) {
+    return `Savings account decrease — ${parts.join(' · ')}; total savings did not decrease because other savings balances rose (${dates}; not counted in Money Out)`;
+  }
+  const offsetNote = netTotal < drop.total
+    ? `; total savings' net decrease: ${fmt(netTotal)} after increases elsewhere`
+    : '';
+  return `Taken from savings — ${parts.join(' · ')}${offsetNote} (${dates}; not counted in Money Out)`;
 }
 
 function fmt(n) {
@@ -732,6 +778,10 @@ function todayISO() {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
+function isISODateOnOrBefore(value, throughISO) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && value <= throughISO;
+}
+
 function fmtShort(n) {
   if (!isFinite(n)) return '$0';
   const abs = Math.abs(n);
@@ -749,16 +799,22 @@ function csvField(v) {
   return `"${s}"`;
 }
 
+function loansOutAtDate(loans, atDate) {
+  const closedAfter = (l, d) => (l.paidDate && l.paidDate > d) || (l.forgivenDate && l.forgivenDate > d);
+  return roundMoney((loans || [])
+    .filter(l => atDate
+      ? (l.date <= atDate && (l.status === 'outstanding' || closedAfter(l, atDate)))
+      : l.status === 'outstanding')
+    .reduce((sum, l) => sum + loanRemaining(l, atDate), 0));
+}
+
 function calcNetWorth(snap, loans, atDate) {
   const b = snap.accounts || {};
   const assets = roundMoney(ACCOUNTS.filter(a => a.group !== 'debt').reduce((s, a) => s + safeAmt(b[a.id]), 0));
   const debt   = roundMoney(ACCOUNTS.filter(a => a.group === 'debt').reduce((s, a) => s + safeAmt(b[a.id]), 0));
   // A loan counts as an asset while outstanding; it stops counting once paid
   // back (the money returned to an account) or forgiven (written off).
-  const closedAfter = (l, d) => (l.paidDate && l.paidDate > d) || (l.forgivenDate && l.forgivenDate > d);
-  const loansOut = roundMoney((loans || [])
-    .filter(l => atDate ? (l.date <= atDate && (l.status === 'outstanding' || closedAfter(l, atDate))) : l.status === 'outstanding')
-    .reduce((s, l) => s + loanRemaining(l, atDate), 0));
+  const loansOut = loansOutAtDate(loans, atDate);
   return roundMoney(assets + loansOut - debt);
 }
 
@@ -796,12 +852,12 @@ function _safeSave(key, value) {
 }
 
 function loadSnapshots() {
-  try { return _safeParseJSON(localStorage.getItem(KEY_SNAPSHOTS), []); }
+  try { return orderedSnapshots(_safeParseJSON(localStorage.getItem(KEY_SNAPSHOTS), [])); }
   catch (e) { console.error('[storage] Parse failed: snapshots', e); return []; }
 }
 
 function saveSnapshots(arr) {
-  _safeSave(KEY_SNAPSHOTS, arr);
+  _safeSave(KEY_SNAPSHOTS, orderedSnapshots(arr));
   queueDriveSync();
 }
 
@@ -892,21 +948,26 @@ function getNextDueDate(bill, todayArg) {
 // minus payments since (transfers to the card; with a single debt account,
 // legacy 'Credit Card Payment' expenses too). The snapshot day itself is
 // already inside the snapshot, so only strictly-later txns count.
-function cardOwedNow(account, snap, txns, debtAccountCount) {
+function cardOwedNow(account, snap, txns, debtAccountCount, asOfISO) {
   const base  = snap ? safeAmt((snap.accounts || {})[account.id]) : 0;
   const since = snap ? snap.date : '';
-  let charges = 0, payments = 0;
+  const through = asOfISO || todayISO();
+  let charges = 0, payments = 0, credits = 0;
   for (const t of txns) {
-    if (!t.date || t.date <= since) continue;
+    if (!isISODateOnOrBefore(t.date, through) || t.date <= since) continue;
     if (t.type === 'expense' && t.account === account.id && t.category !== 'Credit Card Payment') {
       charges = roundMoney(charges + safeAmt(t.amount));
-    } else if (t.type === 'transfer' && t.toAccount === account.id) {
+    } else if (t.type === 'transfer' && t.toAccount === account.id && t.account !== t.toAccount) {
       payments = roundMoney(payments + safeAmt(t.amount));
     } else if (debtAccountCount === 1 && t.type === 'expense' && t.category === 'Credit Card Payment') {
       payments = roundMoney(payments + safeAmt(t.amount));
+    } else if (t.type === 'income' && t.account === account.id) {
+      // A refund/cash-back row posted on the card lowers what is owed. It may
+      // still appear in Money In according to the user's category semantics.
+      credits = roundMoney(credits + safeAmt(t.amount));
     }
   }
-  return { owed: roundMoney(base + charges - payments), base, charges, payments, since };
+  return { owed: roundMoney(base + charges - payments - credits), base, charges, payments, credits, since };
 }
 
 function loadGoals() {
@@ -994,8 +1055,8 @@ function prefillSnapshotForm(dateISO) {
   }
 }
 
-function getLatestSnapshot() {
-  const snaps = loadSnapshots();
+function getLatestSnapshot(asOfISO) {
+  const snaps = orderedSnapshots(loadSnapshots(), asOfISO || todayISO());
   if (!snaps.length) return null;
   return snaps[snaps.length - 1];
 }
@@ -1014,9 +1075,12 @@ function renderAccountKPIs() {
   const investment       = sum('investment');
   const debt             = sum('debt');
   const allLoansKPI      = loadLoans();
-  const outstandingLoans = allLoansKPI.filter(l => l.status === 'outstanding');
-  const loansOut         = roundMoney(outstandingLoans.reduce((s, l) => s + loanRemaining(l), 0));
-  const net              = snap ? calcNetWorth(snap, allLoansKPI) : 0;
+  const outstandingLoans = allLoansKPI.filter(l => l.status === 'outstanding' && l.date <= todayISO());
+  const loansOut         = loansOutAtDate(allLoansKPI, todayISO());
+  // Every component of snapshot net worth must share the snapshot's date.
+  // Mixing old account balances with today's loan state can double-count a new
+  // loan or create a phantom loss when a repayment arrives after the snapshot.
+  const net              = snap ? calcNetWorth(snap, allLoansKPI, snap.date) : 0;
 
   const loansSub = outstandingLoans.length
     ? `${outstandingLoans.length} loan${outstandingLoans.length > 1 ? 's' : ''} outstanding`
@@ -1028,7 +1092,7 @@ function renderAccountKPIs() {
     { label: 'Investments', value: investment, color: 'var(--purple)',                                  sub: lbl('investment') },
     { label: 'Loans Out',   value: loansOut,   color: 'var(--teal)',                                    sub: loansSub },
     { label: 'Debt Owed',   value: -debt,      color: 'var(--red)',                                     sub: lbl('debt') },
-    { label: 'Net Worth',   value: net,        color: net >= 0 ? 'var(--green)' : 'var(--red)',         sub: 'All assets − debt' },
+    { label: 'Net Worth',   value: net,        color: net >= 0 ? 'var(--green)' : 'var(--red)',         sub: 'As of latest balance snapshot' },
   ];
 
   if (typeof afLoad === 'function') {
@@ -1079,11 +1143,12 @@ function renderAccountSavingsChange() {
     return;
   }
   el.textContent = savingsDropText(drop);
-  el.classList.toggle('muted', drop.total <= 0);
+  const netDrop = drop.netTotal == null ? drop.total : drop.netTotal;
+  el.classList.toggle('muted', netDrop <= 0);
 }
 
 function renderNWTrend() {
-  const snaps = loadSnapshots();
+  const snaps = orderedSnapshots(loadSnapshots(), todayISO());
   const card = document.getElementById('nw-trend-card');
   const chart = document.getElementById('nw-trend-chart');
   const count = document.getElementById('nw-trend-count');
@@ -1186,6 +1251,13 @@ function debtPayoff(balance, aprPct, minPayment) {
   return { months, totalInterest: roundMoney(totalInt), monthlyInterest };
 }
 
+function cardDebtProjection(account, snap, txns, debtAccountCount, meta, asOfISO) {
+  const activity = cardOwedNow(account, snap, txns, debtAccountCount, asOfISO);
+  const balance = Math.max(0, activity.owed);
+  const terms = meta || { apr: 0, minPayment: 0 };
+  return { activity, balance, payoff: debtPayoff(balance, terms.apr, terms.minPayment) };
+}
+
 function renderDebtDetails() {
   const el = document.getElementById('debt-details');
   if (!el) return;
@@ -1196,24 +1268,24 @@ function renderDebtDetails() {
     return;
   }
   const meta = loadDebtMeta();
-  const b = snap.accounts || {};
   const txnsForOwed = loadTxns();
 
   el.innerHTML = debtAccounts.map(a => {
-    const balance = b[a.id] || 0;
-    const ow = cardOwedNow(a, snap, txnsForOwed, debtAccounts.length);
-    const owedHtml = (ow.charges > 0 || ow.payments > 0)
+    const m = meta[a.id] || { apr: 0, minPayment: 0 };
+    const projection = cardDebtProjection(a, snap, txnsForOwed, debtAccounts.length, m);
+    const ow = projection.activity;
+    const owedHtml = (ow.charges > 0 || ow.payments > 0 || ow.credits > 0)
       ? `<div class="debt-owed-now">Owed now: <b class="text-red">${fmt(ow.owed)}</b>
-           <div class="debt-owed-break">snapshot ${fmt(ow.base)} (${escapeHTML(fmtDate(snap.date))}) + ${fmt(ow.charges)} charges − ${fmt(ow.payments)} payments</div>
+           <div class="debt-owed-break">snapshot ${fmt(ow.base)} (${escapeHTML(fmtDate(snap.date))}) + ${fmt(ow.charges)} charges − ${fmt(ow.payments)} payments − ${fmt(ow.credits)} credits</div>
          </div>`
       : `<div class="debt-owed-now">Owed now: <b class="text-red">${fmt(ow.owed)}</b></div>`;
-    const m = meta[a.id] || { apr: 0, minPayment: 0 };
-    const payoff = debtPayoff(balance, m.apr, m.minPayment);
+    const liveBalance = projection.balance;
+    const payoff = projection.payoff;
     const monthlyInterest = payoff.monthlyInterest;
     const payoffMonths = payoff.months;
     const totalInterest = payoff.totalInterest;
 
-    const statsHtml = balance > 0 && m.apr > 0 ? `
+    const statsHtml = liveBalance > 0 && m.apr > 0 ? `
       <div class="debt-stats">
         <div class="debt-stat"><div class="debt-stat-label">Monthly Interest</div><div class="debt-stat-value text-red">${fmt(monthlyInterest)}</div></div>
         ${payoffMonths !== null
@@ -1226,7 +1298,7 @@ function renderDebtDetails() {
       <div class="debt-card-header">
         <span class="acct-badge" style="background:${safeColor(a.color)}"></span>
         <strong>${escapeHTML(a.label)}</strong>
-        <span class="debt-balance text-red">${fmt(-balance)}</span>
+        <span class="debt-balance text-red">${fmt(-liveBalance)}</span>
       </div>
       ${owedHtml}
       <div class="debt-meta-grid">
@@ -1557,7 +1629,15 @@ function saveLoanEdit() {
   }
   loan.name = name; loan.amount = roundMoney(amtRaw);
   loan.date = date; loan.dueDate = dueDate; loan.note = note;
-  if (loanRemaining(loan) === 0) { loan.status = 'paid'; loan.paidDate = loan.paidDate || todayISO(); }
+  if (loanRemaining(loan) === 0) {
+    loan.status = 'paid';
+    loan.paidDate = loan.paidDate || todayISO();
+  } else if (loan.status === 'paid') {
+    // Increasing a previously paid loan above the recorded repayments means a
+    // balance is owed again; do not leave it hidden in the Paid section.
+    loan.status = 'outstanding';
+    loan.paidDate = '';
+  }
   loanEditId = null;
   saveLoans(loans);
   renderLoansCard();
@@ -1737,7 +1817,7 @@ function renderFinancialRatios() {
   const emergencyMonths = avgMonthlyExpense > 0 ? roundMoney(savings / avgMonthlyExpense) : null;
   const savingsRate = computeSavingsRate3Month();
 
-  const snaps = loadSnapshots();
+  const snaps = orderedSnapshots(loadSnapshots(), todayISO());
   let nwChange = null;
   if (snaps.length >= 2) {
     const loansForNW = loadLoans();
@@ -1940,6 +2020,7 @@ function avgMonthlyContribution(txns, accountIds, n, refDate) {
     } else {
       continue;                                        // does not touch the set
     }
+    if (delta === 0) continue;                         // internal move must not dilute the pace
     byMonth.set(ym, (byMonth.get(ym) || 0) + delta);
   }
   if (!byMonth.size) return 0;
@@ -2073,9 +2154,35 @@ function lastKnownBalances(snaps, beforeDate) {
   return out;
 }
 
+// Build one snapshot without letting a tombstoned custom account leak its last
+// balance into every future snapshot. Historical overwrites retain tombstoned
+// values so editing a note/current field never rewrites the past.
+function buildSnapshotBalances(accounts, existingAccts, rawById, overwriting) {
+  const balances = {};
+  const existing = existingAccts || {};
+  const raw = rawById || {};
+  (accounts || []).forEach(a => {
+    if (a.deleted) {
+      if (overwriting && Object.prototype.hasOwnProperty.call(existing, a.id)) {
+        balances[a.id] = safeAmt(existing[a.id]);
+      }
+      return;
+    }
+    const entered = raw[a.id] == null ? '' : String(raw[a.id]).trim();
+    balances[a.id] = entered === '' && Object.prototype.hasOwnProperty.call(existing, a.id)
+      ? safeAmt(existing[a.id])
+      : safeAmt(parseFloat(entered));
+  });
+  return balances;
+}
+
 function saveSnapshot() {
   const note = (document.getElementById('snapshot-note')?.value || '').trim();
   const selectedDate = document.getElementById('snapshot-date')?.value || todayISO();
+  if (selectedDate > todayISO()) {
+    alert('A balance snapshot cannot be dated in the future.');
+    return;
+  }
   const snaps = loadSnapshots();
   const dupIdx = snaps.findIndex(s => s.date === selectedDate);
   if (dupIdx !== -1 && !confirm(`A snapshot for ${selectedDate} already exists. Overwrite it?`)) return;
@@ -2085,26 +2192,18 @@ function saveSnapshot() {
   // so entering just one account doesn't record every other account as $0.
   const existingAccts = dupIdx !== -1 ? (snaps[dupIdx].accounts || {}) : lastKnownBalances(snaps, selectedDate);
 
-  const balances = {};
-  let hasData = false;
+  const rawById = {};
   ACCOUNTS.forEach(a => {
     const inp = document.getElementById('bal-' + a.id);
-    const raw = inp ? inp.value.trim() : '';
-    let v;
-    if (raw === '' && existingAccts[a.id] != null) {
-      v = existingAccts[a.id];           // field left blank → keep existing value
-    } else {
-      v = roundMoney(parseFloat(raw) || 0);
-    }
-    balances[a.id] = v;
-    if (v > 0) hasData = true;
+    rawById[a.id] = inp ? inp.value : '';
   });
+  const balances = buildSnapshotBalances(ACCOUNTS, existingAccts, rawById, dupIdx !== -1);
+  const hasData = activeAccounts().some(a => safeAmt(balances[a.id]) > 0);
   if (!hasData) { alert('Please enter at least one account balance before saving.'); return; }
 
   if (dupIdx !== -1) snaps.splice(dupIdx, 1);
   snaps.push({ date: selectedDate, note, accounts: balances });
   // Keep array sorted by date ascending
-  snaps.sort((a, b) => a.date.localeCompare(b.date));
   saveSnapshots(snaps);
 
   // Clear inputs, reset date to today
@@ -2147,9 +2246,7 @@ function exportSnapshots() {
     const savings    = roundMoney(ACCOUNTS.filter(a => a.group === 'savings').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
     const checking   = roundMoney(ACCOUNTS.filter(a => a.group === 'checking').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
     const investment = roundMoney(ACCOUNTS.filter(a => a.group === 'investment').reduce((sum, a) => sum + safeAmt(b[a.id]), 0));
-    const loansOut   = roundMoney(allLoansForExport
-      .filter(l => l.date <= s.date && (l.status === 'outstanding' || l.paidDate > s.date))
-      .reduce((sum, l) => sum + safeAmt(l.amount), 0));
+    const loansOut   = loansOutAtDate(allLoansForExport, s.date);
     const net        = calcNetWorth(s, allLoansForExport, s.date);
     return [
       s.date, s.note || '',
@@ -2187,6 +2284,20 @@ function trackerDateRange(state, todayArg) {
   return { startISO: anISO(start), endISO: anISO(end) };
 }
 
+// A carryover is the opening balance for a reporting range, not fresh money in
+// every month. For multi-month/all-time views use only the earliest month of
+// carryover entries so the same dollars are not added repeatedly.
+function openingCarryover(txns, rangeStartISO) {
+  const rows = (txns || []).filter(t => t.type === 'income' && t.category === 'Money from Last Month' && t.date);
+  if (!rows.length) return 0;
+  const firstMonth = rangeStartISO
+    ? rangeStartISO.slice(0, 7)
+    : rows.reduce((m, t) => !m || t.date.slice(0, 7) < m ? t.date.slice(0, 7) : m, '');
+  return roundMoney(rows
+    .filter(t => t.date.slice(0, 7) === firstMonth)
+    .reduce((sum, t) => sum + safeAmt(t.amount), 0));
+}
+
 function getFilteredTxns() {
   const all = loadTxns();
   const today = new Date(); today.setHours(0,0,0,0);
@@ -2195,6 +2306,9 @@ function getFilteredTxns() {
     // Date filter
     const d = new Date(t.date + 'T00:00:00');
     if (isNaN(d.getTime())) return false;
+    // Transactions are actual activity, not forecasts. A malformed import or
+    // manually altered date must not affect today's balances before it occurs.
+    if (!isISODateOnOrBefore(t.date, anISO(today))) return false;
 
     if (filters.period === 'today') {
       if (d.toDateString() !== today.toDateString()) return false;
@@ -2217,7 +2331,8 @@ function getFilteredTxns() {
     }
 
     // Account filter
-    if (filters.account !== 'all' && t.account !== filters.account) return false;
+    if (filters.account !== 'all' && t.account !== filters.account &&
+        !(t.type === 'transfer' && t.toAccount === filters.account)) return false;
 
     // Type filter
     if (filters.type !== 'all' && t.type !== filters.type) return false;
@@ -2232,17 +2347,16 @@ function getFilteredTxns() {
   });
 }
 
-function renderTrackerSummary(txns, snapPair) {
-  let income = 0, expense = 0, carryover = 0;
+function renderTrackerSummary(txns, snapPair, range) {
+  let income = 0, expense = 0;
   txns.forEach(t => {
     // Transfers excluded — internal moves don't affect income or expense totals
     if (isRealIncome(t))       income  += safeAmt(t.amount);
     else if (isRealExpense(t)) expense += safeAmt(t.amount);
-    else if (t.type === 'income' && t.category === 'Money from Last Month') carryover += safeAmt(t.amount);
   });
   income  = roundMoney(income);
   expense = roundMoney(expense);
-  carryover = roundMoney(carryover);
+  const carryover = openingCarryover(txns, range?.startISO);
   const net  = roundMoney(income - expense);
   const rate = income > 0 ? Math.round(net / income * 100) : null;
 
@@ -2276,11 +2390,13 @@ function renderTrackerSummary(txns, snapPair) {
     const values = savingsBalanceDrops(priorSnap, currentSnap, ACCOUNTS);
     const drop = { ...values, priorSnap, currentSnap };
     const comparable = snapshotPairComparable(snapPair);
-    savEl.textContent = comparable && drop.total > 0
+    const grossDrop = drop.total;
+    const netDrop = drop.netTotal == null ? drop.total : drop.netTotal;
+    savEl.textContent = comparable && grossDrop > 0
       ? savingsDropText(drop)
       : (!comparable && currentSnap ? 'Savings change unavailable — save balances on two different dates in this period.' : '');
-    savEl.classList.toggle('muted', !comparable);
-    savEl.classList.toggle('hidden', comparable ? drop.total <= 0 : !currentSnap);
+    savEl.classList.toggle('muted', !comparable || netDrop <= 0);
+    savEl.classList.toggle('hidden', comparable ? grossDrop <= 0 : !currentSnap);
   }
   if (netEl) {
     netEl.textContent = fmt(net);
@@ -2312,7 +2428,7 @@ function renderCategoryBreakdown(txns) {
   });
 
   const total = expenses.reduce((s, t) => s + safeAmt(t.amount), 0);
-  const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
   const max = sorted[0][1];
   if (max === 0) {
     el.innerHTML = `<div class="empty-state" style="padding:20px 0"><div style="font-size:24px">📂</div><div>No expense data for this period.</div></div>`;
@@ -2320,12 +2436,14 @@ function renderCategoryBreakdown(txns) {
   }
 
   const budgets = loadBudgets();
+  const showBudgetProgress = filters.period === 'month' && filters.account === 'all' &&
+    filters.type === 'all' && !filters.search;
 
-  el.innerHTML = sorted.map(([cat, amt]) => {
+  const rows = sorted.map(([cat, amt]) => {
     const pct   = total > 0 ? Math.round(amt / total * 100) : 0;
     const barW  = Math.round(amt / max * 100);
     const color = safeColor(CATEGORY_COLORS[cat], '#8a8aa6');
-    const budget = budgets[cat] || 0;
+    const budget = showBudgetProgress ? (budgets[cat] || 0) : 0;
 
     let budgetRow = '';
     if (budget > 0) {
@@ -2345,6 +2463,10 @@ function renderCategoryBreakdown(txns) {
       <div class="cat-pct">${pct}%</div>
     </div>${budgetRow}`;
   }).join('');
+  const notice = !showBudgetProgress && Object.values(budgets).some(v => safeAmt(v) > 0)
+    ? '<div style="font-size:11px;color:var(--muted);margin-bottom:10px">Monthly budget progress is shown with This Month, All Accounts, All Types, and no search filter.</div>'
+    : '';
+  el.innerHTML = notice + rows;
 }
 
 function renderDailyChart(txns) {
@@ -2454,7 +2576,8 @@ function renderTransactionLog(txns) {
   el.innerHTML = sorted.map(t => {
     const color = t.type === 'income' ? 'var(--green)' : t.type === 'transfer' ? 'var(--blue)' : 'var(--red)';
     const sign  = t.type === 'income' ? '+' : t.type === 'transfer' ? '→' : '-';
-    const acctLabel = ACCOUNT_LABELS[t.account] || t.account;
+    const acctLabel = ACCOUNT_LABELS[t.account] || t.account ||
+      (t.type === 'transfer' ? 'Unassigned source' : 'Unassigned account');
     const catColor = safeColor(CATEGORY_COLORS[t.category], '#8a8aa6');
     return `<div class="txn-item" role="listitem" data-id="${escapeHTML(t.id)}">
       <div class="txn-dot" style="background:${color}"></div>
@@ -2485,13 +2608,14 @@ function renderMonthlyTrends() {
     return;
   }
   const today = new Date();
+  const throughISO = todayISO();
   const months = [];
   for (let i = 5; i >= 0; i--) {
     const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
     months.push({ year: d.getFullYear(), month: d.getMonth(), label: d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }), income: 0, expense: 0 });
   }
   all.forEach(t => {
-    if (t.type === 'transfer') return;
+    if (t.type === 'transfer' || !isISODateOnOrBefore(t.date, throughISO)) return;
     const d = new Date(t.date + 'T00:00:00');
     const bucket = months.find(m => m.year === d.getFullYear() && m.month === d.getMonth());
     if (!bucket) return;
@@ -2596,7 +2720,8 @@ function saveDebtMetaAction() {
 function renderRecurringCard() {
   const el = document.getElementById('recurring-summary');
   if (!el) return;
-  const all = loadTxns();
+  const through = todayISO();
+  const all = loadTxns().filter(t => isISODateOnOrBefore(t.date, through));
   const recExpenses = all.filter(t => isRealExpense(t) && t.recurring === 'monthly' && safeAmt(t.amount) > 0);
   const card = document.getElementById('recurring-card');
   if (!recExpenses.length) {
@@ -2633,8 +2758,9 @@ function renderRecurringCard() {
 function renderTracker() {
   const txns = getFilteredTxns();
   const range = trackerDateRange(filters);
-  const snapPair = snapshotRangePair(loadSnapshots(), range.startISO, range.endISO);
-  renderTrackerSummary(txns, snapPair);
+  const endISO = range.endISO && range.endISO < todayISO() ? range.endISO : todayISO();
+  const snapPair = snapshotRangePair(loadSnapshots(), range.startISO, endISO);
+  renderTrackerSummary(txns, snapPair, range);
   renderCategoryBreakdown(txns);
   renderDailyChart(txns);
   renderAccountBreakdown(txns);
@@ -2704,7 +2830,7 @@ function buildTrendSVG(series, snapshots) {
 }
 
 function renderBalanceTrends() {
-  const snaps = loadSnapshots();
+  const snaps = orderedSnapshots(loadSnapshots(), todayISO());
   const card  = document.getElementById('balance-trends-card');
   const el    = document.getElementById('balance-trends-content');
   const countEl = document.getElementById('trend-snap-count');
@@ -2783,27 +2909,46 @@ function saveTransaction() {
   const desc      = document.getElementById('txn-desc')?.value?.trim();
   const recurring = document.getElementById('txn-recurring')?.value || '';
 
-  if (!date || isNaN(amtRaw) || amtRaw <= 0 || !desc) {
-    alert('Please fill in date, description, and a positive amount.');
+  if (!date || isNaN(amtRaw) || amtRaw <= 0 || !desc || !acct) {
+    alert('Please fill in date, description, source account, and a positive amount.');
+    return;
+  }
+  if (date > todayISO()) {
+    alert('A transaction cannot be dated in the future.');
     return;
   }
   if (type === 'transfer' && !toAcct) {
     alert('Please select a destination account for the transfer.');
     return;
   }
+  if (type === 'transfer' && acct === toAcct) {
+    alert('Choose two different accounts for a transfer.');
+    return;
+  }
+  const catSelect = document.getElementById('txn-category');
+  const catGroup = catSelect?.selectedOptions?.[0]?.parentElement?.label || '';
+  if (type === 'income' && catGroup !== 'Income') {
+    alert('Please choose an Income category for an income transaction.');
+    return;
+  }
+  if (type === 'expense' && catGroup === 'Income') {
+    alert('Please choose an expense category for an expense transaction.');
+    return;
+  }
 
   const txns = loadTxns();
+  const savedToAccount = type === 'transfer' ? toAcct : '';
 
   if (editingId !== null) {
     const idx = txns.findIndex(t => String(t.id) === String(editingId));
     if (idx !== -1) {
-      txns[idx] = { ...txns[idx], date, type, amount: roundMoney(amtRaw), account: acct, toAccount: toAcct, category: cat, description: desc, recurring };
+      txns[idx] = { ...txns[idx], date, type, amount: roundMoney(amtRaw), account: acct, toAccount: savedToAccount, category: cat, description: desc, recurring };
     }
     editingId = null;
     cancelEdit();
   } else {
     const id = crypto.randomUUID();
-    txns.push({ id, date, type, amount: roundMoney(amtRaw), account: acct, toAccount: toAcct, category: cat, description: desc, recurring });
+    txns.push({ id, date, type, amount: roundMoney(amtRaw), account: acct, toAccount: savedToAccount, category: cat, description: desc, recurring });
   }
 
   saveTxns(txns);
@@ -2880,6 +3025,14 @@ function updateToAccountVisibility() {
   const type  = document.getElementById('txn-type')?.value;
   const group = document.getElementById('to-account-group');
   if (group) group.style.display = type === 'transfer' ? '' : 'none';
+
+  // The HTML's first category is Paycheck while the default type is Expense.
+  // Keep type/category aligned so a first transaction cannot accidentally be
+  // saved as an expense called "Paycheck" (or income as an expense category).
+  const category = document.getElementById('txn-category');
+  const selectedGroup = category?.selectedOptions?.[0]?.parentElement?.label || '';
+  if (category && type === 'expense' && selectedGroup === 'Income') category.value = 'Miscellaneous';
+  if (category && type === 'income' && selectedGroup !== 'Income') category.value = 'Other Income';
 }
 
 function exportTransactions() {
@@ -3075,23 +3228,81 @@ function parseCSVLine(line) {
 }
 
 function detectCSVFormat(headers) {
-  const h = headers.map(x => x.toLowerCase().replace(/[^a-z.]/g, ' ').trim());
-  if (h.some(x => x.includes('transaction date')) && h.some(x => x.includes('post date'))) return 'chase';
+  const h = headers.map(x => x.toLowerCase().replace(/[^a-z0-9.]+/g, ' ').trim());
+  // Chase's card and checking exports use different schemas and opposite
+  // meanings for card-statement credits. Keep them distinct so a card
+  // purchase is never attached to checking (or a payment counted as income).
+  const chaseCardFields = ['transaction date', 'post date', 'description', 'category', 'type', 'amount'];
+  if (chaseCardFields.every(field => h.includes(field))) return 'chase_card';
+  if (h.includes('details') && h.includes('posting date') && h.includes('balance')) return 'chase_checking';
   if (h.some(x => x.includes('trans. date') || x.includes('trans date'))) return 'discover';
   return 'generic';
 }
 
-function parseChaseCSV(lines) {
-  // Chase: Transaction Date, Post Date, Description, Category, Type, Amount, Memo
+function isCreditCardPaymentDescription(description) {
+  const d = String(description || '').toLowerCase();
+  const paymentWord = /\b(payment|e-?payment|autopay)\b/.test(d);
+  const cardWord = /\b(credit card|discover|amex|american express|capital one|citi(?:bank|card)?|barclays?|synchrony|chase card)\b/.test(d);
+  return (paymentWord && cardWord) || /\bcredit card payment\b/.test(d) || /\bpayment thank you\b/.test(d);
+}
+
+function isDiscoverPaymentDescription(description) {
+  const d = String(description || '').toLowerCase();
+  return /\b(online|automatic|scheduled)?\s*payment\b/.test(d) ||
+    /\b(directpay|autopay)\b/.test(d) || /\bpayment (received|thank you)\b/.test(d);
+}
+
+function parseChaseCardCSV(lines) {
+  // Chase card: Transaction Date, Post Date, Description, Category, Type,
+  // Amount, Memo. Purchases are negative; payments/refunds are positive.
   const txns = [];
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
     const f = parseCSVLine(lines[i]);
-    const date = f[0]?.trim(); const desc = f[2]?.trim() || ''; const amount = parseFloat(f[5]);
+    const date = f[0]?.trim();
+    const desc = f[2]?.trim() || '';
+    const rowType = (f[4]?.trim() || '').toLowerCase();
+    const amount = parseFloat(f[5]);
     if (!date || isNaN(amount) || !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(date)) continue;
     const [m, d, y] = date.split('/');
     const iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
-    txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: amount < 0 ? 'expense' : 'income' });
+    // Chase's Type column is authoritative. Descriptions vary (for example,
+    // "AUTOMATIC PAYMENT" does not name the issuer), so description matching
+    // is only a fallback for older/variant exports.
+    if (amount > 0 && (rowType.includes('payment') || isCreditCardPaymentDescription(desc))) {
+      txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: 'transfer', category: 'Credit Card Payment' });
+    } else if (amount > 0 && (rowType.includes('return') || rowType.includes('adjustment'))) {
+      txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: 'income', category: 'Refund' });
+    } else if (amount < 0) {
+      txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: 'expense' });
+    } else {
+      txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: 'income', category: 'Refund' });
+    }
+  }
+  return txns;
+}
+
+// Retain the old public helper name for imported backups/tests, but give it
+// the correct Chase card-statement semantics.
+function parseChaseCSV(lines) { return parseChaseCardCSV(lines); }
+
+function parseChaseCheckingCSV(lines) {
+  // Chase checking: Details, Posting Date, Description, Amount, Type,
+  // Balance, Check or Slip #. Negative = money out; positive = money in.
+  const txns = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const f = parseCSVLine(lines[i]);
+    const date = f[1]?.trim();
+    const desc = f[2]?.trim() || '';
+    const amount = parseFloat(String(f[3] || '').replace(/[^0-9.\-]/g, ''));
+    if (!date || isNaN(amount) || amount === 0 || !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(date)) continue;
+    const [m, d, y] = date.split('/');
+    const iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+    const isCardPayment = amount < 0 && isCreditCardPaymentDescription(desc);
+    txns.push(isCardPayment
+      ? { date: iso, description: desc, amount: Math.abs(amount), type: 'transfer', category: 'Credit Card Payment' }
+      : { date: iso, description: desc, amount: Math.abs(amount), type: amount < 0 ? 'expense' : 'income' });
   }
   return txns;
 }
@@ -3106,8 +3317,16 @@ function parseDiscoverCSV(lines) {
     if (!date || isNaN(amount) || amount === 0 || !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(date)) continue;
     const [m, d, y] = date.split('/');
     const iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
-    // Discover: positive = expense, negative = payment/credit
-    txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: amount > 0 ? 'expense' : 'income' });
+    // Discover: positive = purchase. Negative rows can be either a payment or
+    // a merchant refund/statement credit; distinguish them by the description
+    // so a refund is not fabricated as money leaving checking.
+    if (amount > 0) {
+      txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: 'expense' });
+    } else if (isDiscoverPaymentDescription(desc)) {
+      txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: 'transfer', category: 'Credit Card Payment' });
+    } else {
+      txns.push({ date: iso, description: desc, amount: Math.abs(amount), type: 'income', category: 'Refund' });
+    }
   }
   return txns;
 }
@@ -3135,9 +3354,106 @@ function parseGenericCSV(lines) {
   return { txns, skipped };
 }
 
+function chooseBankImportAccount(format, accounts) {
+  const available = (accounts || []).filter(a => !a.deleted);
+  if (format === 'discover' || format === 'chase_card') {
+    const issuer = format === 'discover' ? 'discover' : 'chase';
+    const matches = available.filter(a => a.group === 'debt' &&
+      `${a.id || ''} ${a.label || ''}`.toLowerCase().includes(issuer));
+    // The CSV does not include a reliable last-four identifier. If multiple
+    // cards match the issuer, stop and let the user resolve the ambiguity
+    // instead of posting the whole statement to whichever account comes first.
+    return matches.length === 1 ? matches[0].id : '';
+  }
+  if (format === 'chase_checking') {
+    const matches = available.filter(a => a.group === 'checking' &&
+      `${a.id || ''} ${a.label || ''}`.toLowerCase().includes('chase'));
+    return matches.length === 1 ? matches[0].id : '';
+  }
+  return available.find(a => a.group === 'checking')?.id || '';
+}
+
+function chooseCardPaymentSource(accounts) {
+  const checking = (accounts || []).filter(a => !a.deleted && a.group === 'checking');
+  // Card statement exports identify the card, not the bank account that paid
+  // it. With more than one checking account, leave the source unassigned for
+  // the user instead of fabricating a transfer from the first account.
+  return checking.length === 1 ? checking[0].id : '';
+}
+
+function chooseCardPaymentDestination(description, accounts) {
+  const debts = (accounts || []).filter(a => !a.deleted && a.group === 'debt');
+  if (!debts.length) return '';
+  const d = String(description || '').toLowerCase();
+  const matches = debts.filter(a => {
+    const words = `${a.id || ''} ${a.label || ''}`.toLowerCase()
+      .replace(/\(owed\)/g, ' ')
+      .split(/[^a-z0-9]+/)
+      .filter(w => w.length >= 4 && !['card', 'owed', 'credit'].includes(w));
+    return words.some(w => d.includes(w));
+  });
+  // Never guess which card was paid. A statement description such as
+  // "CAPITAL ONE PAYMENT" must not silently reduce Discover just because it
+  // happens to be the first configured debt account. An unmatched payment is
+  // still imported as an excluded transfer and can be assigned in the editor.
+  return matches.length === 1 ? matches[0].id : '';
+}
+
+function bankImportKey(t) {
+  return [t.date, t.type, roundMoney(t.amount), t.account || '', t.toAccount || '', t.description || ''].join('|');
+}
+
+function legacyBankImportKey(t) {
+  return [t.date, roundMoney(t.amount), t.description || ''].join('|');
+}
+
+// Reconcile by occurrence, not a Set: two identical charges in one statement
+// are two real rows. Also repair rows produced by the old importer (all
+// Discover activity on checking; card payments treated as income/expense)
+// when the same statement is imported again, instead of duplicating them.
+function reconcileBankImports(existing, candidates, format, legacyCheckingIds) {
+  const updated = (existing || []).map(t => ({ ...t }));
+  const used = new Set();
+  const newTxns = [];
+  let migrated = 0, duplicates = 0;
+  const legacySources = new Set(Array.isArray(legacyCheckingIds)
+    ? legacyCheckingIds
+    : [legacyCheckingIds].filter(Boolean));
+
+  for (const candidate of candidates || []) {
+    let idx = updated.findIndex((t, i) => !used.has(i) && bankImportKey(t) === bankImportKey(candidate));
+    if (idx !== -1) {
+      used.add(idx);
+      duplicates++;
+      continue;
+    }
+
+    const isCardStatement = format === 'discover' || format === 'chase_card';
+    if (isCardStatement || (format === 'chase_checking' && candidate.type === 'transfer')) {
+      idx = updated.findIndex((t, i) => {
+        if (used.has(i) || legacyBankImportKey(t) !== legacyBankImportKey(candidate)) return false;
+        if (!legacySources.has(t.account) || t.toAccount) return false;
+        if (isCardStatement) {
+          return candidate.type === 'expense' ? t.type === 'expense' : t.type === 'income';
+        }
+        return t.type === 'expense';
+      });
+      if (idx !== -1) {
+        const old = updated[idx];
+        updated[idx] = { ...candidate, id: old.id, recurring: old.recurring || '' };
+        used.add(idx);
+        migrated++;
+        continue;
+      }
+    }
+
+    newTxns.push(candidate);
+  }
+  return { existing: updated, newTxns, migrated, duplicates };
+}
+
 function importBankCSV(file) {
   if (!file) return;
-  const defaultAccount = ACCOUNTS[0]?.id || '';
   const reader = new FileReader();
   reader.onerror = () => showToast('Failed to read CSV file.', 'error');
   reader.onload = e => {
@@ -3148,8 +3464,9 @@ function importBankCSV(file) {
       const headers = parseCSVLine(lines[0]);
       if (headers.length < 3) throw new Error('CSV must have at least 3 columns (date, description, amount)');
       const format  = detectCSVFormat(headers);
-      let parsed; let skippedRows = 0;
-      if (format === 'chase')         parsed = parseChaseCSV(lines);
+      let parsed; let skippedRows = 0; let futureRows = 0;
+      if (format === 'chase_card')         parsed = parseChaseCardCSV(lines);
+      else if (format === 'chase_checking') parsed = parseChaseCheckingCSV(lines);
       else if (format === 'discover') parsed = parseDiscoverCSV(lines);
       else {
         const result = parseGenericCSV(lines);
@@ -3157,31 +3474,81 @@ function importBankCSV(file) {
       }
       if (!parsed.length) throw new Error('No valid transactions found in file');
 
+      const statementAccount = chooseBankImportAccount(format, ACCOUNTS);
+      const paymentSource = chooseCardPaymentSource(ACCOUNTS);
+      if (!statementAccount) {
+        if (format === 'discover' || format === 'chase_card') {
+          const issuer = format === 'discover' ? 'Discover' : 'Chase';
+          throw new Error(`This import needs exactly one active ${issuer} debt account. Add one or resolve multiple matching accounts first.`);
+        }
+        if (format === 'chase_checking') {
+          throw new Error('This import needs exactly one active Chase checking account. Add one or resolve multiple matching accounts first.');
+        }
+        throw new Error('Add an active checking account before importing this statement.');
+      }
       const existing = loadTxns();
-      const seen = new Set(existing.map(t => `${t.date}|${t.description}|${t.amount}`));
-      const newTxns = parsed
-        .filter(t => !seen.has(`${t.date}|${t.description}|${t.amount}`))
-        .map(t => ({
-          id:          crypto.randomUUID(),
-          date:        t.date,
-          type:        t.type,
-          amount:      roundMoney(t.amount),
-          account:     defaultAccount,
-          description: t.description,
-          category:    mapBankCategory(t.description),
-          recurring:   '',
-        }));
+      const candidates = parsed
+        .filter(t => {
+          if (isISODateOnOrBefore(t.date, todayISO())) return true;
+          futureRows++;
+          return false;
+        })
+        .map(t => {
+          const isCardStatement = format === 'discover' || format === 'chase_card';
+          const isCardPayment = t.type === 'transfer' && (isCardStatement || format === 'chase_checking');
+          const paymentFrom = isCardStatement ? paymentSource : statementAccount;
+          const paymentTo = isCardStatement
+            ? statementAccount
+            : chooseCardPaymentDestination(t.description, ACCOUNTS);
+          return {
+            id:          crypto.randomUUID(),
+            date:        t.date,
+            type:        t.type,
+            amount:      roundMoney(t.amount),
+            account:     isCardPayment ? paymentFrom : statementAccount,
+            toAccount:   isCardPayment ? paymentTo : '',
+            description: t.description,
+            category:    t.category || mapBankCategory(t.description),
+            recurring:   '',
+          };
+        });
+      const isCardStatementImport = format === 'discover' || format === 'chase_card';
+      const legacySources = isCardStatementImport
+        ? ACCOUNTS.filter(a => !a.deleted && a.group === 'checking').map(a => a.id)
+        : [statementAccount];
+      const reconciled = reconcileBankImports(existing, candidates, format, legacySources);
+      const newTxns = reconciled.newTxns;
 
-      if (!newTxns.length) {
-        showToast(`No new transactions to import (${parsed.length} already exist).`, 'info');
+      if (!newTxns.length && reconciled.migrated === 0) {
+        showToast(futureRows > 0 && candidates.length === 0
+          ? `No transactions imported — ${futureRows} future-dated row${futureRows > 1 ? 's were' : ' was'} skipped.`
+          : `No new transactions to import (${reconciled.duplicates} already exist).`, 'info');
         return;
       }
-      if (!confirm(`Import ${newTxns.length} new transaction(s) from "${file.name}"?\n\nFormat detected: ${format.toUpperCase()}\n\nNew transactions will be assigned to "${ACCOUNT_LABELS[defaultAccount] || defaultAccount}".`)) return;
-      saveTxns([...existing, ...newTxns].sort((a, b) => b.date.localeCompare(a.date)));
+      const transferCount = candidates.filter(t => t.type === 'transfer').length;
+      const unassignedTransferCount = candidates.filter(t => t.type === 'transfer' && !t.toAccount).length;
+      const unassignedSourceCount = candidates.filter(t => t.type === 'transfer' && !t.account).length;
+      const paymentSourceLabel = paymentSource
+        ? `"${ACCOUNT_LABELS[paymentSource] || paymentSource}"`
+        : 'unassigned checking source';
+      const assignment = format === 'discover' || format === 'chase_card'
+        ? `Purchases/refunds: "${ACCOUNT_LABELS[statementAccount] || statementAccount}"\nPayments: ${paymentSourceLabel} → "${ACCOUNT_LABELS[statementAccount] || statementAccount}"` +
+          (unassignedSourceCount ? `\n${unassignedSourceCount} payment${unassignedSourceCount === 1 ? '' : 's'} need${unassignedSourceCount === 1 ? 's' : ''} a source account assigned after import.` : '')
+        : `Account: "${ACCOUNT_LABELS[statementAccount] || statementAccount}"` +
+          (transferCount ? `\nDetected card payments will be recorded as transfers to matching debt accounts.` : '') +
+          (unassignedTransferCount ? `\n${unassignedTransferCount} payment${unassignedTransferCount === 1 ? '' : 's'} could not be matched to a card and will remain unassigned for you to edit.` : '');
+      const changeSummary = `${newTxns.length} new transaction(s)` +
+        (reconciled.migrated ? ` and ${reconciled.migrated} older imported row(s) corrected` : '');
+      const formatLabel = ({ discover: 'Discover card', chase_card: 'Chase card', chase_checking: 'Chase checking', generic: 'Generic bank' })[format] || format;
+      if (!confirm(`Import ${changeSummary} from "${file.name}"?\n\nFormat detected: ${formatLabel}\n${assignment}`)) return;
+      saveTxns([...reconciled.existing, ...newTxns].sort((a, b) => b.date.localeCompare(a.date)));
       renderTracker();
-      showToast(`Imported ${newTxns.length} transaction(s) successfully.`, 'success');
+      showToast(`Imported ${newTxns.length} and corrected ${reconciled.migrated} transaction(s).`, 'success');
       if (skippedRows > 0) {
         setTimeout(() => showToast(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped (unrecognized date format).`, 'info'), 3800);
+      }
+      if (futureRows > 0) {
+        setTimeout(() => showToast(`${futureRows} future-dated row${futureRows > 1 ? 's were' : ' was'} skipped.`, 'info'), 5200);
       }
     } catch (err) {
       showToast('Failed to import CSV: ' + err.message, 'error');
@@ -3765,6 +4132,21 @@ function analysisPeriod(mode, offset) {
   return { start, end, label };
 }
 
+function analysisComparableEnds(curPeriod, prevPeriod, offset, todayArg) {
+  const today = todayArg ? new Date(todayArg) : new Date();
+  today.setHours(0, 0, 0, 0);
+  let curEnd = new Date(curPeriod.end);
+  let prevEnd = new Date(prevPeriod.end);
+  if (offset === 0 && today < curEnd) {
+    curEnd = today;
+    const elapsed = calendarDayCount(curPeriod.start, curEnd);
+    prevEnd = new Date(prevPeriod.start);
+    prevEnd.setDate(prevEnd.getDate() + Math.max(0, elapsed - 1));
+    if (prevEnd > prevPeriod.end) prevEnd = new Date(prevPeriod.end);
+  }
+  return { curEnd, prevEnd };
+}
+
 function anTxnsBetween(txns, start, end) {
   const s = anISO(start), e = anISO(end);
   return txns.filter(t => t.date >= s && t.date <= e);
@@ -3806,8 +4188,12 @@ function renderAnalysisTab() {
   const allTxns = loadTxns();
   const curP  = analysisPeriod(analysisState.mode, analysisState.offset);
   const prevP = analysisPeriod(analysisState.mode, analysisState.offset - 1);
-  const cur   = anTxnsBetween(allTxns, curP.start, curP.end);
-  const prev  = anTxnsBetween(allTxns, prevP.start, prevP.end);
+  // Compare a current partial period with the same number of elapsed calendar
+  // days in the previous period (Sep 1-17 vs Aug 1-17), not a partial month
+  // against a complete one.
+  const { curEnd, prevEnd } = analysisComparableEnds(curP, prevP, analysisState.offset);
+  const cur   = anTxnsBetween(allTxns, curP.start, curEnd);
+  const prev  = anTxnsBetween(allTxns, prevP.start, prevEnd);
 
   const lbl = document.getElementById('an-period-label');
   if (lbl) lbl.textContent = curP.label;
@@ -3816,12 +4202,10 @@ function renderAnalysisTab() {
   document.querySelectorAll('.an-mode').forEach(b =>
     b.classList.toggle('on', b.dataset.mode === analysisState.mode));
 
-  const snaps = loadSnapshots().slice().sort((a, b) => a.date.localeCompare(b.date));
+  const snaps = orderedSnapshots(loadSnapshots(), todayISO());
   const loans = loadLoans();
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const curSnapEnd = analysisState.offset === 0 && today < curP.end ? today : curP.end;
-  const snapPair = anSnapPair(snaps, curP.start, curSnapEnd);
-  const prevSnapPair = anSnapPair(snaps, prevP.start, prevP.end);
+  const snapPair = anSnapPair(snaps, curP.start, curEnd);
+  const prevSnapPair = anSnapPair(snaps, prevP.start, prevEnd);
 
   renderAnalysisScorecard(cur, prev, snapPair, prevSnapPair);
   renderAnalysisRhythm(cur, curP.start, curP.end);
@@ -4050,7 +4434,9 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
   const insights = [];
   const savingsDrop = savingsBalanceDrops(snapPair?.startSnap, snapPair?.endSnap, ACCOUNTS);
   const savingsComparable = snapshotPairComparable(snapPair);
-  if (!cur.length && savingsDrop.total <= 0) { el.innerHTML = anEmpty('No transactions or savings balance changes this period yet.'); return; }
+  const snapshotMovement = savingsComparable && ACCOUNTS.some(a =>
+    safeAmt((snapPair.startSnap.accounts || {})[a.id]) !== safeAmt((snapPair.endSnap.accounts || {})[a.id]));
+  if (!cur.length && !snapshotMovement) { el.innerHTML = anEmpty('No transactions or account balance changes this period yet.'); return; }
 
   // Top category share
   const catTotals = {};
@@ -4069,8 +4455,13 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
       .map(({ id, amt, priorBal, pct }) =>
         `<b>${escapeHTML(ACCOUNT_LABELS[id] || id)}</b>: ${fmt(amt)}` +
         (pct !== null ? ` (${pct}% of its ${fmt(priorBal)})` : ''));
-    insights.push({ icon: '🏧', html: `Your saved balances show <b>${fmt(savingsDrop.total)}</b> taken out of savings this ${mode} — ` +
-      parts.join(' · ') + '.' });
+    const netDrop = savingsDrop.netTotal == null ? savingsDrop.total : savingsDrop.netTotal;
+    const detail = netDrop <= 0
+      ? `Total savings did not decrease because other savings balances rose. Account decreases: `
+      : netDrop < savingsDrop.total
+        ? `Account decreases totaled <b>${fmt(savingsDrop.total)}</b>; total savings fell a net <b>${fmt(netDrop)}</b> after increases elsewhere. `
+        : `Your saved balances show <b>${fmt(savingsDrop.total)}</b> taken out of savings this ${mode} — `;
+    insights.push({ icon: netDrop <= 0 ? '↔️' : '🏧', html: detail + parts.join(' · ') + '.' });
   }
 
   // Fastest-growing category vs previous period (needs ≥ $20 baseline)
@@ -4091,8 +4482,8 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
   // Spending pace projection (only for the current, unfinished month/year)
   const today = new Date(); today.setHours(0, 0, 0, 0);
   if (analysisState.offset === 0 && mode !== 'week' && today >= start && today <= end && c.expense > 0) {
-    const daysSoFar = Math.floor((today - start) / 86400000) + 1;
-    const daysTotal = Math.floor((end - start) / 86400000) + 1;
+    const daysSoFar = calendarDayCount(start, today);
+    const daysTotal = calendarDayCount(start, end);
     if (daysSoFar >= 3 && daysSoFar < daysTotal) {
       const projected = roundMoney(c.expense / daysSoFar * daysTotal);
       insights.push({ icon: '⏱️', html: `You're on pace to spend <b>${fmt(projected)}</b> this ${mode} (${fmt(roundMoney(c.expense / daysSoFar))}/day so far).` });

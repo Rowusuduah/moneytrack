@@ -870,6 +870,8 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 .wl-ch-col   { fill: var(--green); opacity: .8; }
 .wl-ch-col.short { fill: var(--gold); }
 .wl-ch-col.over  { fill: var(--red); }
+.wl-ch-col.negative { fill: var(--red); }
+.wl-ch-zero { stroke: var(--border); stroke-width: 1; }
 .wl-ch-target { stroke: var(--gold); stroke-dasharray: 4 3; stroke-width: 1.5; }
 @media (max-width: 560px) { .wl-var-label { flex-basis: 90px; } .wl-var-delta { flex-basis: 88px; } }
 
