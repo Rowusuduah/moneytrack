@@ -657,24 +657,53 @@
              aria-labelledby="tab-things" class="sec">
 
       <h1 class="section-title">Things</h1>
-      <p class="section-sub">Track prices and usage of any item you buy regularly.</p>
+      <p class="section-sub">Track purchases and prices of any item you buy regularly.</p>
 
-      <!-- KPI Strip -->
-      <div class="summary-grid" id="things-kpis" aria-live="polite">
-        <!-- Rendered by JS -->
-      </div>
-
-      <!-- Controls + Item Grid -->
-      <div id="things-controls" class="things-controls-bar">
-        <!-- Rendered by JS -->
-      </div>
-
-      <!-- List View -->
+      <!-- List View (hidden when item detail is open) -->
       <div id="things-list-view">
-        <div id="things-add-item-form" style="display:none" class="card"></div>
-        <div id="things-item-grid" class="things-item-grid">
-          <!-- Rendered by JS -->
+
+        <!-- Within-page section nav -->
+        <nav class="things-section-nav" aria-label="Things sections">
+          <a class="things-sec-link" href="#things-sec-overview">Overview</a>
+          <a class="things-sec-link" href="#things-sec-items">Items</a>
+          <a class="things-sec-link" href="#things-sec-stores">Stores</a>
+          <a class="things-sec-link" href="#things-sec-analysis">Analysis</a>
+          <a class="things-sec-link" href="#things-sec-purchases">Purchases</a>
+          <a class="things-sec-link" href="#things-sec-review">Needs Review</a>
+        </nav>
+
+        <!-- A. Overview -->
+        <div id="things-sec-overview">
+          <div class="summary-grid" id="things-kpis" aria-live="polite"></div>
+          <div id="things-controls" class="things-controls-bar"></div>
         </div>
+
+        <!-- B. Items -->
+        <div id="things-sec-items">
+          <div id="things-add-item-form" style="display:none" class="card"></div>
+          <div id="things-item-grid" class="things-item-grid"></div>
+        </div>
+
+        <!-- C. Stores -->
+        <div id="things-sec-stores">
+          <div id="things-stores-content"></div>
+        </div>
+
+        <!-- D. Things Analysis -->
+        <div id="things-sec-analysis">
+          <div id="things-analysis-content"></div>
+        </div>
+
+        <!-- E. Purchases -->
+        <div id="things-sec-purchases">
+          <div id="things-purchases-content"></div>
+        </div>
+
+        <!-- F. Needs Review -->
+        <div id="things-sec-review">
+          <div id="things-review-content"></div>
+        </div>
+
       </div>
 
       <!-- Detail View -->

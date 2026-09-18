@@ -592,6 +592,7 @@ const KEY_GOALS          = 'moneytrack_goals';
 const KEY_THINGS_ITEMS   = 'moneytrack_things_items';
 const KEY_THINGS_ENTRIES = 'moneytrack_things_entries';
 const KEY_THINGS_CATS    = 'moneytrack_things_cats';
+const KEY_THINGS_STORES  = 'moneytrack_things_stores';
 const KEY_AFRICA         = 'moneytrack_africa';
 
 // ─── Utilities ───────────────────────────────────────────────────
@@ -987,6 +988,21 @@ function loadThingsCustomCats()  { try { return _safeParseJSON(localStorage.getI
 function saveThingsCustomCats(a) { _safeSave(KEY_THINGS_CATS, a); }
 function getThingsCats()     { return [...new Set([...DEFAULT_THINGS_CATS, ...loadThingsCustomCats()])]; }
 function getItemEntries(id)  { return loadThingsEntries().filter(e => e.itemId === id).sort((a,b) => a.date.localeCompare(b.date)); }
+function loadThingsStores()  { try { return _safeParseJSON(localStorage.getItem(KEY_THINGS_STORES), []); } catch (e) { console.error('[storage] Parse failed: things_stores', e); return []; } }
+function saveThingsStores(a) { _safeSave(KEY_THINGS_STORES, a); queueDriveSync(); }
+function getOrCreateThingsStore(name, stores) {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  const existing = stores.find(s =>
+    s.name.toLowerCase() === lower ||
+    (s.aliases || []).some(al => al.toLowerCase() === lower)
+  );
+  if (existing) return existing;
+  const store = { id: crypto.randomUUID(), name: trimmed, aliases: [], createdAt: todayISO() };
+  stores.push(store);
+  return store;
+}
 
 // ─── Account Select Population ───────────────────────────────────
 function populateAccountSelects() {
@@ -2770,9 +2786,11 @@ function renderTracker() {
 }
 
 // ─── Things Tracker State ────────────────────────────────────────
-let thingsView     = 'list';  // 'list' | 'detail'
-let thingsDetailId = null;
-let thingsFilters  = { search: '', category: '', sort: 'name' };
+let thingsView         = 'list';  // 'list' | 'detail'
+let thingsDetailId     = null;
+let thingsFilters      = { search: '', category: '', sort: 'name' };
+let thingsAnalysisState = { itemId: '', period: 'all' };
+let thingsPurchSearch  = '';
 
 // ─── Balance Trends Chart ────────────────────────────────────────
 let balTrendGroup = 'net';
@@ -3630,6 +3648,169 @@ function generateInsight(item, entries) {
   return parts.length ? parts.join(' · ') : null;
 }
 
+// ─── Things Tracker — Extended Calculations ──────────────────────
+
+/** Weighted unit price: sum(eligible item costs) / sum(eligible quantities).
+ *  Only entries with quantity > 0 AND totalPrice >= 0 are eligible. */
+function calcWeightedUnitPrice(entries) {
+  const eligible = entries.filter(e => e.quantity > 0 && e.totalPrice >= 0);
+  if (!eligible.length) return null;
+  const totalCost = eligible.reduce((s, e) => s + e.totalPrice, 0);
+  const totalQty  = eligible.reduce((s, e) => s + e.quantity, 0);
+  return totalQty > 0 ? totalCost / totalQty : null;
+}
+
+/** Returns true if the latest two comparable (quantity-bearing) entries
+ *  show a unit-price increase of at least 2%. */
+function isItemPriceRising(entries) {
+  const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+  const eligible = sorted.filter(e => e.quantity > 0 && e.totalPrice >= 0);
+  if (eligible.length < 2) return false;
+  const last = eligible[eligible.length - 1];
+  const prev = eligible[eligible.length - 2];
+  const ucLast = last.totalPrice / last.quantity;
+  const ucPrev = prev.totalPrice / prev.quantity;
+  if (ucPrev === 0) return false;
+  return (ucLast - ucPrev) / ucPrev >= 0.02;
+}
+
+function _medianOf(arr) {
+  if (!arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+/** Intervals (days) between consecutive unique purchase dates. */
+function calcPurchaseIntervals(sortedDates) {
+  const uniq = [...new Set(sortedDates)].sort();
+  const result = [];
+  for (let i = 1; i < uniq.length; i++) result.push(dateDiffDays(uniq[i - 1], uniq[i]));
+  return result;
+}
+
+/** Full timing stats for a set of entries as of `asOfISO`. */
+function calcTiming(entries, asOfISO) {
+  if (!entries.length) return null;
+  const dates = [...new Set(entries.map(e => e.date))].sort();
+  const intervals = calcPurchaseIntervals(dates);
+  const mean = intervals.length ? intervals.reduce((s, v) => s + v, 0) / intervals.length : null;
+  return {
+    firstDate:       dates[0],
+    latestDate:      dates[dates.length - 1],
+    purchaseCount:   dates.length,
+    intervalCount:   intervals.length,
+    meanInterval:    mean,
+    medianInterval:  _medianOf(intervals),
+    minInterval:     intervals.length ? Math.min(...intervals) : null,
+    maxInterval:     intervals.length ? Math.max(...intervals) : null,
+    latestInterval:  intervals.length ? intervals[intervals.length - 1] : null,
+    elapsedDays:     dates.length >= 2 ? dateDiffDays(dates[0], dates[dates.length - 1]) : 0,
+    daysSinceLatest: asOfISO ? dateDiffDays(dates[dates.length - 1], asOfISO) : null,
+  };
+}
+
+/** Group entries by YYYY-MM; compute per-month analytics.
+ *  Intervals are assigned to the month of their *ending* purchase date. */
+function calcMonthlyStats(entries) {
+  const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+  const byMonth = {};
+  for (const e of sorted) {
+    const m = e.date.slice(0, 7);
+    if (!byMonth[m]) byMonth[m] = [];
+    byMonth[m].push(e);
+  }
+  const allDates = [...new Set(sorted.map(e => e.date))].sort();
+  const intsByMonth = {};
+  for (let i = 1; i < allDates.length; i++) {
+    const m = allDates[i].slice(0, 7);
+    if (!intsByMonth[m]) intsByMonth[m] = [];
+    intsByMonth[m].push(dateDiffDays(allDates[i - 1], allDates[i]));
+  }
+  return Object.keys(byMonth).sort().map(month => {
+    const mes = byMonth[month];
+    const eligible = mes.filter(e => e.quantity > 0 && e.totalPrice >= 0);
+    const totalCost  = eligible.reduce((s, e) => s + e.totalPrice, 0);
+    const totalQty   = eligible.reduce((s, e) => s + e.quantity, 0);
+    const totalSpent = mes.reduce((s, e) => s + e.totalPrice, 0);
+    const intervals  = intsByMonth[month] || [];
+    const meanInt    = intervals.length ? intervals.reduce((s, v) => s + v, 0) / intervals.length : null;
+    const purchaseDates = [...new Set(mes.map(e => e.date))];
+    return {
+      month,
+      count:         purchaseDates.length,
+      totalSpent:    roundMoney(totalSpent),
+      totalQty:      eligible.length ? totalQty : null,
+      weightedPrice: totalQty > 0 ? totalCost / totalQty : null,
+      eligibleCount: eligible.length,
+      meanInterval:  meanInt,
+      unit:          eligible.length ? eligible[0].unit : null,
+    };
+  });
+}
+
+/** Aggregate entries by store; `storesById` maps id → store object. */
+function calcStoreStats(entries, storesById) {
+  const groups = {};
+  for (const e of entries) {
+    let key, name;
+    if (e.storeId && storesById[e.storeId]) {
+      key  = 'id:' + e.storeId;
+      name = storesById[e.storeId].name;
+    } else if (e.store) {
+      key  = 'txt:' + e.store.toLowerCase();
+      name = e.store;
+    } else {
+      key  = '__unknown__';
+      name = 'Unknown store';
+    }
+    if (!groups[key]) groups[key] = { key, name, isUnknown: key === '__unknown__', entries: [] };
+    groups[key].entries.push(e);
+  }
+  return Object.values(groups).map(g => {
+    const totalSpent = roundMoney(g.entries.reduce((s, e) => s + e.totalPrice, 0));
+    const dates = [...new Set(g.entries.map(e => e.date))].sort();
+    return {
+      key: g.key, name: g.name, isUnknown: g.isUnknown,
+      purchaseCount: dates.length,
+      entryCount:    g.entries.length,
+      totalSpent,
+      avgReceipt: dates.length ? roundMoney(totalSpent / dates.length) : null,
+    };
+  }).sort((a, b) => b.totalSpent - a.totalSpent);
+}
+
+/** Filter entries to a time period. `todayStr` is YYYY-MM-DD. */
+function _thingsFilterByPeriod(entries, period, todayStr) {
+  if (period === 'all' || !period) return entries;
+  const [yr, mo] = todayStr.split('-').map(Number);
+  let fromISO, toISO;
+  if (period === '3m') {
+    const d = new Date(yr, mo - 1 - 3, 1);
+    fromISO = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
+  } else if (period === '6m') {
+    const d = new Date(yr, mo - 1 - 6, 1);
+    fromISO = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
+  } else if (period === 'ytd') {
+    fromISO = yr + '-01-01';
+  } else if (period === 'month') {
+    fromISO = yr + '-' + String(mo).padStart(2, '0') + '-01';
+  } else if (period === 'last-month') {
+    const prevMo = mo === 1 ? 12 : mo - 1;
+    const prevYr = mo === 1 ? yr - 1 : yr;
+    fromISO = prevYr + '-' + String(prevMo).padStart(2, '0') + '-01';
+    toISO   = yr     + '-' + String(mo).padStart(2, '0') + '-01';
+  }
+  if (fromISO && toISO) return entries.filter(e => e.date >= fromISO && e.date < toISO);
+  if (fromISO)           return entries.filter(e => e.date >= fromISO && e.date <= todayStr);
+  return entries;
+}
+
+function _thingsPeriodLabel(period) {
+  return { all: 'All time', '3m': 'Last 3 months', '6m': 'Last 6 months',
+           ytd: 'Year to date', month: 'This month', 'last-month': 'Last month' }[period] || period;
+}
+
 // ─── Things Tracker — Render ──────────────────────────────────────
 function renderThingsTab() {
   if (thingsView === 'detail' && thingsDetailId) {
@@ -3643,6 +3824,10 @@ function renderThingsTab() {
     renderThingsDashboard();
     renderThingsControls();
     renderThingsItemGrid();
+    renderThingsStores();
+    renderThingsAnalysis();
+    renderThingsPurchases();
+    renderThingsNeedsReview();
   }
 }
 
@@ -3652,10 +3837,10 @@ function renderThingsDashboard() {
   const items   = loadThingsItems();
   const entries = loadThingsEntries();
   const totalSpent = roundMoney(entries.reduce((s,e) => s + (e.totalPrice || 0), 0));
+  // "Rising Prices": items where latest comparable unit price is ≥2% above previous purchase.
   const risingCount = items.filter(item => {
-    const ents = entries.filter(e => e.itemId === item.id).sort((a,b) => a.date.localeCompare(b.date));
-    const costs = ents.map(calcUnitCost).filter(c => c != null);
-    return costs.length >= 4 && thingsTrendDirection(costs) === 'up';
+    const ents = entries.filter(e => e.itemId === item.id);
+    return isItemPriceRising(ents);
   }).length;
 
   el.innerHTML = `
@@ -3901,8 +4086,8 @@ function renderThingsAddEntryForm(itemId) {
           <input type="date" id="things-entry-date" value="${todayISO()}" max="${todayISO()}">
         </div>
         <div class="form-group">
-          <label for="things-entry-qty">Quantity <span style="color:var(--red)">*</span></label>
-          <input type="number" id="things-entry-qty" min="0.01" step="any" placeholder="e.g. 50">
+          <label for="things-entry-qty">Quantity <small style="color:var(--muted)">(optional)</small></label>
+          <input type="number" id="things-entry-qty" min="0.001" step="any" placeholder="e.g. 13.8">
         </div>
         <div class="form-group">
           <label for="things-entry-unit">Unit</label>
@@ -3985,9 +4170,10 @@ function saveThingsEntry(itemId) {
   const storeEl = document.getElementById('things-entry-store');
   const notesEl = document.getElementById('things-entry-notes');
 
-  const qty   = parseFloat(qtyEl?.value);
+  const qtyStr = (qtyEl?.value || '').trim();
+  const qty   = qtyStr !== '' ? parseFloat(qtyStr) : null;
   const price = parseFloat(priceEl?.value);
-  if (!qty || qty <= 0)  { alert('Quantity must be greater than 0.'); qtyEl?.focus(); return; }
+  if (qty !== null && (isNaN(qty) || qty <= 0)) { alert('Quantity must be greater than 0 if provided.'); qtyEl?.focus(); return; }
   if (isNaN(price) || price < 0) { alert('Total price must be 0 or more.'); priceEl?.focus(); return; }
 
   const entry = {
@@ -4027,12 +4213,405 @@ function showThingsList() {
   renderThingsTab();
 }
 
+// ─── Things Tracker — Stores Block ───────────────────────────────
+function renderThingsStores() {
+  const el = document.getElementById('things-stores-content');
+  if (!el) return;
+  const entries    = loadThingsEntries();
+  const stores     = loadThingsStores();
+  const storesById = Object.fromEntries(stores.map(s => [s.id, s]));
+
+  if (!entries.length) {
+    el.innerHTML = `<div class="card"><div class="card-title things-section-head"><span class="things-section-icon">🏪</span>Stores</div><div class="empty-state"><div class="empty-icon">🏪</div><p>No purchases recorded yet.</p></div></div>`;
+    return;
+  }
+
+  const stats = calcStoreStats(entries, storesById);
+  const totalSpent   = roundMoney(stats.reduce((s, g) => s + g.totalSpent, 0));
+  const unknownGroup = stats.find(s => s.isUnknown);
+
+  const rows = stats.map(s => {
+    const pct = totalSpent > 0 ? ((s.totalSpent / totalSpent) * 100).toFixed(0) + '%' : '—';
+    return `
+      <tr>
+        <td>${s.isUnknown ? '<span class="things-unknown-badge">Unknown store</span>' : escapeHTML(s.name)}</td>
+        <td class="text-right">${s.purchaseCount}</td>
+        <td class="text-right">${fmt(s.totalSpent)}</td>
+        <td class="text-right">${s.avgReceipt != null ? fmt(s.avgReceipt) : '—'}</td>
+        <td class="text-right" style="color:var(--muted);font-size:11px">${pct}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const unknownNote = unknownGroup ? `
+    <p style="font-size:11px;color:var(--muted);margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
+      ⚠ <strong style="color:var(--orange)">${unknownGroup.purchaseCount}</strong> purchase event${unknownGroup.purchaseCount !== 1 ? 's' : ''}
+      (${fmt(unknownGroup.totalSpent)}) have no store recorded.
+      <a href="#things-sec-review" class="things-review-link">See Needs Review ↓</a>
+    </p>` : '';
+
+  el.innerHTML = `
+    <div class="card" id="things-stores-card">
+      <div class="card-title things-section-head">
+        <span class="things-section-icon">🏪</span>Stores
+        <span style="font-weight:400;font-size:11px;color:var(--muted)">${stats.length} store${stats.length !== 1 ? 's' : ''} · ${fmt(totalSpent)} total</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Store</th>
+              <th class="text-right">Purchases</th>
+              <th class="text-right">Total Spent</th>
+              <th class="text-right">Avg per Visit</th>
+              <th class="text-right">Share</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${unknownNote}
+    </div>
+  `;
+}
+
+// ─── Things Tracker — Analysis Block ─────────────────────────────
+function renderThingsAnalysis() {
+  const el = document.getElementById('things-analysis-content');
+  if (!el) return;
+  const allItems   = loadThingsItems();
+  const allEntries = loadThingsEntries();
+  const today      = todayISO();
+
+  if (!allEntries.length) {
+    el.innerHTML = `<div class="card"><div class="card-title things-section-head"><span class="things-section-icon">📊</span>Things Analysis</div><div class="empty-state"><div class="empty-icon">📊</div><p>No purchase data to analyse yet.</p></div></div>`;
+    return;
+  }
+
+  const { itemId, period } = thingsAnalysisState;
+  const scopeItem     = itemId ? allItems.find(i => i.id === itemId) : null;
+  const scopeEntries  = itemId ? allEntries.filter(e => e.itemId === itemId) : allEntries;
+  const filteredEntries = _thingsFilterByPeriod(scopeEntries, period, today);
+  const scopeLabel    = scopeItem ? escapeHTML(scopeItem.name) : 'All items';
+  const periodLabel   = _thingsPeriodLabel(period);
+
+  // Calculations
+  const stores     = loadThingsStores();
+  const storesById = Object.fromEntries(stores.map(s => [s.id, s]));
+  const monthly    = calcMonthlyStats(filteredEntries);
+  const storeStats = calcStoreStats(filteredEntries, storesById);
+  const timing     = calcTiming(scopeEntries, today); // full history scope for timing
+  const totalSpent = roundMoney(filteredEntries.reduce((s, e) => s + e.totalPrice, 0));
+  const wPrice     = scopeItem ? calcWeightedUnitPrice(filteredEntries) : null;
+  const unitDisplay = scopeItem ? (filteredEntries.find(e => e.unit)?.unit || null) : null;
+
+  // Item select
+  const itemOptions = allItems.map(it =>
+    `<option value="${escapeHTML(it.id)}"${it.id === itemId ? ' selected' : ''}>${escapeHTML(it.name)}</option>`
+  ).join('');
+  const periodOptions = [
+    ['all', 'All time'], ['month', 'This month'], ['last-month', 'Last month'],
+    ['3m', 'Last 3 months'], ['6m', 'Last 6 months'], ['ytd', 'Year to date'],
+  ].map(([v, l]) => `<option value="${v}"${v === period ? ' selected' : ''}>${l}</option>`).join('');
+
+  // Monthly table (most recent first)
+  const monthRows = [...monthly].reverse().map(m => {
+    const [y, mo] = m.month.split('-');
+    const monthName = new Date(+y, +mo - 1, 1).toLocaleString('en-US', { month: 'short' }) + ' ' + y;
+    const qtyCell = m.totalQty != null
+      ? m.totalQty.toFixed(3) + (m.unit ? ' ' + escapeHTML(m.unit) : '')
+      : '<span style="color:var(--muted)">—</span>';
+    const priceCell = m.weightedPrice != null
+      ? fmt(m.weightedPrice) + (m.unit ? '<small style="color:var(--muted)">/' + escapeHTML(m.unit) + '</small>' : '')
+      : '<span style="color:var(--muted)">—</span>';
+    const intCell = m.meanInterval != null
+      ? m.meanInterval.toFixed(1) + ' d'
+      : '<span style="color:var(--muted)">—</span>';
+    return `
+      <tr>
+        <td>${escapeHTML(monthName)}</td>
+        <td class="text-right">${m.count}</td>
+        <td class="text-right">${fmt(m.totalSpent)}</td>
+        <td class="text-right">${qtyCell}</td>
+        <td class="text-right">${priceCell}</td>
+        <td class="text-right">${intCell}</td>
+      </tr>
+    `;
+  }).join('');
+
+  // Store breakdown
+  const storeRows = storeStats.map(s => {
+    const pct = totalSpent > 0 ? ((s.totalSpent / totalSpent) * 100).toFixed(0) + '%' : '—';
+    return `
+      <tr>
+        <td>${s.isUnknown ? '<span class="things-unknown-badge">Unknown</span>' : escapeHTML(s.name)}</td>
+        <td class="text-right">${s.purchaseCount}</td>
+        <td class="text-right">${fmt(s.totalSpent)}</td>
+        <td class="text-right" style="color:var(--muted);font-size:11px">${pct}</td>
+      </tr>
+    `;
+  }).join('');
+
+  // Timing block (full scope history)
+  const timingBlock = timing && timing.intervalCount > 0 ? `
+    <div class="things-timing-grid">
+      <div class="things-timing-card"><div class="things-timing-label">First purchase</div><div class="things-timing-value">${fmtDate(timing.firstDate)}</div></div>
+      <div class="things-timing-card"><div class="things-timing-label">Latest purchase</div><div class="things-timing-value">${fmtDate(timing.latestDate)}</div></div>
+      <div class="things-timing-card"><div class="things-timing-label">History span</div><div class="things-timing-value">${timing.elapsedDays} days</div></div>
+      <div class="things-timing-card"><div class="things-timing-label">Purchase events</div><div class="things-timing-value">${timing.purchaseCount}</div></div>
+      ${timing.meanInterval != null ? `<div class="things-timing-card"><div class="things-timing-label">Mean interval</div><div class="things-timing-value">${timing.meanInterval.toFixed(1)} d</div></div>` : ''}
+      ${timing.medianInterval != null ? `<div class="things-timing-card"><div class="things-timing-label">Median interval</div><div class="things-timing-value">${timing.medianInterval.toFixed(1)} d</div></div>` : ''}
+      ${timing.minInterval != null ? `<div class="things-timing-card"><div class="things-timing-label">Shortest</div><div class="things-timing-value">${timing.minInterval} d</div></div>` : ''}
+      ${timing.maxInterval != null ? `<div class="things-timing-card"><div class="things-timing-label">Longest</div><div class="things-timing-value">${timing.maxInterval} d</div></div>` : ''}
+      ${timing.latestInterval != null ? `<div class="things-timing-card"><div class="things-timing-label">Latest interval</div><div class="things-timing-value">${timing.latestInterval} d</div></div>` : ''}
+      ${timing.daysSinceLatest != null ? `<div class="things-timing-card"><div class="things-timing-label">Days since latest</div><div class="things-timing-value">${timing.daysSinceLatest} day${timing.daysSinceLatest !== 1 ? 's' : ''}</div></div>` : ''}
+    </div>
+    <p style="font-size:11px;color:var(--muted);margin-top:6px">Timing uses full history for the selected item scope, independent of the period filter.</p>
+  ` : (timing && timing.purchaseCount === 1 ? `<p style="color:var(--muted);font-size:12px;padding:8px 0">Only 1 purchase — no intervals to calculate yet.</p>` : '');
+
+  el.innerHTML = `
+    <div class="card" id="things-analysis-card">
+      <div class="card-title things-section-head">
+        <span class="things-section-icon">📊</span>Things Analysis
+      </div>
+
+      <div class="things-analysis-filters">
+        <div class="things-filter-group">
+          <label class="things-filter-label" for="th-an-item">Item</label>
+          <select id="th-an-item" class="things-filter-select">
+            <option value="">All items</option>
+            ${itemOptions}
+          </select>
+        </div>
+        <div class="things-filter-group">
+          <label class="things-filter-label" for="th-an-period">Period</label>
+          <select id="th-an-period" class="things-filter-select">
+            ${periodOptions}
+          </select>
+        </div>
+        <div style="align-self:flex-end;font-size:11px;color:var(--muted)">
+          <strong>${scopeLabel}</strong> · ${escapeHTML(periodLabel)}
+        </div>
+      </div>
+
+      <div class="ratios-grid" style="margin:14px 0 4px">
+        <div class="ratio-card">
+          <div class="ratio-label">Total Spent</div>
+          <div class="ratio-value">${fmt(totalSpent)}</div>
+          <div class="ratio-sub">${escapeHTML(periodLabel)}</div>
+        </div>
+        <div class="ratio-card">
+          <div class="ratio-label">Entries</div>
+          <div class="ratio-value">${filteredEntries.length}</div>
+          <div class="ratio-sub">in selected period</div>
+        </div>
+        ${wPrice != null ? `
+        <div class="ratio-card">
+          <div class="ratio-label">Weighted Price</div>
+          <div class="ratio-value">${fmt(wPrice)}${unitDisplay ? `<small style="color:var(--muted);font-size:12px">/${escapeHTML(unitDisplay)}</small>` : ''}</div>
+          <div class="ratio-sub">sum÷sum (eligible only)</div>
+        </div>` : ''}
+        ${timing && timing.daysSinceLatest != null ? `
+        <div class="ratio-card">
+          <div class="ratio-label">Days Since Latest</div>
+          <div class="ratio-value">${timing.daysSinceLatest}</div>
+          <div class="ratio-sub">as of today</div>
+        </div>` : ''}
+      </div>
+
+      ${monthly.length ? `
+      <div class="things-analysis-sub-title">Monthly Summary</div>
+      <div style="overflow-x:auto;margin-bottom:4px">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th class="text-right">Purchases</th>
+              <th class="text-right">Spending</th>
+              <th class="text-right">Quantity</th>
+              <th class="text-right">Weighted Price</th>
+              <th class="text-right">Mean Interval</th>
+            </tr>
+          </thead>
+          <tbody>${monthRows}</tbody>
+        </table>
+      </div>` : `
+      <div class="empty-state" style="padding:16px 0"><p>No entries in selected period.</p></div>`}
+
+      ${storeStats.length ? `
+      <div class="things-analysis-sub-title">By Store</div>
+      <div style="overflow-x:auto;margin-bottom:4px">
+        <table class="history-table">
+          <thead><tr>
+            <th>Store</th>
+            <th class="text-right">Purchases</th>
+            <th class="text-right">Spent</th>
+            <th class="text-right">Share</th>
+          </tr></thead>
+          <tbody>${storeRows}</tbody>
+        </table>
+      </div>` : ''}
+
+      ${timing ? `
+      <div class="things-analysis-sub-title">Purchase Timing <small style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(full history, ${scopeLabel})</small></div>
+      ${timingBlock}` : ''}
+    </div>
+  `;
+}
+
+// ─── Things Tracker — Purchases Block ────────────────────────────
+function renderThingsPurchases() {
+  const el = document.getElementById('things-purchases-content');
+  if (!el) return;
+  const items   = loadThingsItems();
+  const entries = loadThingsEntries();
+
+  if (!entries.length) {
+    el.innerHTML = `<div class="card"><div class="card-title things-section-head"><span class="things-section-icon">📋</span>Purchases</div><div class="empty-state"><div class="empty-icon">📋</div><p>No purchases logged yet.</p></div></div>`;
+    return;
+  }
+
+  const itemMap = Object.fromEntries(items.map(i => [i.id, i]));
+  const sorted  = [...entries].sort((a, b) => b.date.localeCompare(a.date));
+  const search  = thingsPurchSearch.toLowerCase();
+  const filtered = search ? sorted.filter(e => {
+    const item = itemMap[e.itemId];
+    return (item?.name || '').toLowerCase().includes(search) ||
+           (e.store || '').toLowerCase().includes(search) ||
+           (e.notes || '').toLowerCase().includes(search);
+  }) : sorted;
+
+  const shown = filtered.slice(0, 200);
+  const moreNote = filtered.length > 200
+    ? `<p style="font-size:11px;color:var(--muted);padding:6px 0">Showing 200 of ${filtered.length}. Narrow with the search to see more.</p>` : '';
+
+  const rows = shown.map(e => {
+    const item = itemMap[e.itemId];
+    const uc   = calcUnitCost(e);
+    return `
+      <tr>
+        <td>${fmtDate(e.date)}</td>
+        <td>${item ? `<a class="things-item-link" data-things-detail="${escapeHTML(e.itemId)}">${escapeHTML(item.name)}</a>` : '<span style="color:var(--muted)">?</span>'}</td>
+        <td>${e.store ? escapeHTML(e.store) : '<span class="things-unknown-badge">unknown</span>'}</td>
+        <td class="text-right">${e.quantity > 0 ? e.quantity + ' ' + escapeHTML(e.unit || '') : '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
+        <td class="text-right">${fmt(e.totalPrice)}</td>
+        <td class="text-right">${uc != null ? fmt(uc) + (e.unit ? '<small style="color:var(--muted)">/' + escapeHTML(e.unit) + '</small>' : '') : '<span style="color:var(--muted)">—</span>'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="card" id="things-purchases-card">
+      <div class="card-title things-section-head">
+        <span class="things-section-icon">📋</span>Purchases
+        <span style="font-weight:400;font-size:11px;color:var(--muted)">${entries.length} total</span>
+      </div>
+      <input type="text" id="th-purch-search" class="txn-search acct-input"
+             placeholder="Search by item, store, or notes…" aria-label="Search purchases"
+             value="${escapeHTML(search)}" style="margin-bottom:10px">
+      ${moreNote}
+      <div style="overflow-x:auto">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Date</th><th>Item</th><th>Store</th>
+              <th class="text-right">Qty / Unit</th>
+              <th class="text-right">Total</th>
+              <th class="text-right">Unit Cost</th>
+            </tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:16px">No matching purchases.</td></tr>'}</tbody>
+        </table>
+      </div>
+      ${moreNote}
+    </div>
+  `;
+}
+
+// ─── Things Tracker — Needs Review Block ─────────────────────────
+function renderThingsNeedsReview() {
+  const el = document.getElementById('things-review-content');
+  if (!el) return;
+  const items   = loadThingsItems();
+  const entries = loadThingsEntries();
+  const itemMap = Object.fromEntries(items.map(i => [i.id, i]));
+
+  const noStore = entries.filter(e => !e.store && !e.storeId);
+  const noQty   = entries.filter(e => !e.quantity || e.quantity <= 0);
+  const issueCount = new Set([...noStore.map(e => e.id), ...noQty.map(e => e.id)]).size;
+
+  if (!issueCount) {
+    el.innerHTML = `
+      <div class="card" id="things-review-card">
+        <div class="card-title things-section-head">
+          <span class="things-section-icon">✅</span>Needs Review
+          <span style="font-weight:400;font-size:11px;color:var(--green)">All clear</span>
+        </div>
+        <p style="color:var(--muted);font-size:13px;padding:6px 0">No incomplete records found.</p>
+      </div>`;
+    return;
+  }
+
+  const noStoreTotal = roundMoney(noStore.reduce((s, e) => s + e.totalPrice, 0));
+  const noStoreRows = noStore.slice(0, 100).map(e => {
+    const item = itemMap[e.itemId];
+    return `
+      <tr>
+        <td>${fmtDate(e.date)}</td>
+        <td>${item ? `<a class="things-item-link" data-things-detail="${escapeHTML(e.itemId)}">${escapeHTML(item.name)}</a>` : '—'}</td>
+        <td class="text-right">${fmt(e.totalPrice)}</td>
+        <td style="color:var(--muted);font-size:11px">${e.notes ? escapeHTML(e.notes) : '—'}</td>
+      </tr>`;
+  }).join('');
+
+  const noQtyTotal = roundMoney(noQty.reduce((s, e) => s + e.totalPrice, 0));
+
+  el.innerHTML = `
+    <div class="card" id="things-review-card">
+      <div class="card-title things-section-head">
+        <span class="things-section-icon">⚠️</span>Needs Review
+        <span style="font-weight:400;font-size:11px;color:var(--orange)">${issueCount} issue${issueCount !== 1 ? 's' : ''}</span>
+      </div>
+
+      ${noStore.length ? `
+      <div class="things-review-section">
+        <div class="things-review-section-title">
+          Missing store
+          <span class="things-review-count">${noStore.length} purchase${noStore.length !== 1 ? 's' : ''} · ${fmt(noStoreTotal)}</span>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:8px">
+          Spending is counted but shown as <strong>Unknown store</strong> in store totals.
+        </p>
+        <div style="overflow-x:auto">
+          <table class="history-table">
+            <thead><tr><th>Date</th><th>Item</th><th class="text-right">Amount</th><th>Notes</th></tr></thead>
+            <tbody>${noStoreRows}</tbody>
+          </table>
+        </div>
+        ${noStore.length > 100 ? `<p style="font-size:11px;color:var(--muted);padding:6px 0">Showing 100 of ${noStore.length}.</p>` : ''}
+      </div>` : ''}
+
+      ${noQty.length ? `
+      <div class="things-review-section">
+        <div class="things-review-section-title">
+          Amount-only (no quantity)
+          <span class="things-review-count">${noQty.length} entr${noQty.length !== 1 ? 'ies' : 'y'} · ${fmt(noQtyTotal)}</span>
+        </div>
+        <p style="font-size:12px;color:var(--muted)">
+          Spending is included in all totals. These entries are excluded from unit-price and quantity analysis.
+          This is expected for amount-only purchases — it's listed here for visibility only.
+        </p>
+      </div>` : ''}
+    </div>
+  `;
+}
+
 // ─── JSON Backup / Restore ───────────────────────────────────────
 const BACKUP_KEYS = [
   KEY_SNAPSHOTS, KEY_TXNS, KEY_BUDGETS,
   KEY_DEBT_META, KEY_LOANS, KEY_ACCOUNTS, KEY_THEME,
   KEY_BILLS, KEY_GOALS,
-  KEY_THINGS_ITEMS, KEY_THINGS_ENTRIES, KEY_THINGS_CATS,
+  KEY_THINGS_ITEMS, KEY_THINGS_ENTRIES, KEY_THINGS_CATS, KEY_THINGS_STORES,
   KEY_AFRICA,
 ];
 
@@ -4887,6 +5466,25 @@ function bindEvents() {
         thingsFilters.category = document.getElementById('things-cat-filter')?.value || '';
         thingsFilters.sort     = document.getElementById('things-sort')?.value || 'name';
         renderThingsItemGrid();
+        return;
+      }
+      if (e.target.id === 'th-an-item') {
+        thingsAnalysisState.itemId = e.target.value || '';
+        renderThingsAnalysis();
+        return;
+      }
+      if (e.target.id === 'th-an-period') {
+        thingsAnalysisState.period = e.target.value || 'all';
+        renderThingsAnalysis();
+        return;
+      }
+      if (e.target.id === 'th-purch-search') {
+        thingsPurchSearch = e.target.value || '';
+        renderThingsPurchases();
+        // Refocus the search input (re-render replaced the element)
+        const newEl = document.getElementById('th-purch-search');
+        if (newEl) { newEl.focus(); newEl.setSelectionRange(thingsPurchSearch.length, thingsPurchSearch.length); }
+        return;
       }
     });
   }
