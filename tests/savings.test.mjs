@@ -85,17 +85,105 @@ test('savings balance increases are not reported as withdrawals', () => {
   assert.deepEqual(drop.byAccount, {});
 });
 
-test('latest savings drop uses the newest two snapshots and skips missing balances', () => {
+test('selected month uses its first snapshot through its latest snapshot everywhere', () => {
+  const accounts = [{ id: 'usf_savings_1', group: 'savings' }];
+  const snapshots = [
+    { date: '2026-08-31', accounts: { usf_savings_1: 10107.75 } },
+    { date: '2026-09-01', accounts: { usf_savings_1: 8050 } },
+    { date: '2026-09-14', accounts: { usf_savings_1: 7789.34 } },
+    { date: '2026-09-17', accounts: { usf_savings_1: 7709.34 } },
+  ];
+  const result = A.savingsBalanceDropForRange(
+    snapshots, accounts, '2026-09-01', '2026-09-30',
+  );
+  assert.equal(result.total, 340.66);
+  assert.equal(result.priorSnap.date, '2026-09-01');
+  assert.equal(result.currentSnap.date, '2026-09-17');
+  assert.equal(A.savingsWithdrawalPct(result.total, result.priorSnap.accounts.usf_savings_1), 4.2);
+  A.refreshAccountConfig();
+  assert.equal(A.savingsDropText(result),
+    'Taken from savings — USF Savings 1: $340.66 (4.2% of its $8,050.00) (Sep 1, 2026 → Sep 17, 2026; not counted in Money Out)');
+  const analysisPair = A.anSnapPair(snapshots, new Date(2026, 8, 1), new Date(2026, 8, 30));
+  assert.equal(analysisPair.startSnap.date, '2026-09-01');
+  assert.equal(analysisPair.endSnap.date, '2026-09-17');
+  assert.notEqual(result.total, 80);       // newest-two-snapshots bug
+  assert.notEqual(result.total, 2398.41);  // prior-month-baseline bug
+});
+
+test('selected period skips missing balances and sorts snapshots', () => {
   const accounts = [{ id: 's1', group: 'savings' }, { id: 's2', group: 'savings' }];
-  const result = A.latestSavingsBalanceDrop([
+  const result = A.savingsBalanceDropForRange([
     { date: '2026-08-01', accounts: { s1: 2000, s2: 500 } },
     { date: '2026-09-17', accounts: { s1: 800 } },
     { date: '2026-09-01', accounts: { s1: 1000, s2: 500 } },
-  ], accounts);
+  ], accounts, '2026-09-01', '2026-09-30');
   assert.equal(result.total, 200);
   assert.deepEqual(result.byAccount, { s1: 200 });
   assert.equal(result.priorSnap.date, '2026-09-01');
   assert.equal(result.currentSnap.date, '2026-09-17');
+});
+
+test('a period with one snapshot does not cross the period boundary', () => {
+  const pair = A.snapshotRangePair([
+    { date: '2026-08-31', accounts: { s1: 900 } },
+    { date: '2026-09-17', accounts: { s1: 800 } },
+  ], '2026-09-01', '2026-09-30');
+  assert.equal(pair.startSnap.date, '2026-09-17');
+  assert.equal(pair.endSnap.date, '2026-09-17');
+  assert.equal(A.snapshotPairComparable(pair), false);
+  assert.deepEqual(A.snapshotRangePair([], '2026-09-01', '2026-09-30'), { startSnap: null, endSnap: null });
+});
+
+test('duplicate imported snapshots on one date are not treated as two dated balances', () => {
+  const pair = A.snapshotRangePair([
+    { date: '2026-09-17', accounts: { s1: 900 } },
+    { date: '2026-09-17', accounts: { s1: 800 } },
+  ], '2026-09-01', '2026-09-30');
+  assert.equal(pair.startSnap.accounts.s1, 800);
+  assert.equal(pair.endSnap.accounts.s1, 800);
+  assert.equal(A.snapshotPairComparable(pair), false);
+});
+
+test('Tracker date ranges match its selected filters', () => {
+  const today = new Date(2026, 8, 17);
+  assert.deepEqual(A.trackerDateRange({ period: 'month' }, today),
+    { startISO: '2026-09-01', endISO: '2026-09-17' });
+  assert.deepEqual(A.trackerDateRange({ period: 'last7' }, today),
+    { startISO: '2026-09-11', endISO: '2026-09-17' });
+  assert.deepEqual(A.trackerDateRange({ period: 'custom', from: '2026-09-04', to: '2026-09-14' }, today),
+    { startISO: '2026-09-04', endISO: '2026-09-14' });
+  assert.deepEqual(A.trackerDateRange({ period: 'all' }, today),
+    { startISO: null, endISO: null });
+});
+
+test('Tracker and Analysis render the same snapshot-derived withdrawal without a transaction', () => {
+  A.refreshAccountConfig();
+  const startSnap = { date: '2026-09-01', accounts: { usf_savings_1: 8050 } };
+  const endSnap = { date: '2026-09-17', accounts: { usf_savings_1: 7709.34 } };
+  const pair = { startSnap, endSnap };
+  const elements = {};
+  const makeEl = () => ({
+    textContent: '', innerHTML: '', style: {},
+    classList: { add() {}, toggle() {} },
+  });
+  ['stat-in','stat-out','stat-net','stat-rate','stat-left','stat-savings-spend',
+    'stat-carryover','an-scorecard','an-insights'].forEach(id => { elements[id] = makeEl(); });
+  const previousGet = g.document.getElementById;
+  g.document.getElementById = id => elements[id] || null;
+  try {
+    A.renderTrackerSummary([], pair);
+    assert.match(elements['stat-savings-spend'].textContent, /\$340\.66/);
+    assert.match(elements['stat-savings-spend'].textContent, /4\.2% of its \$8,050\.00/);
+    assert.equal(elements['stat-out'].textContent, '$0.00');
+
+    A.renderAnalysisScorecard([], [], pair, { startSnap: null, endSnap: null });
+    assert.match(elements['an-scorecard'].innerHTML, /\$340\.66/);
+    A.renderAnalysisInsights([], [], new Date(2026, 8, 1), new Date(2026, 8, 30), pair);
+    assert.match(elements['an-insights'].innerHTML, /\$340\.66/);
+    assert.match(elements['an-insights'].innerHTML, /4\.2% of its \$8,050\.00/);
+  } finally {
+    g.document.getElementById = previousGet;
+  }
 });
 
 // ── 3-month savings rate: pooled, not average-of-ratios ──────────────────────

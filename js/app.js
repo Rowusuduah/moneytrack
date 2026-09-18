@@ -673,13 +673,33 @@ function savingsBalanceDrops(priorSnap, currentSnap, accounts) {
   return { total, byAccount };
 }
 
-// Compare the newest saved balances with the immediately preceding snapshot.
-function latestSavingsBalanceDrop(snaps, accounts) {
-  const ordered = (snaps || []).filter(s => s && s.date && s.accounts)
-    .slice().sort((a, b) => a.date.localeCompare(b.date));
-  if (ordered.length < 2) return { total: 0, byAccount: {}, priorSnap: null, currentSnap: null };
-  const currentSnap = ordered[ordered.length - 1];
-  const priorSnap = ordered[ordered.length - 2];
+// Pick the balances that define a selected period. When there are two or more
+// snapshots inside the period, compare the FIRST one with the LAST one. This is
+// what "this month" means to the user: September's opening saved balance versus
+// the newest September balance, not merely the newest two updates and not the
+// prior month's closing balance. A period needs two distinct saved dates; never
+// cross its boundary silently when only one in-period snapshot exists.
+function snapshotRangePair(snaps, startISO, endISO) {
+  const byDate = new Map();
+  (snaps || []).filter(s => s && s.date && s.accounts)
+    .slice().sort((a, b) => a.date.localeCompare(b.date))
+    .forEach(s => byDate.set(s.date, s));
+  const ordered = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const inRange = ordered.filter(s => (!startISO || s.date >= startISO) && (!endISO || s.date <= endISO));
+  if (!inRange.length) return { startSnap: null, endSnap: null };
+  const endSnap = inRange[inRange.length - 1];
+  return { startSnap: inRange[0], endSnap };
+}
+
+function snapshotPairComparable(pair) {
+  return !!(pair?.startSnap && pair?.endSnap && pair.startSnap.date !== pair.endSnap.date);
+}
+
+function savingsBalanceDropForRange(snaps, accounts, startISO, endISO) {
+  const { startSnap, endSnap } = snapshotRangePair(snaps, startISO, endISO);
+  if (!startSnap || !endSnap) return { total: 0, byAccount: {}, priorSnap: null, currentSnap: null };
+  const priorSnap = startSnap;
+  const currentSnap = endSnap;
   return { ...savingsBalanceDrops(priorSnap, currentSnap, accounts), priorSnap, currentSnap };
 }
 
@@ -1046,9 +1066,15 @@ function renderAccountKPIs() {
 function renderAccountSavingsChange() {
   const el = document.getElementById('account-savings-change');
   if (!el) return;
-  const drop = latestSavingsBalanceDrop(loadSnapshots(), ACCOUNTS);
+  const period = analysisPeriod('month', 0);
+  const drop = savingsBalanceDropForRange(loadSnapshots(), ACCOUNTS, anISO(period.start), todayISO());
   if (!drop.currentSnap) {
     el.textContent = 'Save balances on two different dates to calculate money taken from savings automatically.';
+    el.classList.add('muted');
+    return;
+  }
+  if (drop.priorSnap.date === drop.currentSnap.date) {
+    el.textContent = 'Save balances on another date this month to calculate money taken from savings.';
     el.classList.add('muted');
     return;
   }
@@ -2141,6 +2167,26 @@ function exportSnapshots() {
 // Filter state
 const filters = { period: 'month', account: 'all', type: 'all', from: '', to: '', search: '' };
 
+function trackerDateRange(state, todayArg) {
+  const today = todayArg ? new Date(todayArg) : new Date();
+  today.setHours(0, 0, 0, 0);
+  const period = state?.period || 'all';
+  if (period === 'all') return { startISO: null, endISO: null };
+  if (period === 'custom') return { startISO: state.from || null, endISO: state.to || null };
+
+  let start = new Date(today), end = new Date(today);
+  if (period === 'week') {
+    start.setDate(today.getDate() - today.getDay());
+  } else if (period === 'month') {
+    start = new Date(today.getFullYear(), today.getMonth(), 1);
+  } else if (period === 'last30') {
+    start.setDate(today.getDate() - 29);
+  } else if (period === 'last7') {
+    start.setDate(today.getDate() - 6);
+  }
+  return { startISO: anISO(start), endISO: anISO(end) };
+}
+
 function getFilteredTxns() {
   const all = loadTxns();
   const today = new Date(); today.setHours(0,0,0,0);
@@ -2186,7 +2232,7 @@ function getFilteredTxns() {
   });
 }
 
-function renderTrackerSummary(txns) {
+function renderTrackerSummary(txns, snapPair) {
   let income = 0, expense = 0, carryover = 0;
   txns.forEach(t => {
     // Transfers excluded — internal moves don't affect income or expense totals
@@ -2225,9 +2271,16 @@ function renderTrackerSummary(txns) {
     carEl.classList.toggle('hidden', carryover <= 0);
   }
   if (savEl) {
-    const drop = latestSavingsBalanceDrop(loadSnapshots(), ACCOUNTS);
-    savEl.textContent = drop.total > 0 ? savingsDropText(drop) : '';
-    savEl.classList.toggle('hidden', drop.total <= 0);
+    const priorSnap = snapPair?.startSnap || null;
+    const currentSnap = snapPair?.endSnap || null;
+    const values = savingsBalanceDrops(priorSnap, currentSnap, ACCOUNTS);
+    const drop = { ...values, priorSnap, currentSnap };
+    const comparable = snapshotPairComparable(snapPair);
+    savEl.textContent = comparable && drop.total > 0
+      ? savingsDropText(drop)
+      : (!comparable && currentSnap ? 'Savings change unavailable — save balances on two different dates in this period.' : '');
+    savEl.classList.toggle('muted', !comparable);
+    savEl.classList.toggle('hidden', comparable ? drop.total <= 0 : !currentSnap);
   }
   if (netEl) {
     netEl.textContent = fmt(net);
@@ -2579,7 +2632,9 @@ function renderRecurringCard() {
 
 function renderTracker() {
   const txns = getFilteredTxns();
-  renderTrackerSummary(txns);
+  const range = trackerDateRange(filters);
+  const snapPair = snapshotRangePair(loadSnapshots(), range.startISO, range.endISO);
+  renderTrackerSummary(txns, snapPair);
   renderCategoryBreakdown(txns);
   renderDailyChart(txns);
   renderAccountBreakdown(txns);
@@ -3763,7 +3818,9 @@ function renderAnalysisTab() {
 
   const snaps = loadSnapshots().slice().sort((a, b) => a.date.localeCompare(b.date));
   const loans = loadLoans();
-  const snapPair = anSnapPair(snaps, curP.start, curP.end);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const curSnapEnd = analysisState.offset === 0 && today < curP.end ? today : curP.end;
+  const snapPair = anSnapPair(snaps, curP.start, curSnapEnd);
   const prevSnapPair = anSnapPair(snaps, prevP.start, prevP.end);
 
   renderAnalysisScorecard(cur, prev, snapPair, prevSnapPair);
@@ -3774,14 +3831,10 @@ function renderAnalysisTab() {
   renderAnalysisInsights(cur, prev, curP.start, curP.end, snapPair);
 }
 
-// Latest snapshot at/just before the period start, and latest within the period.
+// First and latest snapshots within the selected period; never cross the period
+// boundary for the baseline.
 function anSnapPair(snaps, start, end) {
-  const s = anISO(start), e = anISO(end);
-  const before = snaps.filter(x => x.date < s);
-  const inP    = snaps.filter(x => x.date >= s && x.date <= e);
-  const startSnap = before.length ? before[before.length - 1] : (inP.length ? inP[0] : null);
-  const endSnap   = inP.length ? inP[inP.length - 1] : startSnap;
-  return { startSnap, endSnap };
+  return snapshotRangePair(snaps, anISO(start), anISO(end));
 }
 
 // Sum a snapshot's balances by account group.
@@ -3797,6 +3850,8 @@ function renderAnalysisScorecard(cur, prev, snapPair, prevSnapPair) {
   const c = anPeriodTotals(cur), p = anPeriodTotals(prev);
   const savingsDrop = savingsBalanceDrops(snapPair?.startSnap, snapPair?.endSnap, ACCOUNTS).total;
   const prevSavingsDrop = savingsBalanceDrops(prevSnapPair?.startSnap, prevSnapPair?.endSnap, ACCOUNTS).total;
+  const savingsComparable = snapshotPairComparable(snapPair);
+  const prevSavingsComparable = snapshotPairComparable(prevSnapPair);
   const rateDelta = (c.rate !== null && p.rate !== null) ? c.rate - p.rate : null;
   const cards = [
     { label: 'Money In',  value: fmt(c.income),  color: 'var(--green)',
@@ -3809,9 +3864,11 @@ function renderAnalysisScorecard(cur, prev, snapPair, prevSnapPair) {
     { label: 'Saved',     value: c.rate === null ? '—' : c.rate + '%',
       color: c.rate === null ? 'var(--muted)' : c.rate >= 20 ? 'var(--green)' : c.rate >= 0 ? 'var(--gold)' : 'var(--red)',
       badge: anDeltaBadge(rateDelta, true, ' pts') },
-    { label: 'From Savings', value: fmt(savingsDrop),
-      color: savingsDrop > 0 ? 'var(--gold)' : 'var(--muted)',
-      badge: anDeltaBadge(anPctDelta(savingsDrop, prevSavingsDrop), false) },
+    { label: 'From Savings', value: savingsComparable ? fmt(savingsDrop) : '—',
+      color: savingsComparable && savingsDrop > 0 ? 'var(--gold)' : 'var(--muted)',
+      badge: savingsComparable && prevSavingsComparable
+        ? anDeltaBadge(anPctDelta(savingsDrop, prevSavingsDrop), false)
+        : '<span class="an-delta muted">—</span>' },
   ];
   el.innerHTML = cards.map(k => `<div class="ts-card">
     <div class="ts-label">${k.label}</div>
@@ -3992,6 +4049,7 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
   const expenses = anRealExpenses(cur);
   const insights = [];
   const savingsDrop = savingsBalanceDrops(snapPair?.startSnap, snapPair?.endSnap, ACCOUNTS);
+  const savingsComparable = snapshotPairComparable(snapPair);
   if (!cur.length && savingsDrop.total <= 0) { el.innerHTML = anEmpty('No transactions or savings balance changes this period yet.'); return; }
 
   // Top category share
@@ -4005,7 +4063,7 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
 
   // Savings withdrawals come directly from snapshot balance decreases, so the
   // insight updates automatically whenever current balances are saved.
-  if (savingsDrop.total > 0) {
+  if (savingsComparable && savingsDrop.total > 0) {
     const startB = (snapPair.startSnap && snapPair.startSnap.accounts) || {};
     const parts = savingsWithdrawalParts(savingsDrop.byAccount, id => safeAmt(startB[id]))
       .map(({ id, amt, priorBal, pct }) =>

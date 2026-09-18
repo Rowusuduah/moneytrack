@@ -84,11 +84,15 @@ asset move, not spending. The Tracker's carryover line counts only
 group is `savings` (`isSavingsSpend()`) is not monthly spending, so it is
 excluded from Money Out / Net / budgets / savings rate and still appears in the
 Spending-by-account breakdown, which is account-oriented on purpose. The user
-records current account balances as snapshots; therefore the Tracker's "Taken
-from savings" line and Analysis "From Savings" figure must be derived
-automatically from savings-account decreases between snapshots, not from
-manually logged savings expense transactions. The percentage denominator is
-the earlier snapshot balance for that account.
+records current account balances as snapshots; therefore the Accounts and
+Tracker "Taken from savings" lines and Analysis "From Savings" figure must be
+derived automatically from savings-account decreases, not from manually logged
+savings expense transactions. For a selected week/month/year/custom period,
+compare the first saved snapshot inside that period with its latest saved
+snapshot. Do not cross the period boundary when fewer than two dated snapshots
+exist; show the calculation as unavailable instead. The percentage denominator
+is that starting snapshot balance. Current periods end today, so future-dated
+snapshots cannot become the comparison endpoint.
 
 ### Data layer
 - `loadSnapshots()` / `saveSnapshots()` — account balance snapshots

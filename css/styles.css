@@ -301,6 +301,7 @@ select option { background: var(--surf2); color: var(--text); }
 .ts-value { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .ts-note { margin: -8px 0 16px; font-size: 12px; color: var(--green); }
 .ts-note--carry { color: var(--blue); }
+.ts-note.muted { color: var(--muted); }
 .savings-change-note { margin: -6px 0 16px; font-size: 12px; color: var(--green); }
 .savings-change-note.muted { color: var(--muted); }
 
