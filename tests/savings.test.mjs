@@ -31,17 +31,16 @@ test('savingsWithdrawalPct divides by the pre-withdrawal balance, not the deplet
   assert.equal(A.savingsWithdrawalPct(500, -5), null);
 });
 
-test('Tracker base = current snapshot balance + amount withdrawn this period', () => {
-  // Snapshot shows $500 now because $500 was withdrawn from a $1000 account.
-  const parts = A.savingsWithdrawalParts({ usf_savings_1: 500 }, (_id, amt) => 500 + amt);
+test('withdrawal parts use the supplied prior snapshot balance', () => {
+  const parts = A.savingsWithdrawalParts({ usf_savings_1: 500 }, () => 1000);
   assert.equal(parts.length, 1);
   assert.equal(parts[0].amt, 500);
   assert.equal(parts[0].priorBal, 1000);
-  assert.equal(parts[0].pct, 50);      // regression guard: must not be 100
+  assert.equal(parts[0].pct, 50);
   assert.notEqual(parts[0].pct, 100);
 });
 
-test('Analysis base = start-of-period snapshot balance', () => {
+test('withdrawal parts support account-specific prior balances', () => {
   // Start balance $2000, withdrew $500 during the period => 25%.
   const startB = { usf_savings_1: 2000 };
   const parts = A.savingsWithdrawalParts({ usf_savings_1: 500 }, (id) => startB[id]);
@@ -63,6 +62,40 @@ test('each account gets its own pre-withdrawal base', () => {
 test('rounds the share to one decimal place', () => {
   // 333 / 1000 = 33.3%
   assert.equal(A.savingsWithdrawalPct(333, 1000), 33.3);
+});
+
+test('savings balance drop is derived from consecutive snapshots', () => {
+  const accounts = [{ id: 'usf_savings_1', group: 'savings' }];
+  const prior = { date: '2026-09-01', accounts: { usf_savings_1: 8050 } };
+  const current = { date: '2026-09-17', accounts: { usf_savings_1: 7709.34 } };
+  const drop = A.savingsBalanceDrops(prior, current, accounts);
+  assert.equal(drop.total, 340.66);
+  assert.deepEqual(drop.byAccount, { usf_savings_1: 340.66 });
+  assert.equal(A.savingsWithdrawalPct(drop.total, prior.accounts.usf_savings_1), 4.2);
+});
+
+test('savings balance increases are not reported as withdrawals', () => {
+  const accounts = [{ id: 's1', group: 'savings' }, { id: 'checking', group: 'checking' }];
+  const drop = A.savingsBalanceDrops(
+    { accounts: { s1: 1000, checking: 500 } },
+    { accounts: { s1: 1200, checking: 100 } },
+    accounts,
+  );
+  assert.equal(drop.total, 0);
+  assert.deepEqual(drop.byAccount, {});
+});
+
+test('latest savings drop uses the newest two snapshots and skips missing balances', () => {
+  const accounts = [{ id: 's1', group: 'savings' }, { id: 's2', group: 'savings' }];
+  const result = A.latestSavingsBalanceDrop([
+    { date: '2026-08-01', accounts: { s1: 2000, s2: 500 } },
+    { date: '2026-09-17', accounts: { s1: 800 } },
+    { date: '2026-09-01', accounts: { s1: 1000, s2: 500 } },
+  ], accounts);
+  assert.equal(result.total, 200);
+  assert.deepEqual(result.byAccount, { s1: 200 });
+  assert.equal(result.priorSnap.date, '2026-09-01');
+  assert.equal(result.currentSnap.date, '2026-09-17');
 });
 
 // ── 3-month savings rate: pooled, not average-of-ratios ──────────────────────

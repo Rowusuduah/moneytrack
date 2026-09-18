@@ -80,11 +80,15 @@ monthly carryover and returned personal loans out of income totals: neither is
 new earnings, so counting them would inflate yearly income. The matching
 'Loan Given' category is in `NON_EXPENSE_CATS` — lending money out is an
 asset move, not spending. The Tracker's carryover line counts only
-'Money from Last Month', never other excluded income. An expense whose account group is
-`savings` (`isSavingsSpend()`) is a savings withdrawal, not monthly spending —
-excluded from Money Out / Net / budgets / savings rate / Analysis, and shown
-as its own "Spent from savings" line on the Tracker summary. It still appears
-in the Spending-by-account breakdown, which is account-oriented on purpose.
+'Money from Last Month', never other excluded income. An expense whose account
+group is `savings` (`isSavingsSpend()`) is not monthly spending, so it is
+excluded from Money Out / Net / budgets / savings rate and still appears in the
+Spending-by-account breakdown, which is account-oriented on purpose. The user
+records current account balances as snapshots; therefore the Tracker's "Taken
+from savings" line and Analysis "From Savings" figure must be derived
+automatically from savings-account decreases between snapshots, not from
+manually logged savings expense transactions. The percentage denominator is
+the earlier snapshot balance for that account.
 
 ### Data layer
 - `loadSnapshots()` / `saveSnapshots()` — account balance snapshots
