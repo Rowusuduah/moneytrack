@@ -683,6 +683,18 @@ function latestSavingsBalanceDrop(snaps, accounts) {
   return { ...savingsBalanceDrops(priorSnap, currentSnap, accounts), priorSnap, currentSnap };
 }
 
+function savingsDropText(drop) {
+  if (!drop?.priorSnap || !drop?.currentSnap) return '';
+  const dates = `${fmtDate(drop.priorSnap.date)} → ${fmtDate(drop.currentSnap.date)}`;
+  if (drop.total <= 0) return `No savings decrease between ${dates}.`;
+  const priorB = drop.priorSnap.accounts || {};
+  const parts = savingsWithdrawalParts(drop.byAccount, id => safeAmt(priorB[id]))
+    .map(({ id, amt, priorBal, pct }) =>
+      `${ACCOUNT_LABELS[id] || id}: ${fmt(amt)}` +
+      (pct !== null ? ` (${pct}% of its ${fmt(priorBal)})` : ''));
+  return `Taken from savings — ${parts.join(' · ')} (${dates}; not counted in Money Out)`;
+}
+
 function fmt(n) {
   if (!isFinite(n)) return '$0.00';
   const abs = Math.abs(n);
@@ -1029,6 +1041,19 @@ function renderAccountKPIs() {
       ? `Last updated: ${fmtDate(snap.date)}${snap.note ? ' · ' + snap.note : ''}`
       : 'No snapshots yet — enter your balances below.';
   }
+}
+
+function renderAccountSavingsChange() {
+  const el = document.getElementById('account-savings-change');
+  if (!el) return;
+  const drop = latestSavingsBalanceDrop(loadSnapshots(), ACCOUNTS);
+  if (!drop.currentSnap) {
+    el.textContent = 'Save balances on two different dates to calculate money taken from savings automatically.';
+    el.classList.add('muted');
+    return;
+  }
+  el.textContent = savingsDropText(drop);
+  el.classList.toggle('muted', drop.total <= 0);
 }
 
 function renderNWTrend() {
@@ -1999,6 +2024,7 @@ function deleteGoal(id) {
 
 function renderAccountsTab() {
   renderAccountKPIs();
+  renderAccountSavingsChange();
   renderNWTrend();
   renderBalanceTrends();
   renderFinancialRatios();
@@ -2199,18 +2225,8 @@ function renderTrackerSummary(txns) {
     carEl.classList.toggle('hidden', carryover <= 0);
   }
   if (savEl) {
-    let savTxt = '';
     const drop = latestSavingsBalanceDrop(loadSnapshots(), ACCOUNTS);
-    if (drop.total > 0) {
-      const priorB = drop.priorSnap.accounts || {};
-      const parts = savingsWithdrawalParts(drop.byAccount, id => safeAmt(priorB[id]))
-        .map(({ id, amt, priorBal, pct }) =>
-          `${ACCOUNT_LABELS[id] || id}: ${fmt(amt)}` +
-          (pct !== null ? ` (${pct}% of its ${fmt(priorBal)})` : ''));
-      savTxt = `Taken from savings — ${parts.join(' · ')} ` +
-        `(${fmtDate(drop.priorSnap.date)} → ${fmtDate(drop.currentSnap.date)}; not counted in Money Out)`;
-    }
-    savEl.textContent = savTxt;
+    savEl.textContent = drop.total > 0 ? savingsDropText(drop) : '';
     savEl.classList.toggle('hidden', drop.total <= 0);
   }
   if (netEl) {
