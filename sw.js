@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'moneytrack-v35';
+const CACHE_NAME = 'moneytrack-v36';
 const APP_SHELL  = [
   './index.html',
   './css/styles.css',
@@ -9,6 +9,10 @@ const APP_SHELL  = [
   './js/africa.js',
   './plan.html',
   './icons/icon.svg',
+  './icons/apple-touch-icon.png',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/icon-maskable-512.png',
   './manifest.json',
 ];
 
