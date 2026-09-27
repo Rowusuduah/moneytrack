@@ -1102,14 +1102,13 @@ function renderAccountKPIs() {
     ? `${outstandingLoans.length} loan${outstandingLoans.length > 1 ? 's' : ''} outstanding`
     : 'No outstanding loans';
 
-  // Net Worth leads as the "note" (kpi-hero); the other groups form the ledger below it.
   const kpis = [
-    { label: 'Net worth',   value: net,        color: net >= 0 ? 'var(--text)' : 'var(--red)',          sub: 'As of latest balance snapshot', hero: true },
     { label: 'Checking',    value: checking,   color: 'var(--blue)',                                    sub: lbl('checking') },
     { label: 'Savings',     value: savings,    color: 'var(--green)',                                   sub: lbl('savings') },
     { label: 'Investments', value: investment, color: 'var(--purple)',                                  sub: lbl('investment') },
-    { label: 'Loans out',   value: loansOut,   color: 'var(--teal)',                                    sub: loansSub },
-    { label: 'Debt owed',   value: -debt,      color: 'var(--red)',                                     sub: lbl('debt') },
+    { label: 'Loans Out',   value: loansOut,   color: 'var(--teal)',                                    sub: loansSub },
+    { label: 'Debt Owed',   value: -debt,      color: 'var(--red)',                                     sub: lbl('debt') },
+    { label: 'Net Worth',   value: net,        color: net >= 0 ? 'var(--green)' : 'var(--red)',         sub: 'As of latest balance snapshot' },
   ];
 
   if (typeof afLoad === 'function') {
@@ -1130,7 +1129,7 @@ function renderAccountKPIs() {
   }
 
   el.innerHTML = kpis.map(k => `
-    <div class="kpi${k.hero ? ' kpi-hero' : ''}">
+    <div class="kpi">
       <div class="kpi-label">${escapeHTML(k.label)}</div>
       <div class="kpi-value" style="color:${k.color}">${k.text ?? fmt(k.value)}</div>
       <div class="kpi-sub">${escapeHTML(k.sub)}</div>
