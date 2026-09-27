@@ -7,6 +7,7 @@ const APP_SHELL  = [
   './js/app.js',
   './js/wealth.js',
   './js/africa.js',
+  './js/email-login.js',
   './plan.html',
   './icons/icon.svg',
   './icons/apple-touch-icon.png',
