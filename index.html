@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="MoneyTrack — Personal account balance and transaction tracker">
-  <meta name="theme-color" content="#4ade80">
+  <meta name="theme-color" content="#070B14">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -54,31 +54,31 @@
     <div role="tablist" aria-label="Sections">
       <button role="tab" id="tab-accounts" aria-selected="true"
               aria-controls="sec-accounts" tabindex="0">
-        Accounts
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h15V9H5a2 2 0 0 1-2-2z"/><path d="M16 14.5h.01"/></svg><span>Accounts</span>
       </button>
       <button role="tab" id="tab-tracker" aria-selected="false"
               aria-controls="sec-tracker" tabindex="-1">
-        Tracker
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg><span>Tracker</span>
       </button>
       <button role="tab" id="tab-analysis" aria-selected="false"
               aria-controls="sec-analysis" tabindex="-1">
-        Analysis
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg><span>Analysis</span>
       </button>
       <button role="tab" id="tab-things" aria-selected="false"
               aria-controls="sec-things" tabindex="-1">
-        Things
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg><span>Things</span>
       </button>
       <button role="tab" id="tab-wealth" aria-selected="false"
               aria-controls="sec-wealth" tabindex="-1">
-        Wealth
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span>Wealth</span>
       </button>
       <button role="tab" id="tab-africa" aria-selected="false"
               aria-controls="sec-africa" tabindex="-1">
-        Africa
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg><span>Africa</span>
       </button>
     </div>
 
-    <button id="theme-toggle" aria-label="Toggle light/dark theme">☀️</button>
+    <button id="theme-toggle" aria-label="Toggle light/dark theme"></button>
   </nav>
 
   <!-- Main -->
@@ -96,6 +96,12 @@
         <!-- Rendered by JS -->
       </div>
       <div class="savings-change-note" id="account-savings-change" aria-live="polite"></div>
+
+      <!-- Quick actions -->
+      <div class="quick-actions">
+        <button type="button" class="btn btn-green" id="qa-update-balances">Update balances</button>
+        <button type="button" class="btn btn-ghost" id="qa-add-txn"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Add transaction</button>
+      </div>
 
       <!-- Financial Ratios -->
       <div class="card" id="financial-ratios-card">
@@ -124,7 +130,7 @@
       </div>
 
       <!-- Update Balances Form -->
-      <div class="card">
+      <div class="card" id="update-balances-card" data-collapse="update-balances" data-default="closed">
         <div class="card-title">Update Balances
           <span style="font-weight:400;font-size:11px;color:var(--muted)">Enter current balances</span>
         </div>
@@ -166,7 +172,7 @@
       </div>
 
       <!-- Backup / Restore -->
-      <div class="card">
+      <div class="card" data-collapse="backup" data-default="closed">
         <div class="card-title">Backup &amp; Restore
           <span style="font-weight:400;font-size:11px;color:var(--muted)">Export or import all data</span>
         </div>
@@ -192,7 +198,7 @@
       </div>
 
       <!-- Bill Reminders -->
-      <div class="card" id="bills-card">
+      <div class="card" id="bills-card" data-collapse="bills" data-default="open">
         <div class="card-title">Bill Reminders
           <span style="font-weight:400;font-size:11px;color:var(--muted)">Upcoming recurring bills</span>
         </div>
@@ -206,7 +212,7 @@
       </div>
 
       <!-- Savings Goals -->
-      <div class="card" id="goals-card">
+      <div class="card" id="goals-card" data-collapse="goals" data-default="open">
         <div class="card-title">Savings Goals
           <span style="font-weight:400;font-size:11px;color:var(--muted)">Track progress toward targets</span>
         </div>
@@ -220,7 +226,7 @@
       </div>
 
       <!-- Balance History -->
-      <div class="card">
+      <div class="card" data-collapse="balance-history" data-default="closed">
         <div class="card-title">Balance History
           <div class="flex gap-8">
             <button class="btn btn-ghost btn-sm" id="export-snapshots">Export CSV</button>
@@ -233,7 +239,7 @@
       </div>
 
       <!-- Debt Details -->
-      <div class="card" id="debt-details-card">
+      <div class="card" id="debt-details-card" data-collapse="debt-details" data-default="closed">
         <div class="card-title">Debt Details
           <span style="font-weight:400;font-size:11px;color:var(--muted)">APR · interest cost · payoff</span>
         </div>
@@ -243,7 +249,7 @@
       </div>
 
       <!-- Loans Out -->
-      <div class="card">
+      <div class="card" data-collapse="loans-out" data-default="closed">
         <div class="card-title">Loans Out
           <span style="font-weight:400;font-size:11px;color:var(--muted)">Money people owe you</span>
         </div>
@@ -253,7 +259,7 @@
       </div>
 
       <!-- Manage Accounts -->
-      <div class="card" id="manage-accounts-card">
+      <div class="card" id="manage-accounts-card" data-collapse="manage-accounts" data-default="closed">
         <div class="card-title">Manage Accounts
           <span style="font-weight:400;font-size:11px;color:var(--muted)">Add or remove custom accounts</span>
         </div>
@@ -276,7 +282,7 @@
       <p class="section-sub">Log income and expenses, analyse spending patterns.</p>
 
       <!-- Add / Edit Transaction Form -->
-      <div class="card">
+      <div class="card" id="txn-form-card" data-collapse="add-transaction" data-default="closed">
         <div class="card-title" id="txn-form-title">
           <span id="txn-form-label">Add Transaction</span>
           <button class="btn btn-ghost btn-sm hidden" id="cancel-edit">Cancel Edit</button>
@@ -566,7 +572,7 @@
       </div>
 
       <!-- Monthly Budgets -->
-      <div class="card">
+      <div class="card" data-collapse="budgets" data-default="closed">
         <div class="card-title">Monthly Budgets
           <span style="font-weight:400;font-size:11px;color:var(--muted)">Set spending limits per category</span>
         </div>

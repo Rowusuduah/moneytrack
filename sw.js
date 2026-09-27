@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'moneytrack-v36';
+const CACHE_NAME = 'moneytrack-v39';
 const APP_SHELL  = [
   './index.html',
   './css/styles.css',
@@ -14,6 +14,7 @@ const APP_SHELL  = [
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
   './manifest.json',
+  './fonts/Geist-latin.woff2',
 ];
 
 // Pre-cache the app shell on install
