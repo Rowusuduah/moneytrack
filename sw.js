@@ -15,6 +15,7 @@ const APP_SHELL  = [
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
   './manifest.json',
+  './fonts/Geist-latin.woff2',
 ];
 
 // Pre-cache the app shell on install

@@ -535,11 +535,12 @@ function showToast(message, type = 'info') {
   if (!el) {
     el = document.createElement('div');
     el.id = 'toast-msg';
-    el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:8px;font-size:.88rem;z-index:9999;transition:opacity .3s;pointer-events:none;';
+    // Position, shape and colours live in styles.css (#toast-msg): above the
+    // phone tab bar, readable in both themes.
+    el.setAttribute('role', 'status');
     document.body.appendChild(el);
   }
-  el.style.background = type === 'error' ? '#ef4444' : type === 'success' ? '#22c55e' : '#3b82f6';
-  el.style.color = '#fff';
+  el.className = 'toast-' + (type === 'error' ? 'error' : type === 'success' ? 'success' : 'info');
   el.textContent = message;
   el.style.opacity = '1';
   clearTimeout(el._timer);
@@ -1044,6 +1045,32 @@ function getLatestSnapshot(asOfISO) {
   return snaps[snaps.length - 1];
 }
 
+// Summary list: an icon and tone per kind, plain-English labels.
+const KPI_KIND = {
+  'Checking':      { icon: 'card',   tone: 'blue' },
+  'Savings':       { icon: 'save',   tone: 'green' },
+  'Investments':   { icon: 'trend',  tone: 'violet' },
+  'Loans Out':     { icon: 'hand',   tone: 'teal' },
+  'Debt Owed':     { icon: 'owed',   tone: 'red' },
+  'Africa (est.)': { icon: 'globe',  tone: 'gold' },
+  'Global Total':  { icon: 'sum',    tone: 'plain' },
+};
+const KPI_LABEL = { 'Loans Out': 'Loans out', 'Debt Owed': 'Card owed', 'Global Total': 'Global total' };
+const KPI_ICON = (() => {
+  const svg = d => `<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  return {
+    card:  svg('<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18"/>'),
+    save:  svg('<path d="M12 3v18M17 7.5c0-1.9-2.2-3-5-3s-5 1.1-5 3 2.2 2.6 5 3 5 1.1 5 3-2.2 3-5 3-5-1.1-5-3"/>'),
+    trend: svg('<path d="M4 17l5-5 4 4 7-8"/>'),
+    hand:  svg('<path d="M7 17h10M13 13l4 4-4 4"/><path d="M5 7h10"/>'),
+    owed:  svg('<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 15h3"/>'),
+    globe: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
+    sum:   svg('<path d="M18 5H6l6 7-6 7h12"/>'),
+    up:    svg('<path d="M7 17L17 7M9 7h8v8"/>'),
+    down:  svg('<path d="M7 7l10 10M17 9v8H9"/>'),
+  };
+})();
+
 function renderAccountKPIs() {
   const snap = getLatestSnapshot();
   const el = document.getElementById('account-kpis');
@@ -1095,12 +1122,46 @@ function renderAccountKPIs() {
     }
   }
 
-  el.innerHTML = kpis.map(k => `
-    <div class="kpi">
-      <div class="kpi-label">${escapeHTML(k.label)}</div>
-      <div class="kpi-value" style="color:${k.color}">${k.text ?? fmt(k.value)}</div>
-      <div class="kpi-sub">${escapeHTML(k.sub)}</div>
-    </div>`).join('');
+  // Net worth first and big; everything else as one calm list. Colour means
+  // something here and nothing else: red for money owed, green/red for the
+  // change since the previous snapshot (the same figure Financial Health shows).
+  const snapsNW = orderedSnapshots(loadSnapshots(), todayISO());
+  let nwDelta = null, nwPrevDate = null;
+  if (snapsNW.length >= 2) {
+    const lastSnap = snapsNW[snapsNW.length - 1], prevSnap = snapsNW[snapsNW.length - 2];
+    nwDelta = calcNetWorth(lastSnap, allLoansKPI, lastSnap.date) - calcNetWorth(prevSnap, allLoansKPI, prevSnap.date);
+    nwPrevDate = prevSnap.date;
+  }
+  const withCents = v => {
+    const s = fmt(v), i = s.lastIndexOf('.');
+    return i > 0 ? `${escapeHTML(s.slice(0, i))}<span class="kpi-cents">${escapeHTML(s.slice(i))}</span>` : escapeHTML(s);
+  };
+  const netKpi = kpis.find(k => k.label === 'Net Worth');
+  const delta = nwDelta === null ? '' : `
+      <div class="kpi-delta-row">
+        <span class="kpi-delta ${nwDelta >= 0 ? 'up' : 'down'}">${KPI_ICON[nwDelta >= 0 ? 'up' : 'down']}${escapeHTML(fmt(Math.abs(nwDelta)))}</span>
+        <span class="kpi-delta-note">since your ${escapeHTML(fmtDate(nwPrevDate))} update</span>
+      </div>`;
+  const hero = `
+    <div class="kpi kpi-hero">
+      <div class="kpi-label">Net worth</div>
+      <div class="kpi-value${net < 0 ? ' neg' : ''}">${withCents(netKpi.value)}</div>${delta}
+      <div class="kpi-sub">${escapeHTML(netKpi.sub)}</div>
+    </div>`;
+  const rows = kpis.filter(k => k !== netKpi).map(k => {
+    const kind = KPI_KIND[k.label] || { icon: 'sum', tone: 'plain' };
+    const neg = k.text == null && k.value < 0;
+    return `
+      <div class="kpi-row">
+        <span class="kpi-ico tone-${kind.tone}">${KPI_ICON[kind.icon]}</span>
+        <div class="kpi-text">
+          <div class="kpi-label">${escapeHTML(KPI_LABEL[k.label] || k.label)}</div>
+          <div class="kpi-sub">${escapeHTML(k.sub)}</div>
+        </div>
+        <div class="kpi-value${neg ? ' neg' : ''}">${k.text ?? fmt(k.value)}</div>
+      </div>`;
+  }).join('');
+  el.innerHTML = hero + `<div class="kpi-list">${rows}</div>`;
 
   const dateEl = document.getElementById('accounts-date');
   if (dateEl) {
@@ -1149,11 +1210,12 @@ function renderNWTrend() {
 
   chart.innerHTML = last12.map((s, i) => {
     const v = nwVals[i];
-    const h = Math.max(2, Math.round(Math.abs(v) / maxV * 56));
-    const color = v >= 0 ? 'var(--green)' : 'var(--red)';
+    const h = Math.max(2, Math.round(Math.abs(v) / maxV * 72));
+    // Quiet bars, the latest in the accent; a negative month stays red.
+    const color = v < 0 ? 'var(--red)' : i === last12.length - 1 ? 'var(--accent)' : 'var(--surf3)';
     const shortDate = s.date.slice(5); // MM-DD
     return `<div class="nw-bar-col">
-      <div class="nw-bar" style="height:${h}px;background:${color};opacity:.75" title="${fmt(v)} · ${fmtDate(s.date)}"></div>
+      <div class="nw-bar" style="height:${h}px;background:${color}" title="${fmt(v)} · ${fmtDate(s.date)}"></div>
       <div class="nw-lbl">${escapeHTML(shortDate)}</div>
     </div>`;
   }).join('');
@@ -2966,6 +3028,7 @@ function editTransaction(id) {
   if (savBtn) savBtn.textContent = 'Save Changes';
   document.getElementById('cancel-edit')?.classList.remove('hidden');
 
+  expandCardOf(document.getElementById('txn-date'));
   document.getElementById('txn-date')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -5171,18 +5234,71 @@ function switchTab(targetTabId) {
 }
 
 // ─── Theme Toggle ────────────────────────────────────────────────
+// Until you pick one, the theme follows the phone's light/dark setting.
 function initTheme() {
-  const saved = localStorage.getItem(KEY_THEME);
-  if (saved === 'light') document.body.classList.add('light');
+  let saved = null;
+  try { saved = localStorage.getItem(KEY_THEME); } catch {}
+  const light = saved ? saved === 'light'
+    : !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+  document.body.classList.toggle('light', light);
   updateThemeBtn();
 }
 
+const THEME_SVG = {
+  moon: '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
+  sun:  '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+};
+
 function updateThemeBtn() {
+  const isLight = document.body.classList.contains('light');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isLight ? '#F4F3EF' : '#070B14');
   const btn = document.getElementById('theme-toggle');
   if (!btn) return;
-  const isLight = document.body.classList.contains('light');
-  btn.textContent = isLight ? '🌙' : '☀️';
+  btn.innerHTML = isLight ? THEME_SVG.moon : THEME_SVG.sun;
   btn.setAttribute('aria-label', isLight ? 'Switch to dark mode' : 'Switch to light mode');
+}
+
+// ─── Folding cards ───────────────────────────────────────────────
+// Secondary cards (backups, history, loans, account setup…) fold to their
+// title so the page opens on what matters. Nothing is removed: a fold button
+// opens them, the app remembers each card's state, and any code path that
+// needs a field inside (edit a transaction, edit a snapshot) unfolds it first.
+const KEY_FOLDED = 'moneytrack_ui_folded';
+function loadFolded() {
+  try { return JSON.parse(localStorage.getItem(KEY_FOLDED) || '{}') || {}; } catch { return {}; }
+}
+function setCardFolded(card, folded, remember = true) {
+  card.classList.toggle('collapsed', folded);
+  const btn = card.querySelector(':scope > .card-title > .card-fold');
+  if (btn) btn.setAttribute('aria-expanded', folded ? 'false' : 'true');
+  if (!remember) return;
+  const f = loadFolded();
+  f[card.dataset.collapse] = folded;
+  try { localStorage.setItem(KEY_FOLDED, JSON.stringify(f)); } catch {}
+}
+function initFoldingCards() {
+  const saved = loadFolded();
+  document.querySelectorAll('.card[data-collapse]').forEach(card => {
+    const title = card.querySelector(':scope > .card-title');
+    if (!title || title._fold) return;
+    title._fold = true;
+    const name = (title.firstChild && title.firstChild.nodeType === 3 ? title.firstChild.textContent : title.textContent).trim().split('\n')[0];
+    title.insertAdjacentHTML('beforeend',
+      `<button type="button" class="card-fold" aria-label="Show or hide ${escapeHTML(name)}">` +
+      '<svg class="card-chev" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>');
+    const key = card.dataset.collapse;
+    setCardFolded(card, key in saved ? !!saved[key] : card.dataset.default === 'closed', false);
+    title.addEventListener('click', e => {
+      // Buttons inside a title (Export CSV, Cancel Edit…) keep their own job.
+      const hit = e.target.closest('button, a, input, select, label, textarea');
+      if (hit && !hit.classList.contains('card-fold')) return;
+      setCardFolded(card, !card.classList.contains('collapsed'));
+    });
+  });
+}
+function expandCardOf(el) {
+  const card = el && el.closest ? el.closest('.card[data-collapse]') : null;
+  if (card && card.classList.contains('collapsed')) setCardFolded(card, false);
 }
 
 function toggleTheme() {
@@ -5226,6 +5342,24 @@ function bindEvents() {
 
   // Theme toggle
   document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
+
+  // Folding cards + the two quick actions under the Accounts summary
+  initFoldingCards();
+  document.getElementById('qa-update-balances')?.addEventListener('click', () => {
+    const card = document.getElementById('update-balances-card');
+    if (!card) return;
+    setCardFolded(card, false);
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  document.getElementById('qa-add-txn')?.addEventListener('click', () => {
+    switchTab('tab-tracker');
+    const card = document.getElementById('txn-form-card');
+    if (card) setCardFolded(card, false);
+    requestAnimationFrame(() => {
+      card?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('txn-date')?.focus({ preventScroll: true });
+    });
+  });
 
   // Analysis tab period controls
   const anControls = document.querySelector('#sec-analysis .an-controls');
@@ -5282,6 +5416,7 @@ function bindEvents() {
         const dateEl = document.getElementById('snapshot-date');
         if (dateEl) dateEl.value = snap.date;
         prefillSnapshotForm(snap.date);
+        expandCardOf(document.getElementById('snapshot-date'));
         document.getElementById('snapshot-date')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
       }
@@ -5597,6 +5732,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('pagehide', () => { flushDriveSync(); });
 
 document.addEventListener('DOMContentLoaded', async () => {
+  initTheme();   // the lock screen follows the theme too
   EmailLogin.onLockedElsewhere(() => location.reload());
   document.getElementById('lock-btn')?.addEventListener('click', () => {
     if (!confirm(LOCK_CONFIRM)) return;
