@@ -46,11 +46,14 @@ Month-view only. The Tracker Budget card's "Fill from Wealth plan" button
 merges `wlPlanBudgets()` (bill-level amounts, first category per bill) into
 the saved budgets — it never clears categories the plan doesn't price.
 
-### Local screen lock
-Each browser creates its own password verifier in `moneytrack_auth_record_v2`;
-no verifier belongs in public source. This gate is not encryption: localStorage
-data and exported or Drive backups need separate protection. A fresh browser
-prompts for a new password and leaves existing finance data untouched.
+### Lock screen (email code)
+`js/email-login.js` is synced from the private `login-codes` repo; never edit it here, re-run
+`node scripts/sync-client.mjs` there. "Email me a code" sends a 6-digit code to the owner's
+Gmail; a correct code stores a signed 30-day pass in `rowusuduah_login_pass_v1`, shared with
+Deadline Tracker and FE Civil on the same origin (Lock in any of them locks all three). A
+recovery key (kept offline by the owner; only its SHA-256 is in code) unlocks one page load.
+This gate is not encryption: localStorage data and exported or Drive backups need separate
+protection.
 
 ### Africa investments
 The Africa tab (`js/africa.js`, storage key `moneytrack_africa`) tracks

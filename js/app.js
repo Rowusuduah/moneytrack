@@ -529,39 +529,6 @@ function autoSyncDrive() {
   setTimeout(tryAuto, 800);
 }
 
-// ─── Auth ────────────────────────────────────────────────────────
-// Each browser stores its own salted password verifier. This is a screen lock,
-// not encryption of localStorage or Google Drive backups.
-const AUTH_RECORD_KEY = 'moneytrack_auth_record_v2';
-const SESSION_KEY = 'moneytrack_auth_session_v2';
-
-function getAuthRecord() {
-  try {
-    const value = JSON.parse(localStorage.getItem(AUTH_RECORD_KEY) || 'null');
-    return value && value.version === 2 && /^[a-f0-9]{32}$/.test(value.salt) &&
-      /^[a-f0-9]{64}$/.test(value.hash) ? value : null;
-  } catch { return null; }
-}
-
-function authHex(bytes) {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function authDerive(password, saltHex) {
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password),
-    'PBKDF2', false, ['deriveBits']);
-  const salt = new Uint8Array(saltHex.match(/../g).map(x => parseInt(x, 16)));
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256',
-    salt, iterations: 150000 }, key, 256);
-  return authHex(new Uint8Array(bits));
-}
-
-// Rate-limiting (sessionStorage so it resets when the tab closes)
-let _loginAttempts    = parseInt(sessionStorage.getItem('mt_login_attempts') || '0', 10);
-let _loginLockoutUntil = parseInt(sessionStorage.getItem('mt_login_lockout') || '0', 10);
-const LOGIN_MAX_ATTEMPTS  = 5;
-const LOGIN_BASE_DELAY_MS = 1000;
-
 // ─── Toast Notifications ─────────────────────────────────────────
 function showToast(message, type = 'info') {
   let el = document.getElementById('toast-msg');
@@ -5598,102 +5565,16 @@ function init() {
   autoSyncDrive();
 }
 
-// ─── Auth Gate ───────────────────────────────────────────────────
-function isAuthenticated() {
-  return !!getAuthRecord() && sessionStorage.getItem(SESSION_KEY) === '1';
-}
+// ─── Lock screen (email code) ────────────────────────────────────
+// js/email-login.js (shared with Deadline Tracker and FE Civil) emails a 6-digit code to the
+// owner's Gmail and stores a signed 30-day pass. This is a screen lock, not encryption of
+// localStorage or of exported / Google Drive backups.
+const LOCK_CONFIRM = "Lock MoneyTrack, Deadline Tracker and FE Civil on this device? You'll need a new email code to open them.";
 
 function showApp() {
   const overlay = document.getElementById('login-overlay');
   if (overlay) overlay.classList.add('hidden');
   init();
-}
-
-function bindLoginForm() {
-  const form    = document.getElementById('login-form');
-  const input   = document.getElementById('login-pass');
-  const confirmInput = document.getElementById('login-pass-confirm');
-  const errorEl = document.getElementById('login-error');
-  if (!form) return;
-
-  const setup = !getAuthRecord();
-  const group = document.getElementById('login-confirm-group');
-  if (group) group.hidden = !setup;
-  if (confirmInput) confirmInput.required = setup;
-  if (input) input.autocomplete = setup ? 'new-password' : 'current-password';
-  const instructions = document.getElementById('login-instructions');
-  if (instructions) instructions.textContent = setup
-    ? 'Create a new password for this browser. Do not reuse your old MoneyTrack password; your existing data stays here.'
-    : 'Enter your password to continue';
-  const submit = document.getElementById('login-submit');
-  if (submit) submit.textContent = setup ? 'Set password and open' : 'Unlock';
-
-  form.addEventListener('submit', async e => {
-    e.preventDefault();
-
-    if (setup) {
-      const password = input?.value || '';
-      if (password.length < 12) {
-        if (errorEl) errorEl.textContent = 'Use at least 12 characters.';
-        return;
-      }
-      if (password !== confirmInput?.value) {
-        if (errorEl) errorEl.textContent = 'Passwords do not match.';
-        return;
-      }
-      try {
-        const salt = authHex(crypto.getRandomValues(new Uint8Array(16)));
-        const hash = await authDerive(password, salt);
-        localStorage.setItem(AUTH_RECORD_KEY, JSON.stringify({ version: 2, salt, hash }));
-        sessionStorage.setItem(SESSION_KEY, '1');
-        input.value = '';
-        confirmInput.value = '';
-        showApp();
-      } catch {
-        if (errorEl) errorEl.textContent = 'Could not save a password in this browser.';
-      }
-      return;
-    }
-
-    // Rate-limit check
-    const now = Date.now();
-    if (_loginLockoutUntil && now < _loginLockoutUntil) {
-      const secs = Math.ceil((_loginLockoutUntil - now) / 1000);
-      if (errorEl) errorEl.textContent = `Too many attempts. Try again in ${secs}s.`;
-      return;
-    }
-
-    const record = getAuthRecord();
-    if (!record) {
-      if (errorEl) errorEl.textContent = 'Password settings changed. Reload this page to set up this browser.';
-      return;
-    }
-    let hash;
-    try { hash = await authDerive(input?.value || '', record.salt); }
-    catch {
-      if (errorEl) errorEl.textContent = 'Could not check the password in this browser.';
-      return;
-    }
-    if (hash === record.hash) {
-      _loginAttempts = 0;
-      sessionStorage.removeItem('mt_login_attempts');
-      sessionStorage.removeItem('mt_login_lockout');
-      sessionStorage.setItem(SESSION_KEY, '1');
-      showApp();
-    } else {
-      _loginAttempts++;
-      sessionStorage.setItem('mt_login_attempts', String(_loginAttempts));
-      if (_loginAttempts >= LOGIN_MAX_ATTEMPTS) {
-        const delay = Math.min(LOGIN_BASE_DELAY_MS * Math.pow(2, _loginAttempts - LOGIN_MAX_ATTEMPTS), 60000);
-        _loginLockoutUntil = now + delay;
-        sessionStorage.setItem('mt_login_lockout', String(_loginLockoutUntil));
-        if (errorEl) errorEl.textContent = `Too many attempts. Locked for ${Math.ceil(delay / 1000)}s.`;
-      } else {
-        if (errorEl) errorEl.textContent = 'Incorrect password. Please try again.';
-      }
-      if (input) { input.value = ''; input.focus(); }
-    }
-  });
 }
 
 // ─── Cross-tab Sync ──────────────────────────────────────────────
@@ -5716,30 +5597,20 @@ window.addEventListener('storage', (e) => {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushDriveSync(); });
 window.addEventListener('pagehide', () => { flushDriveSync(); });
 
-// ─── Idle Session Timeout ────────────────────────────────────────
-let _lastActivity = Date.now();
-const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-
-function resetIdleTimer() { _lastActivity = Date.now(); }
-
-['mousemove', 'keydown', 'click', 'touchstart'].forEach(evt => {
-  document.addEventListener(evt, resetIdleTimer, { passive: true });
-});
-
-setInterval(() => {
-  if (isAuthenticated() && Date.now() - _lastActivity > IDLE_TIMEOUT_MS) {
-    sessionStorage.removeItem(SESSION_KEY);
+document.addEventListener('DOMContentLoaded', async () => {
+  EmailLogin.onLockedElsewhere(() => location.reload());
+  document.getElementById('lock-btn')?.addEventListener('click', () => {
+    if (!confirm(LOCK_CONFIRM)) return;
+    EmailLogin.lock();
     location.reload();
-  }
-}, 60000);
-
-document.addEventListener('DOMContentLoaded', () => {
-  if (isAuthenticated()) {
-    showApp();
-  } else {
-    bindLoginForm();
-    document.getElementById('login-pass')?.focus();
-  }
+  });
+  if (await EmailLogin.hasValidPass()) { showApp(); return; }
+  EmailLogin.mountLockScreen({
+    app: 'moneytrack',
+    legacyKeys: ['moneytrack_auth_record_v2'],
+    legacySessionKeys: ['moneytrack_auth_session_v2', 'mt_login_attempts', 'mt_login_lockout'],
+    onUnlock: showApp,
+  });
 });
 
 if ('serviceWorker' in navigator) {
