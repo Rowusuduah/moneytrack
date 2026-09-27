@@ -19,9 +19,16 @@
   // { challenge, expiresAt } in localStorage so a pending code survives new tabs, the other
   // two apps and the phone closing the app; the challenge is useless without the emailed code.
   const CHALLENGE_KEY = 'rowusuduah_login_challenge_v2';
+  // Rewritten on every Lock. A tab opened with the recovery key has no stored pass to lose,
+  // so this change is the only thing it can hear.
+  const LOCK_KEY = 'rowusuduah_login_locked_v1';
   const AUDIENCE = 'rowusuduah.github.io';
+  const TIMEOUT_MS = 20000;
   const OFFLINE = "You're offline. Connect to the internet to get a code.";
-  const UNREACHABLE = 'Could not reach the login service. Try again in a minute.';
+  // A firewall rate-limit block carries no CORS headers, so it also lands here.
+  const UNREACHABLE = 'Could not reach the login service. Wait a few minutes, then try again.';
+  const TOO_SLOW = 'The login service is taking too long to answer. Check your connection and try again.';
+  const TOO_MANY = 'Too many code requests. Wait 10 minutes, then try again.';
   const STORAGE_BLOCKED = "This browser is blocking storage for this site, so the app can't open. Allow site data for rowusuduah.github.io, then reload.";
 
   function memoryStore() {
@@ -58,6 +65,7 @@
     const fetchImpl = opts.fetch || ((url, init) => globalThis.fetch(url, init));
     const now = opts.now || (() => Date.now());
     const online = opts.online || (() => !(typeof navigator !== 'undefined' && navigator.onLine === false));
+    const timeoutMs = opts.timeoutMs || TIMEOUT_MS;
     const subtle = globalThis.crypto.subtle;
     const storageBlocked = !opts.storage && !browserStoreUsable('localStorage');
     let keyPromise = null;
@@ -98,16 +106,30 @@
     }
 
     async function post(path, body) {
-      let res;
-      try {
-        res = await fetchImpl(cfg.serviceUrl + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      } catch {
-        throw new Error(online() ? UNREACHABLE : OFFLINE);
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      let timer;
+      // Weak wifi can leave a request open with no answer; give up so the button comes back.
+      const tooSlow = new Promise((resolve, reject) => {
+        timer = setTimeout(() => { reject(new Error(TOO_SLOW)); if (controller) controller.abort(); }, timeoutMs);
+      });
+      async function send() {
+        let res;
+        try {
+          res = await fetchImpl(cfg.serviceUrl + path, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+            signal: controller ? controller.signal : undefined,
+          });
+        } catch {
+          throw new Error(online() ? UNREACHABLE : OFFLINE);
+        }
+        if (res.status === 429) throw new Error(TOO_MANY);
+        let data = null;
+        try { data = await res.json(); } catch { /* non-JSON error page */ }
+        if (!res.ok) throw new Error((data && data.error) || 'Something went wrong. Try again.');
+        return data;
       }
-      let data = null;
-      try { data = await res.json(); } catch { /* non-JSON error page */ }
-      if (!res.ok) throw new Error((data && data.error) || 'Something went wrong. Try again.');
-      return data;
+      try { return await Promise.race([send(), tooSlow]); }
+      finally { clearTimeout(timer); }
     }
 
     function readPending() {
@@ -164,6 +186,7 @@
       pending = null;
       safeRemove(storage, PASS_KEY);
       safeRemove(storage, CHALLENGE_KEY);
+      safeSet(storage, LOCK_KEY, now() + '.' + Math.random().toString(36).slice(2));
     }
 
     function hasPendingCode() { return !!readPending(); }
@@ -172,7 +195,7 @@
     function onLockedElsewhere(callback) {
       if (typeof globalThis.addEventListener !== 'function') return;
       globalThis.addEventListener('storage', (e) => {
-        if (e.key === PASS_KEY && !e.newValue) callback();
+        if ((e.key === PASS_KEY && !e.newValue) || (e.key === LOCK_KEY && e.newValue)) callback();
       });
     }
 

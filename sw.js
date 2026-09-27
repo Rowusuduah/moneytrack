@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'moneytrack-v38';
+const CACHE_NAME = 'moneytrack-v39';
 const APP_SHELL  = [
   './index.html',
   './css/styles.css',
