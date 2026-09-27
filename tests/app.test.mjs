@@ -18,14 +18,13 @@ const src = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
 vm.runInThisContext(src);
 const A = globalThis; // top-level function declarations land on the host global
 
-test('local screen lock derives a salted verifier without a source password', async () => {
-  const first = await A.authDerive('example-password-for-testing', '000102030405060708090a0b0c0d0e0f');
-  const again = await A.authDerive('example-password-for-testing', '000102030405060708090a0b0c0d0e0f');
-  const otherSalt = await A.authDerive('example-password-for-testing', '101112131415161718191a1b1c1d1e1f');
-  assert.match(first, /^[a-f0-9]{64}$/);
-  assert.equal(first, again);
-  assert.notEqual(first, otherSalt);
-  assert.equal(A.getAuthRecord(), null);
+test('password lock is gone: no verifier code, no idle re-lock, email-code boot only', () => {
+  assert.equal(typeof A.authDerive, 'undefined');
+  assert.equal(typeof A.getAuthRecord, 'undefined');
+  assert.equal(typeof A.bindLoginForm, 'undefined');
+  assert.doesNotMatch(src, /PBKDF2/);
+  assert.doesNotMatch(src, /IDLE_TIMEOUT_MS/);
+  assert.match(src, /EmailLogin\.mountLockScreen\(\{\s*app: 'moneytrack'/);
 });
 
 // ── getNextDueDate: monthly bills with dayOfMonth 29–31 must clamp, not roll over ──
