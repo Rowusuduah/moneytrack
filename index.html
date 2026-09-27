@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="MoneyTrack">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://www.googleapis.com https://accounts.google.com; frame-src 'self' https://accounts.google.com; img-src 'self' data:; font-src 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com https://apis.google.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://login-codes-nine.vercel.app https://www.googleapis.com https://accounts.google.com; frame-src 'self' https://accounts.google.com; img-src 'self' data:; font-src 'self';">
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
@@ -26,21 +26,28 @@
         <span class="dot"></span>
         <span>MoneyTrack</span>
       </div>
-      <p class="login-sub" id="login-instructions">Enter your password to continue</p>
-      <form id="login-form" autocomplete="off">
+      <p class="login-sub" id="el-message">We'll email a 6-digit code to your Gmail.</p>
+      <div id="el-step-request">
+        <button type="button" id="el-send" class="btn btn-green el-wide">Email me a code</button>
+      </div>
+      <form id="el-step-code" hidden>
         <div class="form-group">
-          <label for="login-pass">Password</label>
-          <input type="password" id="login-pass" class="acct-input"
-                 placeholder="••••••••" autocomplete="current-password" required>
+          <label for="el-code">6-digit code</label>
+          <input id="el-code" class="acct-input el-code" inputmode="numeric" autocomplete="one-time-code" placeholder="••••••" required>
         </div>
-        <div class="form-group" id="login-confirm-group" hidden>
-          <label for="login-pass-confirm">Confirm password</label>
-          <input type="password" id="login-pass-confirm" class="acct-input"
-                 autocomplete="new-password">
-        </div>
-        <p class="login-error" id="login-error" aria-live="polite"></p>
-        <button type="submit" id="login-submit" class="btn btn-green" style="width:100%;margin-top:8px">Unlock</button>
+        <button type="submit" id="el-verify" class="btn btn-green el-wide">Unlock</button>
+        <p class="el-row"><button type="button" id="el-resend" class="el-link">Send a new code</button><span class="el-hint">Not there? Check Spam.</span></p>
       </form>
+      <form id="el-step-recovery" hidden>
+        <div class="form-group">
+          <label for="el-recovery">Recovery key</label>
+          <input id="el-recovery" class="acct-input" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" required>
+        </div>
+        <button type="submit" class="btn btn-green el-wide">Unlock with recovery key</button>
+        <p class="el-row"><button type="button" id="el-back" class="el-link">Back to email code</button></p>
+      </form>
+      <p class="login-error" id="el-error" aria-live="polite"></p>
+      <p class="el-row"><button type="button" id="el-use-recovery" class="el-link">Use recovery key</button></p>
     </div>
   </div>
 
@@ -79,6 +86,7 @@
     </div>
 
     <button id="theme-toggle" aria-label="Toggle light/dark theme">☀️</button>
+    <button id="lock-btn" aria-label="Lock this device" title="Lock">🔒</button>
   </nav>
 
   <!-- Main -->
@@ -820,6 +828,7 @@
   </main>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="js/email-login.js" defer></script>
   <script src="js/app.js" defer></script>
   <script src="js/wealth.js" defer></script>
   <script src="js/africa.js" defer></script>
