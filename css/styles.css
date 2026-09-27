@@ -63,7 +63,7 @@ body.light {
   --surf3:  #EFEDE7;
   --text:   #15171C;
   --muted:  #62676F;
-  --faint:  #7D8189;
+  --faint:  #6B7078;
   --border: #E8E5DE;
   --brig:   #D9D5CC;
   --hair:   #F0EDE7;
@@ -1250,6 +1250,32 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 
 /* Focus ring in the accent */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Toasts: centred above the phone tab bar, readable in both themes. */
+#toast-msg {
+  position: fixed; left: 50%; bottom: calc(24px + var(--safe-bottom)); transform: translateX(-50%);
+  z-index: 9999; max-width: calc(100vw - 32px);
+  padding: 12px 18px; border-radius: 14px; box-shadow: var(--shadow-lg);
+  font-size: 14px; font-weight: 600; line-height: 1.35; text-align: center;
+  transition: opacity .3s; pointer-events: none;
+  background: var(--text); color: var(--bg);
+}
+#toast-msg.toast-success { background: var(--green); color: var(--on-accent); }
+#toast-msg.toast-error   { background: var(--red);   color: #FFFFFF; }
+#toast-msg.toast-info    { background: var(--accent); color: var(--on-accent); }
+body.light #toast-msg.toast-success { color: #FFFFFF; }
+body:not(.light) #toast-msg.toast-error { color: #1A0906; }
+@media (max-width: 760px) { #toast-msg { bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 14px); } }
+
+/* The account is shown by the coloured dot; text next to it stays readable. */
+.txn-meta [style*="color"] { color: var(--muted) !important; }
+
+/* Every control at least 40px tall (audit) */
+.trend-tab, .an-mode, .wl-mode button { min-height: 40px; }
+.txn-btn { min-height: 40px; min-width: 40px; }
+#wl-config summary { min-height: 44px; display: flex; align-items: center; margin-bottom: 0; }
+#wl-config details[open] > summary { margin-bottom: 14px; }
+.wl-config-import input[type="file"] { min-height: 40px; }
 
 /* Grid columns may shrink below their content (a 31-day chart scrolls inside
    its card instead of widening the page and making phones zoom out). */

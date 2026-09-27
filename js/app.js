@@ -568,11 +568,12 @@ function showToast(message, type = 'info') {
   if (!el) {
     el = document.createElement('div');
     el.id = 'toast-msg';
-    el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:8px;font-size:.88rem;z-index:9999;transition:opacity .3s;pointer-events:none;';
+    // Position, shape and colours live in styles.css (#toast-msg): above the
+    // phone tab bar, readable in both themes.
+    el.setAttribute('role', 'status');
     document.body.appendChild(el);
   }
-  el.style.background = type === 'error' ? '#ef4444' : type === 'success' ? '#22c55e' : '#3b82f6';
-  el.style.color = '#fff';
+  el.className = 'toast-' + (type === 'error' ? 'error' : type === 'success' ? 'success' : 'info');
   el.textContent = message;
   el.style.opacity = '1';
   clearTimeout(el._timer);
