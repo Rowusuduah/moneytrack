@@ -16,10 +16,13 @@
   const CONFIG = /*@config*/{"serviceUrl":"https://login-codes-nine.vercel.app","publicKeyJwk":{"kty":"EC","x":"pvbrmQVGxQvW-0l86qkNZpTbz0MFOZZvYjedzmhY0PA","y":"-hd-BJPbaNR528Hu1eyC_FPTqAq16YqsVB_t9zdmKtU","crv":"P-256"},"recoveryKeySha256":"e70d80a869c0c917dc3371f0079b586a868635155db768207668c3f0ffb04cd2","maskedEmail":"r…⁠@gmail.com"}/*@end*/;
 
   const PASS_KEY = 'rowusuduah_login_pass_v1';
-  const CHALLENGE_KEY = 'rowusuduah_login_challenge_v1';
+  // { challenge, expiresAt } in localStorage so a pending code survives new tabs, the other
+  // two apps and the phone closing the app; the challenge is useless without the emailed code.
+  const CHALLENGE_KEY = 'rowusuduah_login_challenge_v2';
   const AUDIENCE = 'rowusuduah.github.io';
   const OFFLINE = "You're offline. Connect to the internet to get a code.";
   const UNREACHABLE = 'Could not reach the login service. Try again in a minute.';
+  const STORAGE_BLOCKED = "This browser is blocking storage for this site, so the app can't open. Allow site data for rowusuduah.github.io, then reload.";
 
   function memoryStore() {
     const m = new Map();
@@ -27,6 +30,17 @@
   }
   function browserStore(name) {
     try { const s = globalThis[name]; return s || memoryStore(); } catch { return memoryStore(); }
+  }
+  // Blocked storage makes the getter throw (Chrome, Safari) or return null (Firefox).
+  function browserStoreUsable(name) {
+    try {
+      const s = globalThis[name];
+      if (!s) return false;
+      s.setItem('__email_login_probe__', '1');
+      const ok = s.getItem('__email_login_probe__') === '1';
+      s.removeItem('__email_login_probe__');
+      return ok;
+    } catch { return false; }
   }
   function bytesFromB64url(s) {
     const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4);
@@ -45,8 +59,10 @@
     const now = opts.now || (() => Date.now());
     const online = opts.online || (() => !(typeof navigator !== 'undefined' && navigator.onLine === false));
     const subtle = globalThis.crypto.subtle;
+    const storageBlocked = !opts.storage && !browserStoreUsable('localStorage');
     let keyPromise = null;
     let recoveryUnlocked = false;
+    let pending = null;   // pending challenge, kept here only when storage refuses it
 
     function safeGet(store, key) { try { return store.getItem(key); } catch { return null; } }
     function safeSet(store, key, value) { try { store.setItem(key, value); return true; } catch { return false; } }
@@ -94,23 +110,36 @@
       return data;
     }
 
+    function readPending() {
+      let stored = null;
+      try { stored = JSON.parse(safeGet(storage, CHALLENGE_KEY) || 'null'); } catch { stored = null; }
+      const p = stored || pending;
+      return p && typeof p.challenge === 'string' && p.expiresAt > now() ? p : null;
+    }
+
     async function requestCode(app) {
+      if (storageBlocked) throw new Error(STORAGE_BLOCKED);
       if (!online()) throw new Error(OFFLINE);
       const data = await post('/api/send-code', { app });
-      safeSet(session, CHALLENGE_KEY, data.challenge);
+      const record = { challenge: data.challenge, expiresAt: data.expiresAt };
+      // Storage is the shared source of truth; memory only covers a browser that refuses the write.
+      pending = safeSet(storage, CHALLENGE_KEY, JSON.stringify(record)) ? null : record;
       return data;
     }
 
     async function submitCode(code) {
       const digits = String(code == null ? '' : code).replace(/\D/g, '');
-      const challenge = safeGet(session, CHALLENGE_KEY);
-      if (!challenge) throw new Error('Tap “Email me a code” first.');
+      if (storageBlocked) throw new Error(STORAGE_BLOCKED);
+      const current = readPending();
+      if (!current) throw new Error('Tap “Email me a code” first.');
+      const challenge = current.challenge;
       if (digits.length !== 6) throw new Error('Enter the 6-digit code from the email.');
       if (!online()) throw new Error(OFFLINE);
       const data = await post('/api/verify-code', { challenge, code: digits });
       if (!(await verifyPass(data && data.pass))) throw new Error('The login service sent an invalid pass. Try again.');
       if (!safeSet(storage, PASS_KEY, data.pass)) throw new Error('This browser blocked storage, so the device cannot stay unlocked.');
-      safeRemove(session, CHALLENGE_KEY);
+      pending = null;
+      safeRemove(storage, CHALLENGE_KEY);
       return true;
     }
 
@@ -132,11 +161,12 @@
 
     function lock() {
       recoveryUnlocked = false;
+      pending = null;
       safeRemove(storage, PASS_KEY);
-      safeRemove(session, CHALLENGE_KEY);
+      safeRemove(storage, CHALLENGE_KEY);
     }
 
-    function hasPendingCode() { return !!safeGet(session, CHALLENGE_KEY); }
+    function hasPendingCode() { return !!readPending(); }
 
     // Lock in any of the three apps removes the shared pass; other open tabs follow.
     function onLockedElsewhere(callback) {
@@ -155,6 +185,11 @@
         useRecovery: $('el-use-recovery'), error: $('el-error'),
       };
       const setError = (text) => { el.error.textContent = text; };
+      if (storageBlocked) {
+        el.request.hidden = true; el.codeForm.hidden = true; el.recoveryForm.hidden = true; el.useRecovery.hidden = true;
+        el.message.textContent = STORAGE_BLOCKED;
+        return;
+      }
       const show = (step) => {
         el.request.hidden = step !== 'request';
         el.codeForm.hidden = step !== 'code';
@@ -190,8 +225,12 @@
         e.preventDefault();
         if (el.verify.disabled) return;
         const done = busy(el.verify, 'Checking…');
-        try { await submitCode(el.code.value); done(); finish(); }
-        catch (err) { done(); setError(err.message); el.code.select(); }
+        let unlocked = false;
+        try { await submitCode(el.code.value); unlocked = true; }
+        catch (err) { setError(err.message); el.code.select(); }
+        finally { done(); }
+        // Outside the try: a failure while the app starts must not land in the hidden lock screen.
+        if (unlocked) finish();
       });
       // Phones autofill the emailed code; submit as soon as six digits are in.
       el.code.addEventListener('input', () => {
