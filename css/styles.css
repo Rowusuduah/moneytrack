@@ -1632,3 +1632,36 @@ body.light .seg button[aria-checked="true"] { box-shadow: 0 1px 3px rgba(20,20,1
 body:not(.light) .action-toast button { color: #1D5FD1; }
 body.light .action-toast button { color: #9DBDFF; }
 @media (max-width: 760px) { .action-toast { bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 14px); } }
+
+/* ══ Safe to spend until payday (slot between net worth and the account list) ══ */
+.safe-card {
+  background: var(--surf); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 18px; display: flex; flex-direction: column; gap: 6px;
+}
+.safe-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.safe-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.safe-until { font-size: 13px; color: var(--muted); }
+.safe-amount { font-size: 40px; font-weight: 700; letter-spacing: -1.4px; line-height: 1.1; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.safe-amount .kpi-cents { font-size: .55em; font-weight: 600; letter-spacing: -.4px; color: var(--muted); }
+.safe-amount--short, .safe-amount--short .kpi-cents { color: var(--red); }
+.safe-sub { font-size: 13.5px; color: var(--muted); }
+.safe-sub--short { color: var(--red); font-weight: 600; }
+.safe-bar { display: flex; gap: 3px; height: 10px; margin: 8px 0 2px; }
+.safe-seg { background: var(--brig); border-radius: 2px; min-width: 3px; }
+.safe-seg:first-child { border-radius: 5px 2px 2px 5px; }
+.safe-seg:last-child { border-radius: 2px 5px 5px 2px; }
+.safe-seg:only-child { border-radius: 5px; }
+.safe-seg--free { background: var(--accent); }
+.safe-rows { display: flex; flex-direction: column; margin-top: 8px; border-top: 1px solid var(--hair); }
+.safe-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 32px; font-size: 13.5px; }
+.safe-row span:first-child { color: var(--muted); min-width: 0; }
+.safe-row span:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text); }
+.safe-row:first-child span:last-child { font-weight: 600; }
+.safe-note, .safe-setup { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.safe-setup { font-size: 14px; }
+@media (min-width: 761px) {
+  #account-kpis { grid-template-areas: "hero list" "safe list"; }
+  #account-kpis > .kpi-hero { grid-area: hero; }
+  #account-kpis > .kpi-list { grid-area: list; }
+  #account-kpis > .safe-card { grid-area: safe; }
+}

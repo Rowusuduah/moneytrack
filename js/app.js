@@ -839,6 +839,12 @@ function fmt(n) {
   return (n < 0 ? '-' : '') + '$' + abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Big-number money: dollars as text, cents in a smaller span (escaped HTML).
+function withCents(v) {
+  const s = fmt(v), i = s.lastIndexOf('.');
+  return i > 0 ? `${escapeHTML(s.slice(0, i))}<span class="kpi-cents">${escapeHTML(s.slice(i))}</span>` : escapeHTML(s);
+}
+
 function fmtDate(iso) {
   if (!iso) return 'Unknown date';
   const [y, m, d] = iso.split('-');
@@ -1238,10 +1244,6 @@ function renderAccountKPIs() {
     nwDelta = calcNetWorth(lastSnap, allLoansKPI, lastSnap.date) - calcNetWorth(prevSnap, allLoansKPI, prevSnap.date);
     nwPrevDate = prevSnap.date;
   }
-  const withCents = v => {
-    const s = fmt(v), i = s.lastIndexOf('.');
-    return i > 0 ? `${escapeHTML(s.slice(0, i))}<span class="kpi-cents">${escapeHTML(s.slice(i))}</span>` : escapeHTML(s);
-  };
   const netKpi = kpis.find(k => k.label === 'Net Worth');
   const delta = nwDelta === null ? '' : `
       <div class="kpi-delta-row">
@@ -1267,7 +1269,8 @@ function renderAccountKPIs() {
         <div class="kpi-value${neg ? ' neg' : ''}">${k.text ?? fmt(k.value)}</div>
       </div>`;
   }).join('');
-  el.innerHTML = hero + `<div class="kpi-list">${rows}</div>`;
+  el.innerHTML = hero + '<div class="safe-card" id="safe-card"></div>' + `<div class="kpi-list">${rows}</div>`;
+  renderSafeToSpend();
 
   const dateEl = document.getElementById('accounts-date');
   if (dateEl) {
@@ -2071,23 +2074,207 @@ function payBill(bill, due, todayIso, template, id) {
   return { txn, bill: { ...bill, paidThrough: dueIso, lastPaidOn: todayIso, lastPaidTxn: id } };
 }
 
-// Total of every unpaid bill date from now through `days` ahead, overdue ones included.
-function billsDueTotal(bills, today, days) {
+// Every unpaid date of every bill from now through `endDate`, overdue ones included.
+function billOccurrences(bills, today, endDate) {
   const start = new Date(today); start.setHours(0, 0, 0, 0);
-  const end = new Date(start); end.setDate(end.getDate() + days);
-  let total = 0;
+  const out = [];
   for (const bill of bills || []) {
-    const amt = safeAmt(bill.amount);
-    if (!amt) continue;
     let b = bill, due = billDueDate(b, start), guard = 0;
-    while (due && due <= end && guard++ < 60) {
-      total += amt;
+    while (due && due <= endDate && guard++ < 60) {
+      out.push({ bill, due });
       if (b.frequency === 'once') break;
       b = { ...b, paidThrough: toLocalISO(due) };
       due = billDueDate(b, start);
     }
   }
-  return roundMoney(total);
+  return out;
+}
+
+// Total of every unpaid bill date from now through `days` ahead, overdue ones included.
+function billsDueTotal(bills, today, days) {
+  const end = new Date(today); end.setHours(0, 0, 0, 0); end.setDate(end.getDate() + days);
+  return roundMoney(billOccurrences(bills, today, end).reduce((s, o) => s + safeAmt(o.bill.amount), 0));
+}
+
+// ─── Safe to spend until payday ──────────────────────────────────
+// checking now − bills due before payday − card balances owed − savings plan this period.
+function _addDaysISO(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return toLocalISO(d); }
+function _daysBetweenISO(aIso, bIso) { return Math.round((new Date(bIso + 'T00:00:00') - new Date(aIso + 'T00:00:00')) / 86400000); }
+
+// Checking balance now: the latest snapshot's checking accounts plus checking activity
+// logged after it. The monthly carryover is not new money, so it is left out.
+function checkingNow(snaps, txns, accounts, todayIso) {
+  const ordered = orderedSnapshots(snaps, todayIso);
+  if (!ordered.length) return null;
+  const snap = ordered[ordered.length - 1];
+  const checking = new Set((accounts || []).filter(a => a.group === 'checking').map(a => a.id));
+  let amount = 0;
+  for (const id of checking) amount += safeAmt((snap.accounts || {})[id]);
+  for (const t of txns || []) {
+    if (!(t.date > snap.date) || !isISODateOnOrBefore(t.date, todayIso)) continue;
+    const amt = safeAmt(t.amount);
+    if (t.type === 'income' && checking.has(t.account) && t.category !== 'Money from Last Month') amount += amt;
+    else if (t.type === 'expense' && checking.has(t.account)) amount -= amt;
+    else if (t.type === 'transfer') {
+      if (checking.has(t.account)) amount -= amt;
+      if (checking.has(t.toAccount)) amount += amt;
+    }
+  }
+  return { amount: roundMoney(amount), since: snap.date };
+}
+
+// Next payday strictly after today: from the Wealth plan's biweekly payday, else from the
+// rhythm of past paychecks (weekly, biweekly or monthly). null when it can't be told.
+function nextPayday(plan, txns, todayIso) {
+  const anchor = plan && typeof plan.payAnchor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(plan.payAnchor) ? plan.payAnchor : '';
+  if (anchor) {
+    if (anchor > todayIso) return { date: anchor, periodDays: 14, source: 'plan' };
+    const steps = Math.floor(_daysBetweenISO(anchor, todayIso) / 14) + 1;
+    return { date: _addDaysISO(anchor, steps * 14), periodDays: 14, source: 'plan' };
+  }
+  const dates = [...new Set((txns || [])
+    .filter(t => t.type === 'income' && t.category === 'Paycheck' && isISODateOnOrBefore(t.date, todayIso))
+    .map(t => t.date))].sort();
+  if (dates.length < 2) return null;
+  const recent = dates.slice(-5);
+  const gaps = recent.slice(1).map((d, i) => _daysBetweenISO(recent[i], d)).sort((a, b) => a - b);
+  const gap = gaps[Math.floor(gaps.length / 2)];
+  const last = dates[dates.length - 1];
+  if (gap >= 26 && gap <= 33) {
+    const lastD = new Date(last + 'T00:00:00');
+    const dom = lastD.getDate();
+    const onDay = (y, m) => new Date(y, m, Math.min(dom, new Date(y, m + 1, 0).getDate()));
+    let m = lastD.getMonth() + 1;
+    let next = onDay(lastD.getFullYear(), m);
+    while (toLocalISO(next) <= todayIso) { m++; next = onDay(lastD.getFullYear(), m); }
+    const prev = onDay(lastD.getFullYear(), m - 1);
+    return { date: toLocalISO(next), periodDays: Math.round((next - prev) / 86400000), source: 'history' };
+  }
+  const period = gap >= 6 && gap <= 8 ? 7 : gap >= 13 && gap <= 16 ? 14 : 0;
+  if (!period) return null;
+  let next = last;
+  while (next <= todayIso) next = _addDaysISO(next, period);
+  return { date: next, periodDays: period, source: 'history' };
+}
+
+// Unpaid bill dates strictly before payday (a bill due on payday comes out of the new check).
+function billsDueBefore(bills, today, beforeIso, skipIds) {
+  const end = new Date(beforeIso + 'T00:00:00'); end.setDate(end.getDate() - 1);
+  const occ = billOccurrences((bills || []).filter(b => !(skipIds && skipIds.has(b.id)) && safeAmt(b.amount) > 0), today, end)
+    .sort((a, b) => a.due - b.due);
+  const names = [];
+  for (const o of occ) if (!names.includes(o.bill.name)) names.push(o.bill.name);
+  return { total: roundMoney(occ.reduce((s, o) => s + safeAmt(o.bill.amount), 0)), names };
+}
+
+// Bills that are card payments: the card balance is already counted in full, so these
+// would count it twice.
+function cardPaymentBillIds(bills, txns, accounts) {
+  const debt = new Set((accounts || []).filter(a => a.group === 'debt').map(a => a.id));
+  const ids = new Set();
+  for (const bill of bills || []) {
+    const tpl = billTemplate(bill, txns);
+    if (tpl && ((tpl.type === 'transfer' && debt.has(tpl.toAccount)) || tpl.category === 'Credit Card Payment')) ids.add(bill.id);
+  }
+  return ids;
+}
+
+// What is owed on cards right now (live, see cardOwedNow); overpaid cards count as 0.
+function cardsOwedNow(snaps, txns, accounts, todayIso) {
+  const ordered = orderedSnapshots(snaps, todayIso);
+  const snap = ordered.length ? ordered[ordered.length - 1] : null;
+  const debts = (accounts || []).filter(a => a.group === 'debt' && !a.deleted);
+  let total = 0;
+  const labels = [];
+  for (const a of debts) {
+    const owed = cardOwedNow(a, snap, txns, debts.length, todayIso).owed;
+    if (owed > 0) { total += owed; labels.push(a.label); }
+  }
+  return { total: roundMoney(total), labels };
+}
+
+// The Wealth plan's monthly savings target spread over pay periods, minus what already
+// moved into savings accounts since the last payday.
+function savingsPlanDue(plan, payday, txns, accounts, todayIso) {
+  const monthly = plan ? safeAmt(plan.savingsTargetMo) : 0;
+  if (!monthly || !payday) return 0;
+  const perPeriod = roundMoney(monthly * 12 * payday.periodDays / 365.25);
+  const since = _addDaysISO(payday.date, -payday.periodDays);
+  const savings = new Set((accounts || []).filter(a => a.group === 'savings').map(a => a.id));
+  const moved = (txns || []).filter(t => t.type === 'transfer' && savings.has(t.toAccount) && !savings.has(t.account)
+      && t.date >= since && isISODateOnOrBefore(t.date, todayIso))
+    .reduce((s, t) => s + safeAmt(t.amount), 0);
+  return roundMoney(Math.max(0, perPeriod - moved));
+}
+
+function safeToSpend({ checking, bills, cards, savings, todayIso, paydayIso }) {
+  const amount = roundMoney(checking - bills - cards - savings);
+  const days = Math.max(1, _daysBetweenISO(todayIso, paydayIso));
+  const short = amount < 0;
+  return { amount, days, perDay: short ? 0 : roundMoney(amount / days), short };
+}
+
+function _wealthPlanOrNull() { return typeof PLAN !== 'undefined' ? PLAN : null; }
+
+function _shortNameList(names) {
+  return names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} +${names.length - 3} more`;
+}
+
+// The "Safe to spend" card on Accounts (slot rendered by renderAccountKPIs).
+function renderSafeToSpend() {
+  const el = document.getElementById('safe-card');
+  if (!el) return;
+  const today = todayISO();
+  const snaps = loadSnapshots(), txns = loadTxns(), bills = loadBills();
+  const plan = _wealthPlanOrNull();
+  const checking = checkingNow(snaps, txns, ACCOUNTS, today);
+  const payday = nextPayday(plan, txns, today);
+  const head = until => `<div class="safe-head"><span class="safe-title">Safe to spend</span>${until ? `<span class="safe-until">${escapeHTML(until)}</span>` : ''}</div>`;
+  if (!checking) {
+    el.innerHTML = head('') + '<p class="safe-setup">Update your balances to see what is safe to spend until payday.</p>';
+    return;
+  }
+  if (!payday) {
+    el.innerHTML = head('') + '<p class="safe-setup">Set your payday in the Wealth plan, or log two paychecks with the Paycheck category, to see what is safe to spend until payday.</p>';
+    return;
+  }
+  const billsDue = billsDueBefore(bills, new Date(today + 'T00:00:00'), payday.date, cardPaymentBillIds(bills, txns, ACCOUNTS));
+  const cards = cardsOwedNow(snaps, txns, ACCOUNTS, today);
+  const savings = savingsPlanDue(plan, payday, txns, ACCOUNTS, today);
+  const s = safeToSpend({ checking: checking.amount, bills: billsDue.total, cards: cards.total, savings, todayIso: today, paydayIso: payday.date });
+
+  const pd = new Date(payday.date + 'T00:00:00');
+  const shortDate = pd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const until = `until payday, ${pd.toLocaleDateString('en-US', { weekday: 'short' })} ${shortDate}`;
+  let top;
+  if (s.short) {
+    top = `<div class="safe-amount safe-amount--short">−${withCents(-s.amount)}</div>
+      <div class="safe-sub safe-sub--short">Short before payday</div>
+      <div class="safe-sub">Bills and plans before ${escapeHTML(shortDate)} add up to more than what is in checking.</div>`;
+  } else {
+    const daily = s.days === 1 ? 'All of it is for today'
+      : `About $${Math.floor(s.perDay).toLocaleString('en-US')} a day for the next ${s.days} days`;
+    const held = [billsDue.total, cards.total, savings].filter(v => v > 0);
+    const bar = checking.amount > 0
+      ? `<div class="safe-bar" role="img" aria-label="${escapeHTML(`Of ${fmt(checking.amount)} in checking, ${fmt(checking.amount - s.amount)} is already spoken for and ${fmt(s.amount)} is free`)}">` +
+        held.map(v => `<span class="safe-seg" style="flex-grow:${Math.round(v * 100)}"></span>`).join('') +
+        (s.amount > 0 ? `<span class="safe-seg safe-seg--free" style="flex-grow:${Math.round(s.amount * 100)}"></span>` : '') + '</div>'
+      : '';
+    top = `<div class="safe-amount">${withCents(s.amount)}</div><div class="safe-sub">${escapeHTML(daily)}</div>${bar}`;
+  }
+  const rows = [['Checking now', checking.amount < 0 ? '−' + fmt(-checking.amount) : fmt(checking.amount)]];
+  if (billsDue.total > 0) rows.push([`Bills before payday: ${_shortNameList(billsDue.names)}`, '−' + fmt(billsDue.total)]);
+  if (cards.total > 0) {
+    const label = cards.labels.length === 1 ? `${cards.labels[0].replace(/\s*\([^)]*\)\s*$/, '')} balance you owe` : 'Card balances you owe';
+    rows.push([label, '−' + fmt(cards.total)]);
+  }
+  if (savings > 0) rows.push(['Savings plan this pay period', '−' + fmt(savings)]);
+  const since = new Date(checking.since + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const note = `Uses your ${since} balances plus what you logged since.` +
+    (payday.source === 'history' ? ' Payday is read from your past paychecks.' : '');
+  el.innerHTML = head(until) + top +
+    `<div class="safe-rows">${rows.map(([k, v]) => `<div class="safe-row"><span>${escapeHTML(k)}</span><span>${escapeHTML(v)}</span></div>`).join('')}</div>` +
+    `<p class="safe-note">${escapeHTML(note)}</p>`;
 }
 
 let _billsManaging = false;

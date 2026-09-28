@@ -117,6 +117,17 @@ snapshots cannot become the comparison endpoint.
   and deliberately NOT in `BACKUP_KEYS`. The banner shows when there is data and no backup, or changes
   newer than a backup over 7 days old (`backupState`). `init()` asks for persistent storage.
 
+### Safe to spend until payday
+The card sits between the net worth hero and the account list (`#safe-card`, rendered by
+`renderSafeToSpend()` from `renderAccountKPIs()`). Amount = `checkingNow()` (latest snapshot's
+checking accounts plus checking activity logged after it; 'Money from Last Month' is not new money)
+− `billsDueBefore()` (unpaid bill dates strictly before payday, overdue included, card-payment bills
+skipped via `cardPaymentBillIds()` because the card balance is counted in full) − `cardsOwedNow()`
+(live, like Debt Details) − `savingsPlanDue()` (the Wealth plan's monthly savings target over the pay
+period, minus transfers into savings accounts since the last payday). `nextPayday()` uses the Wealth
+plan's biweekly `payAnchor`, else the rhythm of past 'Paycheck' income (weekly, biweekly or monthly).
+Every row of the math is shown on the card; keep it that way so the number is never a mystery.
+
 ### Data layer
 - `loadSnapshots()` / `saveSnapshots()` — account balance snapshots
 - `loadTxns()` / `saveTxns()` — transactions
