@@ -97,6 +97,26 @@ exist; show the calculation as unavailable instead. The percentage denominator
 is that starting snapshot balance. Current periods end today, so future-dated
 snapshots cannot become the comparison endpoint.
 
+### Add sheet, Coming up, backups (everyday flows)
+- **Add / edit sheet.** `#txn-form-card` is a dialog sheet, not a Tracker card. It opens from the
+  + button (`#fab-add-txn`, hidden on Things and Africa), the Accounts quick action, a transaction row
+  (edit) or a bill's Mark paid. The hidden/native selects (`#txn-type`, `#txn-category`, `#txn-account`,
+  `#txn-date`) stay the source of truth and `saveTransaction()` still validates them; chips only set
+  them. `saveTransaction()` returns the saved id or null. Typing a description fills category and
+  account from `txnSuggestion()` (your most common past combination) unless you already picked one.
+- **Transactions list.** `renderTransactionLog()` groups by day (`groupTxnsByDay`); one row per
+  transaction with `data-edit`; delete lives inside the edit sheet. Type chips mirror `#filter-type`.
+- **Coming up (bills).** A bill marked paid stores `paidThrough` (the due date paid), `lastPaidOn`
+  and `lastPaidTxn`; `billDueDate()` is then the first date after `paidThrough` (can be overdue).
+  Bills never marked paid keep the old next-date-on-or-after-today behaviour. Mark paid logs today's
+  transaction via `billTemplate()` (past entries with the bill's name, else `BILL_KEYWORDS`); if
+  amount, category or a live account is missing it opens the sheet prefilled instead. Undo removes the
+  logged row and restores the bill. Delete is behind Manage bills.
+- **Backups.** `moneytrack_last_change` (set by `queueDriveSync()`, which every data save calls) and
+  `moneytrack_last_backup` (set on any Drive save/load success and on Export JSON) are device-local
+  and deliberately NOT in `BACKUP_KEYS`. The banner shows when there is data and no backup, or changes
+  newer than a backup over 7 days old (`backupState`). `init()` asks for persistent storage.
+
 ### Data layer
 - `loadSnapshots()` / `saveSnapshots()` — account balance snapshots
 - `loadTxns()` / `saveTxns()` — transactions

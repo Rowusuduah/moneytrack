@@ -235,6 +235,88 @@ async function _gUpdateFile(fileId, content) {
   }
 }
 
+// ─── Backup freshness ────────────────────────────────────────────
+// Device-local bookkeeping, deliberately outside BACKUP_KEYS: when this device last
+// wrote data, and when that data last reached Google Drive or a downloaded file.
+const KEY_LAST_BACKUP = 'moneytrack_last_backup';   // { at: epoch ms, via: 'drive' | 'file' }
+const KEY_LAST_CHANGE = 'moneytrack_last_change';   // epoch ms of the last data write
+const BACKUP_STALE_DAYS = 7;
+
+function _agoText(ms) {
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`;
+  const d = Math.floor(h / 24);
+  return `${d} day${d === 1 ? '' : 's'} ago`;
+}
+
+// Whether to show the backup banner. An old backup is fine while nothing has
+// changed since; an unknown last change (first run after this update) is too.
+function backupState({ hasData, lastBackup, lastChange, now }) {
+  if (!hasData) return { show: false };
+  if (!lastBackup || !isFinite(lastBackup.at)) return { show: true, title: 'No backup on this device yet' };
+  const age = now - lastBackup.at;
+  const changedSince = lastChange != null && lastChange > lastBackup.at;
+  if (!changedSince || age <= BACKUP_STALE_DAYS * 86400000) return { show: false };
+  return { show: true, title: `Last backup: ${_agoText(age)}` };
+}
+
+function backupStatusLine(lastBackup, now) {
+  if (!lastBackup || !isFinite(lastBackup.at)) return 'No backup on this device yet';
+  return `Last backup: ${_agoText(now - lastBackup.at)}, ${lastBackup.via === 'file' ? 'as a downloaded file' : 'to Google Drive'}`;
+}
+
+function loadLastBackup() {
+  try {
+    const v = JSON.parse(localStorage.getItem(KEY_LAST_BACKUP) || 'null');
+    return v && isFinite(v.at) ? v : null;
+  } catch { return null; }
+}
+
+function _markDataChanged() {
+  try { localStorage.setItem(KEY_LAST_CHANGE, String(Date.now())); } catch { /* storage full or blocked */ }
+  renderBackupUI();
+}
+
+// Called when this device's data has reached Google Drive or a downloaded file.
+function recordBackup(via) {
+  try { localStorage.setItem(KEY_LAST_BACKUP, JSON.stringify({ at: Date.now(), via })); } catch { /* storage full or blocked */ }
+  renderBackupUI();
+}
+
+function renderBackupUI() {
+  const banner = document.getElementById('backup-banner');
+  const line = document.getElementById('backup-status-line');
+  if (!banner && !line) return;
+  const lastBackup = loadLastBackup();
+  const rawChange = localStorage.getItem(KEY_LAST_CHANGE);
+  const state = backupState({
+    hasData: loadTxns().length > 0 || loadSnapshots().length > 0,
+    lastBackup,
+    lastChange: rawChange ? Number(rawChange) : null,
+    now: Date.now(),
+  });
+  if (banner) {
+    banner.classList.toggle('hidden', !state.show);
+    const title = document.getElementById('backup-banner-title');
+    if (title && state.title) title.textContent = state.title;
+  }
+  if (line) line.textContent = backupStatusLine(lastBackup, Date.now());
+}
+
+// Ask the browser to keep this site's storage instead of clearing it under pressure.
+function requestPersistentStorage() {
+  try {
+    const st = navigator.storage;
+    if (!st || typeof st.persist !== 'function') return;
+    Promise.resolve(typeof st.persisted === 'function' ? st.persisted() : false)
+      .then(already => already || st.persist())
+      .catch(() => {});
+  } catch { /* very old browser */ }
+}
+
 // Safety backup — saves current localStorage to a recovery key before any overwrite.
 // Keeps up to 3 rolling backups so data is always recoverable.
 const KEY_SAFETY_BACKUP = 'moneytrack_safety_backup';
@@ -311,6 +393,7 @@ function saveToDrive() {
       }
       localStorage.setItem(KEY_GDRIVE_CONNECTED, '1');
       _driveRetries = 0;
+      recordBackup('drive');
       _gSetStatus(`Saved ${new Date().toLocaleTimeString()}`);
     } catch (err) {
       if (err._gStatus === 401) {
@@ -370,6 +453,7 @@ function loadFromDrive() {
       renderTracker();
       renderAnalysisTab();
       _driveLoadRetries = 0;
+      recordBackup('drive');
       _gSetStatus(`Loaded ${parsed._exported || ''}`);
     } catch (err) {
       if (err._gStatus === 401) {
@@ -418,6 +502,7 @@ async function autoLoadFromDrive() {
         const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
         if (fileId) { await _gUpdateFile(fileId, json); }
         else { fileId = await _gCreateFile(json); localStorage.setItem(KEY_GDRIVE_FILE, fileId); }
+        recordBackup('drive');
         _gSetStatus(`Uploaded local data ${new Date().toLocaleTimeString()}`);
       } catch (upErr) {
         console.error('[MoneyTrack Drive auto-upload]', upErr);
@@ -436,6 +521,7 @@ async function autoLoadFromDrive() {
     renderBudgetCard();
     renderTracker();
     renderAnalysisTab();
+    recordBackup('drive');   // this device now holds exactly the Drive copy
     _gSetStatus(`Synced ${parsed._exported || ''}`);
   } catch (err) {
     if (err._gStatus === 401) { _gAccessToken = null; _gSetStatus(''); return; }
@@ -483,6 +569,7 @@ async function _runDriveSync() {
     }
     if (fileId) { await _gUpdateFile(fileId, json); }
     else { fileId = await _gCreateFile(json); localStorage.setItem(KEY_GDRIVE_FILE, fileId); }
+    recordBackup('drive');
     _gSetStatus(`Auto-saved ${new Date().toLocaleTimeString()}`);
     _autoSaveRetrying = false;
   } catch (err) {
@@ -500,6 +587,7 @@ async function _runDriveSync() {
 }
 
 function queueDriveSync() {
+  _markDataChanged();   // every data save passes through here
   if (!localStorage.getItem(KEY_GDRIVE_CONNECTED)) return;
   if (_driveSyncTimer) clearTimeout(_driveSyncTimer);
   _driveSyncTimer = setTimeout(() => { _driveSyncTimer = null; _runDriveSync(); }, 3000);
@@ -530,6 +618,21 @@ function autoSyncDrive() {
 }
 
 // ─── Toast Notifications ─────────────────────────────────────────
+// A toast with one action button (e.g. Undo), shown for `ms` or until used.
+function showActionToast(message, actionLabel, onAction, ms = 7000) {
+  const el = document.getElementById('action-toast');
+  const text = document.getElementById('action-toast-text');
+  const btn = document.getElementById('action-toast-btn');
+  if (!el || !text || !btn) return;
+  text.textContent = message;
+  btn.textContent = actionLabel;
+  clearTimeout(el._timer);
+  const hide = () => { el.classList.add('hidden'); btn.onclick = null; };
+  btn.onclick = () => { hide(); onAction(); };
+  el.classList.remove('hidden');
+  el._timer = setTimeout(hide, ms);
+}
+
 function showToast(message, type = 'info') {
   let el = document.getElementById('toast-msg');
   if (!el) {
@@ -742,9 +845,12 @@ function fmtDate(iso) {
   return new Date(+y, +m - 1, +d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function todayISO() {
-  const d = new Date();
+function toLocalISO(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function todayISO() {
+  return toLocalISO(new Date());
 }
 
 function isISODateOnOrBefore(value, throughISO) {
@@ -1906,40 +2012,230 @@ function renderFinancialRatios() {
 }
 
 // ─── Bill Reminders ──────────────────────────────────────────────
+// Next date a bill is due. Once marked paid, a bill is due on its first date
+// after the paid one (which may already be past, i.e. overdue); a bill never
+// marked paid keeps the reminder behaviour: next date on or after today.
+function billDueDate(bill, today) {
+  const t = new Date(today); t.setHours(0, 0, 0, 0);
+  if (!bill.paidThrough) return getNextDueDate(bill, t);
+  if (bill.frequency === 'once') return null;
+  const after = new Date(bill.paidThrough + 'T00:00:00');
+  after.setDate(after.getDate() + 1);
+  return getNextDueDate(bill, after);
+}
+
+// Bill names that say what they are, for bills never logged before.
+const BILL_KEYWORDS = [
+  [/\brent\b/, 'Rent'], [/mortgage/, 'Mortgage'],
+  [/electric|\bteco\b|duke energy|\bpower\b/, 'Electricity'], [/\bwater\b/, 'Water'],
+  [/internet|spectrum|xfinity|comcast|fiber|frontier/, 'Internet'],
+  [/phone|mobile|verizon|t-mobile|\bmint\b|at&t|cricket/, 'Phone'],
+  [/geico|progressive|state farm|allstate|car insurance|auto insurance/, 'Car Insurance'],
+  [/insurance/, 'Insurance'],
+  [/netflix|spotify|hulu|disney|youtube|apple music|\bmax\b|prime video|peacock|paramount/, 'Streaming'],
+  [/\bgym\b|fitness|crunch/, 'Gym'],
+  [/tithe/, 'Tithe'],
+  [/icloud|google one|adobe|chatgpt|claude|subscription|patreon/, 'Subscriptions'],
+  [/car payment|auto loan/, 'Car Payment'],
+  [/loan|nelnet|mohela/, 'Loan Payment'],
+  [/tuition/, 'Education'],
+];
+function billKeywordCategories() { return [...new Set(BILL_KEYWORDS.map(k => k[1]))]; }
+
+// How to log a bill payment: copy how it was logged before (the bill's own account
+// wins), else guess the category from its name. null = ask in the Add sheet.
+function billTemplate(bill, txns) {
+  const exp = txnSuggestion(bill.name, txns, 'expense');
+  if (exp) return { type: 'expense', category: exp.category, account: bill.account || exp.account, toAccount: '' };
+  const tr = txnSuggestion(bill.name, txns, 'transfer');
+  if (tr) return { type: 'transfer', category: tr.category, account: bill.account || tr.account, toAccount: tr.toAccount };
+  const name = normalizeDesc(bill.name);
+  const hit = BILL_KEYWORDS.find(([re]) => re.test(name));
+  return hit ? { type: 'expense', category: hit[1], account: bill.account || '', toAccount: '' } : null;
+}
+
+// The transaction a "Mark paid" logs today, and the bill moved past `due`.
+// The stored bill is not mutated; lastPaidTxn lets Undo remove the right row.
+function payBill(bill, due, todayIso, template, id) {
+  const dueIso = typeof due === 'string' ? due : toLocalISO(due);
+  const type = template.type === 'transfer' ? 'transfer' : 'expense';
+  const txn = {
+    id, date: todayIso, type,
+    amount: roundMoney(safeAmt(bill.amount)),
+    account: bill.account || template.account || '',
+    toAccount: type === 'transfer' ? (template.toAccount || '') : '',
+    category: template.category,
+    description: bill.name,
+    recurring: '',
+  };
+  return { txn, bill: { ...bill, paidThrough: dueIso, lastPaidOn: todayIso, lastPaidTxn: id } };
+}
+
+// Total of every unpaid bill date from now through `days` ahead, overdue ones included.
+function billsDueTotal(bills, today, days) {
+  const start = new Date(today); start.setHours(0, 0, 0, 0);
+  const end = new Date(start); end.setDate(end.getDate() + days);
+  let total = 0;
+  for (const bill of bills || []) {
+    const amt = safeAmt(bill.amount);
+    if (!amt) continue;
+    let b = bill, due = billDueDate(b, start), guard = 0;
+    while (due && due <= end && guard++ < 60) {
+      total += amt;
+      if (b.frequency === 'once') break;
+      b = { ...b, paidThrough: toLocalISO(due) };
+      due = billDueDate(b, start);
+    }
+  }
+  return roundMoney(total);
+}
+
+let _billsManaging = false;
+
+function _billDayText(d) {
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+// "Coming up": the next date of every bill, with Mark paid. Delete lives behind Manage bills.
 function renderBillReminders() {
   const el = document.getElementById('bills-content');
   if (!el) return;
   const bills = loadBills();
   const today = new Date(); today.setHours(0,0,0,0);
+  const todayIso = toLocalISO(today);
 
-  const withDue = bills.map(bill => {
-    const due = getNextDueDate(bill);
-    const daysUntil = due ? Math.round((due - today) / 86400000) : null;
-    return { ...bill, due, daysUntil };
+  const totalEl = document.getElementById('bills-due-total');
+  if (totalEl) totalEl.innerHTML = bills.length ? `Still due in 30 days: <b>${escapeHTML(fmt(billsDueTotal(bills, today, 30)))}</b>` : '';
+  const manageBtn = document.getElementById('manage-bills');
+  if (manageBtn) {
+    manageBtn.classList.toggle('hidden', !bills.length);
+    manageBtn.textContent = _billsManaging ? 'Done' : 'Manage bills';
+    manageBtn.setAttribute('aria-pressed', String(_billsManaging));
+  }
+
+  if (!bills.length) {
+    el.innerHTML = '<p class="bills-empty">No bills yet. Add rent, your phone and subscriptions to see what is coming up.</p>';
+    return;
+  }
+
+  const rows = bills.map(bill => {
+    const due = billDueDate(bill, today);
+    const days = due ? Math.round((due - today) / 86400000) : null;
+    return { bill, due, days, paidToday: bill.lastPaidOn === todayIso };
   }).sort((a, b) => {
-    if (a.daysUntil === null) return 1;
-    if (b.daysUntil === null) return -1;
-    return a.daysUntil - b.daysUntil;
+    if (a.paidToday !== b.paidToday) return a.paidToday ? -1 : 1;   // just-paid rows stay on top as feedback
+    if (a.days === null) return 1;
+    if (b.days === null) return -1;
+    return a.days - b.days;
   });
 
-  if (!withDue.length) {
-    el.innerHTML = '<p style="color:var(--muted);font-size:13px">No bills added yet. Click + Add Bill to get started.</p>';
-  } else {
-    el.innerHTML = withDue.map(b => {
-      const urgency  = b.daysUntil === null ? '' : b.daysUntil < 0 ? 'bill-overdue' : b.daysUntil <= 3 ? 'bill-urgent' : b.daysUntil <= 7 ? 'bill-soon' : '';
-      const dueLabel = b.daysUntil === null ? 'Unknown' : b.daysUntil === 0 ? 'Due today' : b.daysUntil < 0 ? `${Math.abs(b.daysUntil)}d overdue` : `In ${b.daysUntil}d`;
-      const amtLabel = b.amount ? fmt(b.amount) : '—';
-      return `<div class="bill-item ${urgency}">
-        <div class="bill-info">
-          <div class="bill-name">${escapeHTML(b.name)}</div>
-          <div class="bill-meta">${escapeHTML(b.frequency)}${b.account ? ' · ' + escapeHTML(ACCOUNT_LABELS[b.account] || b.account) : ''}</div>
-        </div>
-        <div class="bill-amount">${amtLabel}</div>
-        <div class="bill-due">${escapeHTML(dueLabel)}</div>
-        <button class="btn btn-ghost btn-sm" data-del-bill="${escapeHTML(b.id)}" aria-label="Delete bill">✕</button>
-      </div>`;
-    }).join('');
+  el.innerHTML = rows.map(({ bill, due, days, paidToday }) => {
+    const amt = bill.amount ? fmt(bill.amount) : '—';
+    let meta, cls = '';
+    if (paidToday) {
+      meta = `<b class="bill-paid-text">Paid today</b>${due ? ' · next due ' + escapeHTML(_billDayText(due)) : ''}`;
+      cls = 'bill-row--paid';
+    } else if (!due) {
+      meta = 'No upcoming date';
+    } else if (days < 0) {
+      meta = `${Math.abs(days)} day${days === -1 ? '' : 's'} overdue · was due ${escapeHTML(_billDayText(due))}`;
+      cls = 'bill-row--overdue';
+    } else if (days === 0) {
+      meta = 'Due today'; cls = 'bill-row--soon';
+    } else if (days === 1) {
+      meta = 'Due tomorrow'; cls = 'bill-row--soon';
+    } else {
+      meta = `Due ${escapeHTML(_billDayText(due))}${days <= 3 ? ` · in ${days} days` : ''}`;
+      if (days <= 3) cls = 'bill-row--soon';
+    }
+    const account = bill.account ? ` · ${escapeHTML(ACCOUNT_LABELS[bill.account] || bill.account)}` : '';
+    let action;
+    if (_billsManaging) {
+      action = `<button type="button" class="bill-del" data-del-bill="${escapeHTML(bill.id)}" aria-label="Delete bill ${escapeHTML(bill.name)}"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
+    } else if (paidToday) {
+      action = `<span class="bill-paid-badge" role="img" aria-label="Paid"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>`;
+    } else if (due) {
+      action = `<button type="button" class="bill-pay" data-pay-bill="${escapeHTML(bill.id)}">Mark paid</button>`;
+    } else {
+      action = '';
+    }
+    return `<div class="bill-row ${cls}">
+      <div class="bill-main">
+        <div class="bill-name">${escapeHTML(bill.name)}</div>
+        <div class="bill-meta">${meta}${_billsManaging ? escapeHTML(' · ' + bill.frequency) + account : ''}</div>
+      </div>
+      <div class="bill-amount">${escapeHTML(amt)}</div>
+      ${action}
+    </div>`;
+  }).join('');
+}
+
+// One tap: log the payment the way this bill was logged before and move it to its next date.
+// Without an amount, a category or a live account, the Add sheet opens prefilled instead.
+function markBillPaid(id) {
+  const bills = loadBills();
+  const idx = bills.findIndex(b => b.id === id);
+  if (idx === -1) return;
+  const bill = bills[idx];
+  const today = new Date(); today.setHours(0,0,0,0);
+  const due = billDueDate(bill, today);
+  if (!due) return;
+  const txns = loadTxns();
+  const template = billTemplate(bill, txns);
+  const account = bill.account || template?.account;
+  const accountActive = activeAccounts().some(a => a.id === account);
+  if (!template || !safeAmt(bill.amount) || !accountActive) {
+    openTxnSheetForBill(bill, due, template);
+    return;
   }
+  const { txn, bill: paid } = payBill(bill, due, todayISO(), template, crypto.randomUUID());
+  txns.push(txn);
+  saveTxns(txns);
+  bills[idx] = paid;
+  saveBills(bills);
+  renderAccountsTab();
+  renderTracker();
+  showActionToast(`${bill.name} paid. ${fmt(txn.amount)} logged from ${ACCOUNT_LABELS[txn.account] || txn.account}.`,
+    'Undo', () => undoBillPaid(bill, txn.id));
+}
+
+function undoBillPaid(previousBill, txnId) {
+  saveTxns(loadTxns().filter(t => t.id !== txnId));
+  const bills = loadBills();
+  const i = bills.findIndex(b => b.id === previousBill.id);
+  if (i !== -1) { bills[i] = previousBill; saveBills(bills); }
+  renderAccountsTab();
+  renderTracker();
+  showToast(`${previousBill.name} is unpaid again`, 'info');
+}
+
+// Mark paid for a bill the app can't log on its own: the sheet opens prefilled and
+// saving it marks the bill paid (onSheetSave → finishBillPaidFromSheet).
+function openTxnSheetForBill(bill, due, template) {
+  openTxnSheet();
+  _payingBill = { id: bill.id, due: toLocalISO(due) };
+  const set = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '') el.value = v; };
+  set('txn-type', template?.type || 'expense');
+  updateToAccountVisibility();
+  set('txn-desc', bill.name);
+  set('txn-amount', bill.amount ? bill.amount : '');
+  set('txn-account', bill.account || template?.account);
+  if (template?.type === 'transfer') set('txn-to-account', template.toAccount);
+  if (template?.category && _categoryFitsType(template.category, template.type || 'expense')) set('txn-category', template.category);
+  _sheetTouched = { category: !!template, account: !!(bill.account || template?.account) };
+  const note = document.getElementById('txn-suggest-note');
+  if (note) { note.textContent = `Marking ${bill.name} paid. Check the details, then save.`; note.classList.remove('hidden'); }
+  renderSheetChips();
+  requestAnimationFrame(() => document.getElementById(bill.amount ? 'save-txn' : 'txn-amount')?.focus({ preventScroll: true }));
+}
+
+function finishBillPaidFromSheet(paying, txnId) {
+  const bills = loadBills();
+  const i = bills.findIndex(b => b.id === paying.id);
+  if (i === -1) return;
+  bills[i] = { ...bills[i], paidThrough: paying.due, lastPaidOn: todayISO(), lastPaidTxn: txnId };
+  saveBills(bills);
+  renderBillReminders();
 }
 
 function showAddBillForm() {
@@ -2029,7 +2325,9 @@ function deleteBill(id) {
   const bill  = bills.find(b => b.id === id);
   if (!bill) return;
   if (!confirm(`Remove "${bill.name}"?`)) return;
-  saveBills(bills.filter(b => b.id !== id));
+  const rest = bills.filter(b => b.id !== id);
+  saveBills(rest);
+  if (!rest.length) _billsManaging = false;
   renderBillReminders();
 }
 
@@ -2175,6 +2473,7 @@ function deleteGoal(id) {
 }
 
 function renderAccountsTab() {
+  renderBackupUI();
   renderAccountKPIs();
   renderAccountSavingsChange();
   renderNWTrend();
@@ -2603,43 +2902,81 @@ function renderAccountBreakdown(txns) {
     }).join('');
 }
 
+// Icons for transaction rows, keyed by categoryIconKey(). Stroke icons in currentColor.
+const TXN_ICON_PATHS = {
+  income:   '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5h6v2M3 12h18"/>',
+  transfer: '<path d="M4 8h14l-3-3M20 16H6l3 3"/>',
+  cart:     '<path d="M6 8h12l-1 12H7z"/><path d="M9 8a3 3 0 0 1 6 0"/>',
+  food:     '<path d="M7 3v8M5 3v5a2 2 0 0 0 4 0V3M7 11v10M16 3c-1.7 0-3 2-3 5s1.3 4 3 4v9"/>',
+  car:      '<path d="M5 16V11l2-5h10l2 5v5"/><path d="M3 16h18v3H3zM5 11h14"/><circle cx="7.5" cy="16" r=".5"/><circle cx="16.5" cy="16" r=".5"/>',
+  home:     '<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/>',
+  bolt:     '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>',
+  health:   '<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/><path d="M9 11h6M12 8v6"/>',
+  bag:      '<path d="M20 12l-8 8-8-8V4h8z"/><circle cx="8" cy="8" r="1"/>',
+  heart:    '<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/>',
+  school:   '<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2 9 2 12 0v-5"/>',
+  fun:      '<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5z"/>',
+  card:     '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M7 15h3"/>',
+  other:    '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>',
+};
+function txnIconSVG(key) {
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${TXN_ICON_PATHS[key] || TXN_ICON_PATHS.other}</svg>`;
+}
+
+// "Today, Sep 27" / "Yesterday, Sep 26" / "Fri, Sep 25"
+function txnDayLabel(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  const short = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const today = todayISO();
+  const y = new Date(today + 'T00:00:00'); y.setDate(y.getDate() - 1);
+  if (iso === today) return `Today, ${short}`;
+  if (iso === toLocalISO(y)) return `Yesterday, ${short}`;
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function syncTxnTypeChips() {
+  document.querySelectorAll('#txn-type-chips [data-filter-type]').forEach(b =>
+    b.setAttribute('aria-checked', String(b.dataset.filterType === filters.type)));
+}
+
 function renderTransactionLog(txns) {
   const el = document.getElementById('txn-list');
   const countEl = document.getElementById('txn-count');
   if (!el) return;
+  syncTxnTypeChips();
 
   if (countEl) countEl.textContent = `${txns.length} transaction${txns.length !== 1 ? 's' : ''}`;
 
   if (!txns.length) {
-    el.innerHTML = `<div class="empty-state"><div class="empty-icon">💳</div>No transactions for this period.</div>`;
+    el.innerHTML = `<div class="empty-state">No transactions for this period.</div>`;
     return;
   }
 
-  // Sort newest first
-  const sorted = [...txns].sort((a, b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
-
-  el.innerHTML = sorted.map(t => {
-    const color = t.type === 'income' ? 'var(--green)' : t.type === 'transfer' ? 'var(--blue)' : 'var(--red)';
-    const sign  = t.type === 'income' ? '+' : t.type === 'transfer' ? '→' : '-';
-    const acctLabel = ACCOUNT_LABELS[t.account] || t.account ||
-      (t.type === 'transfer' ? 'Unassigned source' : 'Unassigned account');
-    const catColor = safeColor(CATEGORY_COLORS[t.category], '#8a8aa6');
-    return `<div class="txn-item" role="listitem" data-id="${escapeHTML(t.id)}">
-      <div class="txn-dot" style="background:${color}"></div>
-      <div class="txn-info">
-        <div class="txn-desc">${escapeHTML(t.description)}</div>
-        <div class="txn-meta">
-          ${escapeHTML(fmtDate(t.date))} &nbsp;·&nbsp;
-          <span style="color:${catColor}">${escapeHTML(t.category)}</span>
-          &nbsp;·&nbsp; ${escapeHTML(acctLabel)}
-          ${t.recurring ? `&nbsp;·&nbsp;<span class="recurring-badge">${escapeHTML(t.recurring)}</span>` : ''}
-        </div>
-      </div>
-      <div class="txn-amount" style="color:${color}">${sign}${fmt(t.amount)}</div>
-      <div class="txn-actions">
-        <button class="txn-btn edit" data-edit="${escapeHTML(t.id)}" aria-label="Edit transaction">✏️</button>
-        <button class="txn-btn del"  data-del="${escapeHTML(t.id)}"  aria-label="Delete transaction">✕</button>
-      </div>
+  // Newest day first; one line per transaction, tap to edit (delete lives in the edit sheet).
+  el.innerHTML = groupTxnsByDay(txns).map(day => {
+    const total = day.spent > 0 ? `Spent ${fmt(day.spent)}` : day.received > 0 ? `Received ${fmt(day.received)}` : '';
+    const rows = day.txns.map(t => {
+      const acctLabel = ACCOUNT_LABELS[t.account] || t.account ||
+        (t.type === 'transfer' ? 'Unassigned source' : 'Unassigned account');
+      const meta = t.type === 'transfer'
+        ? `${acctLabel} to ${ACCOUNT_LABELS[t.toAccount] || t.toAccount || 'another account'}`
+        : `${t.category} · ${acctLabel}`;
+      const kind = t.type === 'income' ? 'income' : t.type === 'transfer' ? 'transfer' : 'expense';
+      const amount = (t.type === 'income' ? '+' : '') + fmt(t.amount);
+      return `<div class="txn-item" role="listitem" data-id="${escapeHTML(t.id)}">
+        <button type="button" class="txn-row" data-edit="${escapeHTML(t.id)}" aria-label="${escapeHTML(`${t.description}, ${amount}, ${meta}. Edit`)}">
+          <span class="txn-icon txn-icon--${kind}" aria-hidden="true">${txnIconSVG(categoryIconKey(t.category, t.type))}</span>
+          <span class="txn-main">
+            <span class="txn-desc">${escapeHTML(t.description)}</span>
+            <span class="txn-meta">${escapeHTML(meta)}${t.recurring ? ` · <span class="recurring-badge">${escapeHTML(t.recurring)}</span>` : ''}</span>
+          </span>
+          <span class="txn-amount txn-amount--${kind}">${escapeHTML(amount)}</span>
+        </button>
+      </div>`;
+    }).join('');
+    return `<div class="txn-day" role="listitem">
+      <div class="txn-day-head"><span class="txn-day-date">${escapeHTML(txnDayLabel(day.date))}</span><span class="txn-day-total">${escapeHTML(total)}</span></div>
+      <div class="txn-day-card" role="list">${rows}</div>
     </div>`;
   }).join('');
 }
@@ -2943,9 +3280,116 @@ function renderBalanceTrends() {
   el.innerHTML = tabsHtml + buildTrendSVG(series, last12) + legendHtml;
 }
 
+// ─── Quick add: learn from your own history ──────────────────────
+// Descriptions compare case- and spacing-insensitively ("publix ", "PUBLIX").
+function normalizeDesc(s) {
+  return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// The usual category / account (and transfer destination) for a description
+// logged before with this type: the most common combination, ties to the most
+// recent. `count` is how many past entries matched the description.
+function txnSuggestion(desc, txns, type) {
+  const key = normalizeDesc(desc);
+  if (!key) return null;
+  const combos = new Map();
+  let count = 0;
+  for (const t of txns || []) {
+    if (t.type !== type || normalizeDesc(t.description) !== key) continue;
+    count++;
+    const k = [t.category, t.account, t.toAccount || ''].join('\u0000');
+    const c = combos.get(k) || { category: t.category, account: t.account, toAccount: t.toAccount || '', n: 0, last: '' };
+    c.n++;
+    if (String(t.date) > c.last) c.last = String(t.date);
+    combos.set(k, c);
+  }
+  let best = null;
+  for (const c of combos.values()) {
+    if (!best || c.n > best.n || (c.n === best.n && c.last > best.last)) best = c;
+  }
+  return best ? { category: best.category, account: best.account, toAccount: best.toAccount, count } : null;
+}
+
+const QUICK_DEFAULT_CATS = {
+  expense:  ['Groceries', 'Dining Out', 'Gas', 'Coffee', 'Fast Food'],
+  income:   ['Paycheck', 'Freelance', 'Refund', 'Other Income', 'Bonus'],
+  transfer: ['Savings Transfer', 'Credit Card Payment', 'Investment'],
+};
+const QUICK_RECENT_DAYS = 90;
+
+// Values of `field` on this type's transactions from the last 90 days, most used first.
+function _recentTally(txns, type, todayIso, field) {
+  const from = new Date(todayIso + 'T00:00:00');
+  from.setDate(from.getDate() - QUICK_RECENT_DAYS);
+  const fromIso = toLocalISO(from);
+  const counts = new Map();
+  for (const t of txns || []) {
+    if (t.type !== type || !t[field] || t.date < fromIso || t.date > todayIso) continue;
+    counts.set(t[field], (counts.get(t[field]) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+}
+
+// One-tap category choices for the Add sheet: your most used, then defaults.
+function recentCategories(txns, type, todayIso, limit = 5) {
+  const out = _recentTally(txns, type, todayIso, 'category');
+  for (const c of QUICK_DEFAULT_CATS[type] || []) if (!out.includes(c)) out.push(c);
+  return out.slice(0, limit);
+}
+
+// One-tap account choices: your most used accounts that still exist, then the rest in order.
+function recentAccounts(txns, type, todayIso, validIds, limit = 2) {
+  const valid = new Set(validIds);
+  const out = _recentTally(txns, type, todayIso, 'account').filter(id => valid.has(id));
+  for (const id of validIds) if (!out.includes(id)) out.push(id);
+  return out.slice(0, limit);
+}
+
+// Transactions grouped by day, newest day first, with what was spent and received.
+// "Spent" includes money spent straight from savings; transfers are neither.
+function groupTxnsByDay(txns) {
+  const byDate = new Map();
+  for (const t of txns || []) {
+    if (!byDate.has(t.date)) byDate.set(t.date, []);
+    byDate.get(t.date).push(t);
+  }
+  return [...byDate.entries()]
+    .sort((a, b) => String(b[0]).localeCompare(String(a[0])))
+    .map(([date, list]) => ({
+      date,
+      txns: list.sort((a, b) => String(b.id).localeCompare(String(a.id))),
+      spent:    roundMoney(list.filter(t => isRealExpense(t) || isSavingsSpend(t)).reduce((s, t) => s + safeAmt(t.amount), 0)),
+      received: roundMoney(list.filter(isRealIncome).reduce((s, t) => s + safeAmt(t.amount), 0)),
+    }));
+}
+
+const CATEGORY_ICON_GROUPS = {
+  home:   ['Rent', 'Mortgage', 'HOA / Community Fees', 'Home Maintenance', 'Home Insurance', 'Home & Furniture'],
+  bolt:   ['Utilities', 'Electricity', 'Water', 'Gas Bill', 'Trash', 'Internet', 'Phone', 'Subscriptions', 'Laundry', 'Bill Reserve'],
+  cart:   ['Groceries', 'Household Essentials', 'Amazon', 'Online Shopping'],
+  food:   ['Dining Out', 'Fast Food', 'Food Delivery', 'Snacks & Drinks', 'Coffee'],
+  car:    ['Gas', 'Rideshare', 'Car Insurance', 'Parking', 'Travel', 'Car Maintenance', 'Car Repair', 'Car Payment',
+           'Registration / DMV', 'Car Wash', 'Public Transit', 'Tolls', 'Flights'],
+  health: ['Medical', 'Pharmacy', 'Gym', 'Insurance'],
+  bag:    ['Clothing', 'Shoes & Accessories', 'Electronics', 'Beauty & Grooming', 'Personal Care'],
+  heart:  ['Tithe', 'Offering', 'Family Support', 'Family Support (Ghana)', 'Family Support (US)', 'Friends Support',
+           'Treating Friends', 'Gifts', 'Donations'],
+  school: ['Education', 'School Supplies'],
+  fun:    ['Streaming', 'Events', 'Hobbies'],
+  card:   ['Loan Payment', 'Credit Card Payment', 'Bank Fee', 'Loan Given'],
+};
+const _CATEGORY_ICON = new Map(Object.entries(CATEGORY_ICON_GROUPS).flatMap(([k, cats]) => cats.map(c => [c, k])));
+
+function categoryIconKey(category, type) {
+  if (type === 'income') return 'income';
+  if (type === 'transfer') return 'transfer';
+  return _CATEGORY_ICON.get(category) || 'other';
+}
+
 // ─── Transaction CRUD ────────────────────────────────────────────
 let editingId = null;
 
+// Returns the saved transaction's id, or null when validation stopped it.
 function saveTransaction() {
   const date      = document.getElementById('txn-date')?.value;
   const type      = document.getElementById('txn-type')?.value;
@@ -2958,49 +3402,53 @@ function saveTransaction() {
 
   if (!date || isNaN(amtRaw) || amtRaw <= 0 || !desc || !acct) {
     alert('Please fill in date, description, source account, and a positive amount.');
-    return;
+    return null;
   }
   if (date > todayISO()) {
     alert('A transaction cannot be dated in the future.');
-    return;
+    return null;
   }
   if (type === 'transfer' && !toAcct) {
     alert('Please select a destination account for the transfer.');
-    return;
+    return null;
   }
   if (type === 'transfer' && acct === toAcct) {
     alert('Choose two different accounts for a transfer.');
-    return;
+    return null;
   }
   const catSelect = document.getElementById('txn-category');
   const catGroup = catSelect?.selectedOptions?.[0]?.parentElement?.label || '';
   if (type === 'income' && catGroup !== 'Income') {
     alert('Please choose an Income category for an income transaction.');
-    return;
+    return null;
   }
   if (type === 'expense' && catGroup === 'Income') {
     alert('Please choose an expense category for an expense transaction.');
-    return;
+    return null;
   }
 
   const txns = loadTxns();
   const savedToAccount = type === 'transfer' ? toAcct : '';
+  let savedId;
 
   if (editingId !== null) {
     const idx = txns.findIndex(t => String(t.id) === String(editingId));
     if (idx !== -1) {
       txns[idx] = { ...txns[idx], date, type, amount: roundMoney(amtRaw), account: acct, toAccount: savedToAccount, category: cat, description: desc, recurring };
+      savedId = txns[idx].id;
     }
     editingId = null;
     cancelEdit();
   } else {
     const id = crypto.randomUUID();
+    savedId = id;
     txns.push({ id, date, type, amount: roundMoney(amtRaw), account: acct, toAccount: savedToAccount, category: cat, description: desc, recurring });
   }
 
   saveTxns(txns);
   resetTxnForm();
   renderTracker();
+  return savedId || null;
 }
 
 function editTransaction(id) {
@@ -3022,35 +3470,25 @@ function editTransaction(id) {
   if (toAcctEl) toAcctEl.value = t.toAccount || '';
   updateToAccountVisibility();
 
-  const lbl = document.getElementById('txn-form-label');
-  if (lbl) lbl.textContent = 'Edit Transaction';
-  const savBtn = document.getElementById('save-txn');
-  if (savBtn) savBtn.textContent = 'Save Changes';
-  document.getElementById('cancel-edit')?.classList.remove('hidden');
-
-  expandCardOf(document.getElementById('txn-date'));
-  document.getElementById('txn-date')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  openTxnSheet({ edit: true });
 }
 
 function cancelEdit() {
   editingId = null;
   resetTxnForm();
-  const lbl = document.getElementById('txn-form-label');
-  if (lbl) lbl.textContent = 'Add Transaction';
-  const savBtn = document.getElementById('save-txn');
-  if (savBtn) savBtn.textContent = 'Add Transaction';
-  document.getElementById('cancel-edit')?.classList.add('hidden');
+  setSheetMode(false);
 }
 
 function deleteTransaction(id) {
   const txns = loadTxns();
   const idx = txns.findIndex(t => String(t.id) === String(id));
-  if (idx === -1) return;
-  if (!confirm(`Delete "${txns[idx].description}"?`)) return;
+  if (idx === -1) return false;
+  if (!confirm(`Delete "${txns[idx].description}"?`)) return false;
   txns.splice(idx, 1);
   saveTxns(txns);
   if (String(editingId) === String(id)) cancelEdit();
   renderTracker();
+  return true;
 }
 
 function resetTxnForm() {
@@ -3081,6 +3519,265 @@ function updateToAccountVisibility() {
   const selectedGroup = category?.selectedOptions?.[0]?.parentElement?.label || '';
   if (category && type === 'expense' && selectedGroup === 'Income') category.value = 'Miscellaneous';
   if (category && type === 'income' && selectedGroup !== 'Income') category.value = 'Other Income';
+}
+
+// ─── Add / edit sheet ────────────────────────────────────────────
+// The transaction form is a sheet that opens from the + button, the Accounts quick
+// action, a transaction row (edit) or a bill's Mark paid. The hidden selects stay
+// the source of truth; chips are one-tap shortcuts that set them.
+let _sheetTouched = { category: false, account: false };
+let _payingBill = null;          // { id, due } while the sheet is logging a bill payment
+let _sheetReturnFocus = null;
+
+const SHEET_ICON_SEARCH = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>';
+
+function _sheet(id) { return document.getElementById(id); }
+
+// While the sheet is open, everything else on the page is inert, so Tab and screen
+// readers stay inside the dialog (toasts stay live).
+function _setPageInert(on) {
+  const keep = new Set(['txn-form-card', 'txn-sheet-scrim', 'toast-msg', 'action-toast']);
+  for (const el of document.body.children) {
+    if (keep.has(el.id) || el.tagName === 'SCRIPT') continue;
+    if (on) el.setAttribute('inert', ''); else el.removeAttribute('inert');
+  }
+}
+
+function isTxnSheetOpen() {
+  const sheet = _sheet('txn-form-card');
+  return !!sheet && !sheet.classList.contains('hidden');
+}
+
+function setSheetMode(edit) {
+  const lbl = _sheet('txn-form-label');
+  if (lbl) lbl.textContent = edit ? 'Edit transaction' : 'New transaction';
+  const save = _sheet('save-txn');
+  if (save) save.textContent = edit ? 'Save changes' : 'Save';
+  _sheet('save-txn-another')?.classList.toggle('hidden', edit);
+  _sheet('txn-delete-in-sheet')?.classList.toggle('hidden', !edit);
+}
+
+// The optgroup a category option sits in ('Income', …), or null if it is not an option.
+function _categoryGroup(cat) {
+  const opt = [...(_sheet('txn-category')?.options || [])].find(o => o.value === cat);
+  return opt ? (opt.parentElement?.label || '') : null;
+}
+function _categoryFitsType(cat, type) {
+  const group = _categoryGroup(cat);
+  if (group === null) return false;
+  if (type === 'income') return group === 'Income';
+  if (type === 'expense') return group !== 'Income';
+  return true;
+}
+
+function _toggleMore(id, show) {
+  const el = _sheet(id);
+  if (!el) return false;
+  const open = show === undefined ? el.classList.contains('hidden') : show;
+  el.classList.toggle('hidden', !open);
+  return open;
+}
+
+function renderSheetChips() {
+  const type = _sheet('txn-type')?.value || 'expense';
+  document.querySelectorAll('#txn-type-seg [data-txn-type]').forEach(b =>
+    b.setAttribute('aria-checked', String(b.dataset.txnType === type)));
+  const txns = loadTxns();
+  const today = todayISO();
+
+  const catSel = _sheet('txn-category');
+  const catChips = _sheet('txn-cat-chips');
+  if (catSel && catChips) {
+    const cur = catSel.value;
+    const cats = recentCategories(txns, type, today, 8).filter(c => _categoryFitsType(c, type)).slice(0, 5);
+    if (cur && !cats.includes(cur)) cats.unshift(cur);
+    const moreOpen = !_sheet('txn-cat-more')?.classList.contains('hidden');
+    catChips.innerHTML = cats.map(c =>
+      `<button type="button" class="chip" data-cat="${escapeHTML(c)}" aria-pressed="${c === cur}">${escapeHTML(c)}</button>`).join('') +
+      `<button type="button" class="chip chip-more" data-cat-more aria-expanded="${moreOpen}">${SHEET_ICON_SEARCH}All categories</button>`;
+  }
+
+  const acctSel = _sheet('txn-account');
+  const acctChips = _sheet('txn-acct-chips');
+  if (acctSel && acctChips) {
+    const cur = acctSel.value;
+    const ids = recentAccounts(txns, type, today, activeAccounts().map(a => a.id), 2);
+    if (cur && !ids.includes(cur)) ids.unshift(cur);
+    const moreOpen = !_sheet('txn-acct-more')?.classList.contains('hidden');
+    // Chips drop a trailing "(Owed)"-style note so three fit on a phone row; the full name stays in the tooltip.
+    acctChips.innerHTML = ids.map(id => {
+      const full = ACCOUNT_LABELS[id] || id;
+      return `<button type="button" class="chip" data-acct="${escapeHTML(id)}" aria-pressed="${id === cur}" title="${escapeHTML(full)}">${escapeHTML(full.replace(/\s*\([^)]*\)\s*$/, '') || full)}</button>`;
+    }).join('') +
+      `<button type="button" class="chip chip-more" data-acct-more aria-expanded="${moreOpen}">Other</button>`;
+    const lbl = _sheet('txn-acct-label');
+    if (lbl) lbl.textContent = type === 'income' ? 'Paid into' : type === 'transfer' ? 'From' : 'Paid with';
+  }
+
+  const date = _sheet('txn-date')?.value || today;
+  const y = new Date(today + 'T00:00:00'); y.setDate(y.getDate() - 1);
+  const which = date === today ? 'today' : date === toLocalISO(y) ? 'yesterday' : 'pick';
+  document.querySelectorAll('#txn-date-chips [data-when]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.when === which)));
+  const pickLbl = _sheet('txn-date-pick-label');
+  if (pickLbl) pickLbl.textContent = which === 'pick' ? fmtDate(date) : 'Pick a date';
+}
+
+// Fill category / account from past entries with this description, unless you already chose.
+function applyTxnSuggestion() {
+  if (editingId !== null) return;
+  const note = _sheet('txn-suggest-note');
+  const type = _sheet('txn-type')?.value || 'expense';
+  const desc = (_sheet('txn-desc')?.value || '').trim();
+  const s = txnSuggestion(desc, loadTxns(), type);
+  let filled = false;
+  if (s) {
+    if (!_sheetTouched.category && _categoryFitsType(s.category, type)) { _sheet('txn-category').value = s.category; filled = true; }
+    const active = new Set(activeAccounts().map(a => a.id));
+    if (!_sheetTouched.account && active.has(s.account)) { _sheet('txn-account').value = s.account; filled = true; }
+    if (type === 'transfer' && s.toAccount && active.has(s.toAccount) && !_sheetTouched.account) _sheet('txn-to-account').value = s.toAccount;
+  }
+  if (note && !_payingBill) {
+    if (filled) {
+      const noun = type === 'expense' ? 'buy' : type === 'income' ? 'payment' : 'transfer';
+      note.textContent = s.count === 1 ? `Filled in from your last ${desc} ${noun}` : `Filled in from your last ${s.count} ${desc} ${noun}s`;
+    }
+    note.classList.toggle('hidden', !filled);
+  }
+  renderSheetChips();
+}
+
+function refreshTxnDescList() {
+  const list = _sheet('txn-desc-list');
+  if (!list) return;
+  const counts = new Map();
+  for (const t of loadTxns()) {
+    const d = String(t.description || '').trim();
+    if (d) counts.set(d, (counts.get(d) || 0) + 1);
+  }
+  list.innerHTML = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 80)
+    .map(([d]) => `<option value="${escapeHTML(d)}"></option>`).join('');
+}
+
+function openTxnSheet({ edit = false } = {}) {
+  const sheet = _sheet('txn-form-card');
+  if (!sheet) return;
+  if (!edit) {
+    if (editingId !== null) cancelEdit(); else resetTxnForm();
+    const type = _sheet('txn-type')?.value || 'expense';
+    const best = recentAccounts(loadTxns(), type, todayISO(), activeAccounts().map(a => a.id), 1)[0];
+    if (best && _sheet('txn-account')) _sheet('txn-account').value = best;
+  }
+  _sheetTouched = { category: edit, account: edit };
+  setSheetMode(edit);
+  ['txn-cat-more', 'txn-acct-more', 'txn-date-more'].forEach(id => _toggleMore(id, false));
+  const recurring = _sheet('txn-recurring')?.value;
+  _toggleMore('txn-repeat-group', !!recurring);
+  _sheet('txn-repeat-toggle')?.setAttribute('aria-expanded', String(!!recurring));
+  if (!_payingBill) _sheet('txn-suggest-note')?.classList.add('hidden');
+  refreshTxnDescList();
+  renderSheetChips();
+  if (!isTxnSheetOpen()) _sheetReturnFocus = document.activeElement;
+  sheet.classList.remove('hidden');
+  _sheet('txn-sheet-scrim')?.classList.remove('hidden');
+  document.body.classList.add('sheet-open');
+  _setPageInert(true);
+  requestAnimationFrame(() => _sheet(edit ? 'txn-sheet-close' : 'txn-amount')?.focus({ preventScroll: true }));
+}
+
+function closeTxnSheet() {
+  if (!isTxnSheetOpen()) return;
+  _sheet('txn-form-card').classList.add('hidden');
+  _sheet('txn-sheet-scrim')?.classList.add('hidden');
+  document.body.classList.remove('sheet-open');
+  _setPageInert(false);
+  if (editingId !== null) cancelEdit();
+  _payingBill = null;
+  _sheet('txn-suggest-note')?.classList.add('hidden');
+  const back = _sheetReturnFocus;
+  _sheetReturnFocus = null;
+  if (back && document.contains(back)) back.focus({ preventScroll: true });
+}
+
+// Save from the sheet. "Save and add another" keeps the type, account and date.
+function onSheetSave(another) {
+  const wasEditing = editingId !== null;
+  const keep = { type: _sheet('txn-type')?.value, account: _sheet('txn-account')?.value, date: _sheet('txn-date')?.value };
+  const savedId = saveTransaction();
+  if (!savedId) return;
+  if (_payingBill) { finishBillPaidFromSheet(_payingBill, savedId); _payingBill = null; }
+  if (another && !wasEditing) {
+    if (_sheet('txn-type')) _sheet('txn-type').value = keep.type;
+    updateToAccountVisibility();
+    if (_sheet('txn-account')) _sheet('txn-account').value = keep.account;
+    if (_sheet('txn-date')) _sheet('txn-date').value = keep.date;
+    _sheetTouched = { category: false, account: true };
+    _sheet('txn-suggest-note')?.classList.add('hidden');
+    refreshTxnDescList();
+    renderSheetChips();
+    _sheet('txn-amount')?.focus({ preventScroll: true });
+    showToast('Saved. Add the next one.', 'success');
+  } else {
+    closeTxnSheet();
+    showToast(wasEditing ? 'Changes saved' : 'Transaction saved', 'success');
+  }
+  if (_sheet('sec-accounts')?.classList.contains('on')) renderAccountsTab();
+}
+
+function bindTxnSheet() {
+  const sheet = _sheet('txn-form-card');
+  if (!sheet || sheet._bound) return;
+  sheet._bound = true;
+  _sheet('txn-sheet-close')?.addEventListener('click', closeTxnSheet);
+  _sheet('txn-sheet-scrim')?.addEventListener('click', closeTxnSheet);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && isTxnSheetOpen()) closeTxnSheet(); });
+  _sheet('save-txn-another')?.addEventListener('click', () => onSheetSave(true));
+  _sheet('txn-delete-in-sheet')?.addEventListener('click', () => {
+    if (editingId !== null && deleteTransaction(editingId)) { closeTxnSheet(); showToast('Transaction deleted', 'info'); }
+  });
+  _sheet('txn-type-seg')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-txn-type]');
+    if (!b) return;
+    _sheet('txn-type').value = b.dataset.txnType;
+    updateToAccountVisibility();
+    applyTxnSuggestion();
+  });
+  _sheet('txn-cat-chips')?.addEventListener('click', e => {
+    const chip = e.target.closest('[data-cat]');
+    if (chip) { _sheet('txn-category').value = chip.dataset.cat; _sheetTouched.category = true; renderSheetChips(); return; }
+    if (e.target.closest('[data-cat-more]') && _toggleMore('txn-cat-more')) _sheet('txn-category')?.focus();
+    renderSheetChips();
+  });
+  _sheet('txn-acct-chips')?.addEventListener('click', e => {
+    const chip = e.target.closest('[data-acct]');
+    if (chip) { _sheet('txn-account').value = chip.dataset.acct; _sheetTouched.account = true; renderSheetChips(); return; }
+    if (e.target.closest('[data-acct-more]') && _toggleMore('txn-acct-more')) _sheet('txn-account')?.focus();
+    renderSheetChips();
+  });
+  _sheet('txn-date-chips')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-when]');
+    if (!b) return;
+    const dateEl = _sheet('txn-date');
+    if (b.dataset.when === 'pick') {
+      if (_toggleMore('txn-date-more')) { dateEl?.focus(); try { dateEl?.showPicker?.(); } catch { /* not allowed here */ } }
+    } else {
+      const d = new Date(todayISO() + 'T00:00:00');
+      if (b.dataset.when === 'yesterday') d.setDate(d.getDate() - 1);
+      dateEl.value = toLocalISO(d);
+      _toggleMore('txn-date-more', false);
+    }
+    renderSheetChips();
+  });
+  _sheet('txn-category')?.addEventListener('change', () => { _sheetTouched.category = true; renderSheetChips(); });
+  _sheet('txn-account')?.addEventListener('change', () => { _sheetTouched.account = true; renderSheetChips(); });
+  _sheet('txn-date')?.addEventListener('change', renderSheetChips);
+  _sheet('txn-desc')?.addEventListener('input', debounce(applyTxnSuggestion, 200));
+  _sheet('txn-desc')?.addEventListener('change', applyTxnSuggestion);
+  _sheet('txn-repeat-toggle')?.addEventListener('click', e => {
+    const open = _toggleMore('txn-repeat-group');
+    e.currentTarget.setAttribute('aria-expanded', String(open));
+    if (open) _sheet('txn-recurring')?.focus();
+  });
+  _sheet('fab-add-txn')?.addEventListener('click', () => openTxnSheet());
 }
 
 function exportTransactions() {
@@ -4660,6 +5357,7 @@ function exportBackup() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  recordBackup('file');
 }
 
 function _validateRestoreData(valid, parsed) {
@@ -5215,6 +5913,7 @@ const TABS = [
 ];
 
 function switchTab(targetTabId) {
+  document.body.dataset.tab = targetTabId.replace('tab-', '');
   TABS.forEach(({ tabId, secId }) => {
     const tab = document.getElementById(tabId);
     const sec = document.getElementById(secId);
@@ -5351,14 +6050,16 @@ function bindEvents() {
     setCardFolded(card, false);
     card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
-  document.getElementById('qa-add-txn')?.addEventListener('click', () => {
-    switchTab('tab-tracker');
-    const card = document.getElementById('txn-form-card');
-    if (card) setCardFolded(card, false);
-    requestAnimationFrame(() => {
-      card?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      document.getElementById('txn-date')?.focus({ preventScroll: true });
-    });
+  document.getElementById('qa-add-txn')?.addEventListener('click', () => openTxnSheet());
+  bindTxnSheet();
+  document.getElementById('backup-now-drive')?.addEventListener('click', saveToDrive);
+  document.getElementById('backup-now-file')?.addEventListener('click', exportBackup);
+  document.getElementById('txn-type-chips')?.addEventListener('click', e => {
+    const chip = e.target.closest('[data-filter-type]');
+    const sel = document.getElementById('filter-type');
+    if (!chip || !sel) return;
+    sel.value = chip.dataset.filterType;
+    sel.dispatchEvent(new Event('change'));
   });
 
   // Analysis tab period controls
@@ -5433,7 +6134,7 @@ function bindEvents() {
   });
 
   // Tracker form
-  document.getElementById('save-txn')?.addEventListener('click', saveTransaction);
+  document.getElementById('save-txn')?.addEventListener('click', () => onSheetSave(false));
   document.getElementById('cancel-edit')?.addEventListener('click', cancelEdit);
   document.getElementById('export-txns')?.addEventListener('click', exportTransactions);
   document.getElementById('export-txns-pdf')?.addEventListener('click', exportTransactionsPDF);
@@ -5504,6 +6205,9 @@ function bindEvents() {
         if (f) { f.innerHTML = ''; f.style.display = 'none'; }
         return;
       }
+      const payBtn = e.target.closest('[data-pay-bill]');
+      if (payBtn) { markBillPaid(payBtn.dataset.payBill); return; }
+      if (e.target.closest('#manage-bills')) { _billsManaging = !_billsManaging; renderBillReminders(); return; }
       const delBtn = e.target.closest('[data-del-bill]');
       if (delBtn) deleteBill(delBtn.dataset.delBill);
     });
@@ -5603,7 +6307,7 @@ function bindEvents() {
 
   // Tracker form — enter key on description
   document.getElementById('txn-desc')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); saveTransaction(); }
+    if (e.key === 'Enter') { e.preventDefault(); onSheetSave(false); }
   });
 
   // Filter controls
@@ -5669,6 +6373,8 @@ function checkStorageIntegrity() {
 
 // ─── Init ─────────────────────────────────────────────────────────
 function init() {
+  document.body.dataset.tab = 'accounts';
+  requestPersistentStorage();
   refreshAccountConfig();
   initTheme();
   checkStorageIntegrity();
@@ -5715,6 +6421,7 @@ function showApp() {
 let _storageReloadTimer = null;
 window.addEventListener('storage', (e) => {
   if (!(e.key && (e.key.startsWith('moneytrack_') || BACKUP_KEYS.includes(e.key)))) return;
+  if (e.key === KEY_LAST_BACKUP || e.key === KEY_LAST_CHANGE) { renderBackupUI(); return; }
   // Another tab changed data. Push our own pending change first so it isn't lost,
   // then reload — debounced, and deferred while the user is mid-edit in a field.
   flushDriveSync();
