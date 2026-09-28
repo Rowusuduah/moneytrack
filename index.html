@@ -99,6 +99,19 @@
       <h1 class="section-title">Accounts</h1>
       <p class="section-sub" id="accounts-date"></p>
 
+      <!-- Backup warning: shown only when there are changes the last backup does not have -->
+      <div class="backup-banner hidden" id="backup-banner" role="status">
+        <div class="backup-banner-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M8.5 8.6A5 5 0 0 0 7 18h10"/><path d="M20.4 15.5A3.5 3.5 0 0 0 17 11h-1a5 5 0 0 0-5-3.9"/></svg></div>
+        <div class="backup-banner-body">
+          <div class="backup-banner-title" id="backup-banner-title">No backup on this device yet</div>
+          <div class="backup-banner-text">Your records live only in this browser.</div>
+          <div class="backup-banner-actions">
+            <button type="button" class="btn btn-green btn-sm" id="backup-now-drive">Back up to Google Drive</button>
+            <button type="button" class="btn-link" id="backup-now-file">Download a backup file</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Summary KPI cards -->
       <div class="summary-grid" id="account-kpis" aria-live="polite">
         <!-- Rendered by JS -->
@@ -109,6 +122,21 @@
       <div class="quick-actions">
         <button type="button" class="btn btn-green" id="qa-update-balances">Update balances</button>
         <button type="button" class="btn btn-ghost" id="qa-add-txn"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Add transaction</button>
+      </div>
+
+      <!-- Coming up: bills you can mark paid -->
+      <div class="card" id="bills-card" data-collapse="bills" data-default="open">
+        <div class="card-title">Coming up
+          <span class="bills-due-total" id="bills-due-total"></span>
+        </div>
+        <div id="bills-content" class="bills-list">
+          <!-- Rendered by JS -->
+        </div>
+        <div id="bill-add-form" style="display:none"></div>
+        <div class="bills-foot">
+          <button class="btn btn-green btn-sm" id="show-add-bill">+ Add Bill</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="manage-bills" aria-pressed="false">Manage bills</button>
+        </div>
       </div>
 
       <!-- Financial Ratios -->
@@ -184,6 +212,7 @@
         <div class="card-title">Backup &amp; Restore
           <span style="font-weight:400;font-size:11px;color:var(--muted)">Export or import all data</span>
         </div>
+        <p class="backup-status-line" id="backup-status-line" aria-live="polite"></p>
         <div class="flex gap-8" style="flex-wrap:wrap">
           <button class="btn btn-ghost btn-sm" id="export-backup">Export JSON</button>
           <label class="btn btn-ghost btn-sm" style="cursor:pointer">
@@ -202,20 +231,6 @@
             <button class="btn btn-ghost btn-sm" id="gdrive-load">&#8595; Load from Drive</button>
             <span id="gdrive-status" class="gdrive-status"></span>
           </div>
-        </div>
-      </div>
-
-      <!-- Bill Reminders -->
-      <div class="card" id="bills-card" data-collapse="bills" data-default="open">
-        <div class="card-title">Bill Reminders
-          <span style="font-weight:400;font-size:11px;color:var(--muted)">Upcoming recurring bills</span>
-        </div>
-        <div id="bills-content">
-          <!-- Rendered by JS -->
-        </div>
-        <div id="bill-add-form" style="display:none"></div>
-        <div style="margin-top:12px">
-          <button class="btn btn-green btn-sm" id="show-add-bill">+ Add Bill</button>
         </div>
       </div>
 
@@ -288,199 +303,6 @@
 
       <h1 class="section-title">Tracker</h1>
       <p class="section-sub">Log income and expenses, analyse spending patterns.</p>
-
-      <!-- Add / Edit Transaction Form -->
-      <div class="card" id="txn-form-card" data-collapse="add-transaction" data-default="closed">
-        <div class="card-title" id="txn-form-title">
-          <span id="txn-form-label">Add Transaction</span>
-          <button class="btn btn-ghost btn-sm hidden" id="cancel-edit">Cancel Edit</button>
-        </div>
-        <input type="hidden" id="edit-id">
-        <div class="form-grid">
-          <div class="form-group">
-            <label for="txn-date">Date</label>
-            <input type="date" id="txn-date" required>
-          </div>
-          <div class="form-group">
-            <label for="txn-type">Type</label>
-            <select id="txn-type">
-              <option value="expense">Expense</option>
-              <option value="income">Income</option>
-              <option value="transfer">Transfer</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="txn-amount">Amount ($)</label>
-            <input type="number" id="txn-amount" min="0" step="0.01" placeholder="0.00" required>
-          </div>
-          <div class="form-group">
-            <label for="txn-account">From Account</label>
-            <select id="txn-account">
-              <!-- Populated by JS from ACCOUNTS -->
-            </select>
-          </div>
-          <div class="form-group" id="to-account-group" style="display:none">
-            <label for="txn-to-account">To Account</label>
-            <select id="txn-to-account">
-              <!-- Populated by JS from ACCOUNTS -->
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="txn-recurring">Recurring</label>
-            <select id="txn-recurring">
-              <option value="">One-time</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="annual">Annual</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="txn-category">Category</label>
-            <select id="txn-category">
-              <optgroup label="Income">
-                <option value="Paycheck">Paycheck</option>
-                <option value="Money from Last Month">Money from Last Month</option>
-                <option value="Freelance">Freelance</option>
-                <option value="Bonus">Bonus</option>
-                <option value="Refund">Refund</option>
-                <option value="Reimbursement">Reimbursement</option>
-                <option value="Cash Back">Cash Back</option>
-                <option value="Interest Earned">Interest Earned</option>
-                <option value="Selling / Resale">Selling / Resale</option>
-                <option value="Transfer In">Transfer In</option>
-                <option value="Loan Repaid to Me">Loan Repaid to Me</option>
-                <option value="Other Income">Other Income</option>
-              </optgroup>
-              <optgroup label="Housing &amp; Bills">
-                <option value="Rent">Rent</option>
-                <option value="Mortgage">Mortgage</option>
-                <option value="HOA / Community Fees">HOA / Community Fees</option>
-                <option value="Utilities">Utilities</option>
-                <option value="Electricity">Electricity</option>
-                <option value="Water">Water</option>
-                <option value="Gas Bill">Gas Bill</option>
-                <option value="Trash">Trash</option>
-                <option value="Internet">Internet</option>
-                <option value="Phone">Phone</option>
-                <option value="Home Maintenance">Home Maintenance</option>
-                <option value="Home Insurance">Home Insurance</option>
-                <option value="Insurance">Insurance</option>
-                <option value="Laundry">Laundry</option>
-              </optgroup>
-              <optgroup label="Food">
-                <option value="Groceries">Groceries</option>
-                <option value="Dining Out">Dining Out</option>
-                <option value="Fast Food">Fast Food</option>
-                <option value="Food Delivery">Food Delivery</option>
-                <option value="Snacks &amp; Drinks">Snacks &amp; Drinks</option>
-                <option value="Coffee">Coffee</option>
-              </optgroup>
-              <optgroup label="Transport">
-                <option value="Gas">Gas</option>
-                <option value="Car Maintenance">Car Maintenance</option>
-                <option value="Car Repair">Car Repair</option>
-                <option value="Car Payment">Car Payment</option>
-                <option value="Car Insurance">Car Insurance</option>
-                <option value="Registration / DMV">Registration / DMV</option>
-                <option value="Car Wash">Car Wash</option>
-                <option value="Public Transit">Public Transit</option>
-                <option value="Rideshare">Rideshare</option>
-                <option value="Tolls">Tolls</option>
-                <option value="Parking">Parking</option>
-                <option value="Travel">Travel</option>
-                <option value="Flights">Flights</option>
-              </optgroup>
-              <optgroup label="Health">
-                <option value="Medical">Medical</option>
-                <option value="Dental">Dental</option>
-                <option value="Vision">Vision</option>
-                <option value="Therapy">Therapy</option>
-                <option value="Pharmacy">Pharmacy</option>
-                <option value="Supplements">Supplements</option>
-                <option value="Health Insurance">Health Insurance</option>
-                <option value="Gym">Gym</option>
-              </optgroup>
-              <optgroup label="Shopping">
-                <option value="Clothing">Clothing</option>
-                <option value="Shoes &amp; Accessories">Shoes &amp; Accessories</option>
-                <option value="Electronics">Electronics</option>
-                <option value="Home &amp; Furniture">Home &amp; Furniture</option>
-                <option value="Household Essentials">Household Essentials</option>
-                <option value="Beauty &amp; Grooming">Beauty &amp; Grooming</option>
-                <option value="School Supplies">School Supplies</option>
-                <option value="Amazon">Amazon</option>
-                <option value="Online Shopping">Online Shopping</option>
-              </optgroup>
-              <optgroup label="Entertainment">
-                <option value="Streaming">Streaming</option>
-                <option value="Movies">Movies</option>
-                <option value="Concerts">Concerts</option>
-                <option value="Events">Events</option>
-                <option value="Games">Games</option>
-                <option value="Books &amp; Media">Books &amp; Media</option>
-                <option value="Sports &amp; Recreation">Sports &amp; Recreation</option>
-                <option value="Hobbies">Hobbies</option>
-              </optgroup>
-              <optgroup label="Pets">
-                <option value="Pet Food">Pet Food</option>
-                <option value="Vet">Vet</option>
-                <option value="Pet Supplies">Pet Supplies</option>
-                <option value="Pet Grooming">Pet Grooming</option>
-              </optgroup>
-              <optgroup label="Family &amp; Kids">
-                <option value="Childcare">Childcare</option>
-                <option value="School Fees">School Fees</option>
-                <option value="Kids Activities">Kids Activities</option>
-                <option value="Baby Supplies">Baby Supplies</option>
-              </optgroup>
-              <optgroup label="Education">
-                <option value="Tuition">Tuition</option>
-                <option value="Textbooks">Textbooks</option>
-                <option value="Courses">Courses</option>
-                <option value="Student Loan">Student Loan</option>
-              </optgroup>
-              <optgroup label="Giving">
-                <option value="Tithe">Tithe</option>
-                <option value="Offering">Offering</option>
-                <option value="Family Support (Ghana)">Family Support (Ghana)</option>
-                <option value="Family Support (US)">Family Support (US)</option>
-                <option value="Friends Support">Friends Support</option>
-                <option value="Treating Friends">Treating Friends</option>
-                <option value="Gifts">Gifts</option>
-                <option value="Donations">Donations</option>
-              </optgroup>
-              <optgroup label="Finance">
-                <option value="Savings Transfer">Savings Transfer</option>
-                <option value="Bill Reserve">Bill Reserve</option>
-                <option value="Investment">Investment</option>
-                <option value="Loan Payment">Loan Payment</option>
-                <option value="Loan Given">Loan Given</option>
-                <option value="Credit Card Payment">Credit Card Payment</option>
-                <option value="Bank Fee">Bank Fee</option>
-                <option value="ATM Fee">ATM Fee</option>
-                <option value="Late Fee">Late Fee</option>
-                <option value="Interest Charge">Interest Charge</option>
-                <option value="Service Fee">Service Fee</option>
-                <option value="Taxes">Taxes</option>
-                <option value="Subscriptions">Subscriptions</option>
-              </optgroup>
-              <optgroup label="Other">
-                <option value="Personal Care">Personal Care</option>
-                <option value="Haircut">Haircut</option>
-                <option value="Education">Education</option>
-                <option value="Miscellaneous">Miscellaneous</option>
-              </optgroup>
-            </select>
-          </div>
-          <div class="form-group" style="grid-column: 1 / -1">
-            <label for="txn-desc">Description</label>
-            <input type="text" id="txn-desc" placeholder="What was this for?" maxlength="120" required>
-          </div>
-        </div>
-        <div class="flex gap-8 mt-12">
-          <button class="btn btn-green" id="save-txn">Add Transaction</button>
-        </div>
-      </div>
 
       <!-- Filter Bar -->
       <div class="card" style="padding: 14px 20px">
@@ -599,6 +421,12 @@
         </div>
         <input type="text" id="txn-search" class="txn-search acct-input"
                placeholder="Search transactions..." aria-label="Search transactions">
+        <div class="chips txn-type-chips" id="txn-type-chips" role="radiogroup" aria-label="Show">
+          <button type="button" class="chip" role="radio" aria-checked="true" data-filter-type="all">All</button>
+          <button type="button" class="chip" role="radio" aria-checked="false" data-filter-type="expense">Spending</button>
+          <button type="button" class="chip" role="radio" aria-checked="false" data-filter-type="income">Income</button>
+          <button type="button" class="chip" role="radio" aria-checked="false" data-filter-type="transfer">Transfers</button>
+        </div>
         <div id="txn-list" class="txn-list" role="list" aria-live="polite">
           <!-- Rendered by JS -->
         </div>
@@ -832,6 +660,230 @@
       </div>
     </section>
   </main>
+
+  <!-- ══ ADD / EDIT TRANSACTION SHEET (opens from + on any tab) ══ -->
+  <div class="sheet-scrim hidden" id="txn-sheet-scrim"></div>
+  <div class="card txn-sheet hidden" id="txn-form-card" role="dialog" aria-modal="true" aria-labelledby="txn-form-label">
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="sheet-title" id="txn-form-title">
+      <span id="txn-form-label">New transaction</span>
+      <button class="btn btn-ghost btn-sm hidden" id="cancel-edit">Cancel Edit</button>
+      <button type="button" class="sheet-close" id="txn-sheet-close" aria-label="Close"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <input type="hidden" id="edit-id">
+    <div class="seg" id="txn-type-seg" role="radiogroup" aria-label="Type">
+      <button type="button" role="radio" aria-checked="true" data-txn-type="expense">Expense</button>
+      <button type="button" role="radio" aria-checked="false" data-txn-type="income">Income</button>
+      <button type="button" role="radio" aria-checked="false" data-txn-type="transfer">Transfer</button>
+    </div>
+    <select id="txn-type" hidden>
+      <option value="expense">Expense</option>
+      <option value="income">Income</option>
+      <option value="transfer">Transfer</option>
+    </select>
+    <div class="sheet-amount">
+      <label for="txn-amount">Amount</label>
+      <div class="sheet-amount-row"><span aria-hidden="true">$</span><input type="number" id="txn-amount" inputmode="decimal" min="0" step="0.01" placeholder="0.00" required></div>
+    </div>
+    <div class="sheet-field">
+      <label for="txn-desc">Where or what?</label>
+      <input type="text" id="txn-desc" placeholder="e.g. Publix" maxlength="120" required list="txn-desc-list" autocomplete="off">
+      <datalist id="txn-desc-list"></datalist>
+      <p class="sheet-hint hidden" id="txn-suggest-note" aria-live="polite"></p>
+    </div>
+    <div class="sheet-field">
+      <span class="sheet-label" id="txn-cat-label">Category</span>
+      <div class="chips" id="txn-cat-chips" role="group" aria-labelledby="txn-cat-label"></div>
+      <div class="sheet-more hidden" id="txn-cat-more">
+        <label for="txn-category" class="sr-only">All categories</label>
+        <select id="txn-category">
+          <optgroup label="Income">
+            <option value="Paycheck">Paycheck</option>
+            <option value="Money from Last Month">Money from Last Month</option>
+            <option value="Freelance">Freelance</option>
+            <option value="Bonus">Bonus</option>
+            <option value="Refund">Refund</option>
+            <option value="Reimbursement">Reimbursement</option>
+            <option value="Cash Back">Cash Back</option>
+            <option value="Interest Earned">Interest Earned</option>
+            <option value="Selling / Resale">Selling / Resale</option>
+            <option value="Transfer In">Transfer In</option>
+            <option value="Loan Repaid to Me">Loan Repaid to Me</option>
+            <option value="Other Income">Other Income</option>
+          </optgroup>
+          <optgroup label="Housing &amp; Bills">
+            <option value="Rent">Rent</option>
+            <option value="Mortgage">Mortgage</option>
+            <option value="HOA / Community Fees">HOA / Community Fees</option>
+            <option value="Utilities">Utilities</option>
+            <option value="Electricity">Electricity</option>
+            <option value="Water">Water</option>
+            <option value="Gas Bill">Gas Bill</option>
+            <option value="Trash">Trash</option>
+            <option value="Internet">Internet</option>
+            <option value="Phone">Phone</option>
+            <option value="Home Maintenance">Home Maintenance</option>
+            <option value="Home Insurance">Home Insurance</option>
+            <option value="Insurance">Insurance</option>
+            <option value="Laundry">Laundry</option>
+          </optgroup>
+          <optgroup label="Food">
+            <option value="Groceries">Groceries</option>
+            <option value="Dining Out">Dining Out</option>
+            <option value="Fast Food">Fast Food</option>
+            <option value="Food Delivery">Food Delivery</option>
+            <option value="Snacks &amp; Drinks">Snacks &amp; Drinks</option>
+            <option value="Coffee">Coffee</option>
+          </optgroup>
+          <optgroup label="Transport">
+            <option value="Gas">Gas</option>
+            <option value="Car Maintenance">Car Maintenance</option>
+            <option value="Car Repair">Car Repair</option>
+            <option value="Car Payment">Car Payment</option>
+            <option value="Car Insurance">Car Insurance</option>
+            <option value="Registration / DMV">Registration / DMV</option>
+            <option value="Car Wash">Car Wash</option>
+            <option value="Public Transit">Public Transit</option>
+            <option value="Rideshare">Rideshare</option>
+            <option value="Tolls">Tolls</option>
+            <option value="Parking">Parking</option>
+            <option value="Travel">Travel</option>
+            <option value="Flights">Flights</option>
+          </optgroup>
+          <optgroup label="Health">
+            <option value="Medical">Medical</option>
+            <option value="Dental">Dental</option>
+            <option value="Vision">Vision</option>
+            <option value="Therapy">Therapy</option>
+            <option value="Pharmacy">Pharmacy</option>
+            <option value="Supplements">Supplements</option>
+            <option value="Health Insurance">Health Insurance</option>
+            <option value="Gym">Gym</option>
+          </optgroup>
+          <optgroup label="Shopping">
+            <option value="Clothing">Clothing</option>
+            <option value="Shoes &amp; Accessories">Shoes &amp; Accessories</option>
+            <option value="Electronics">Electronics</option>
+            <option value="Home &amp; Furniture">Home &amp; Furniture</option>
+            <option value="Household Essentials">Household Essentials</option>
+            <option value="Beauty &amp; Grooming">Beauty &amp; Grooming</option>
+            <option value="School Supplies">School Supplies</option>
+            <option value="Amazon">Amazon</option>
+            <option value="Online Shopping">Online Shopping</option>
+          </optgroup>
+          <optgroup label="Entertainment">
+            <option value="Streaming">Streaming</option>
+            <option value="Movies">Movies</option>
+            <option value="Concerts">Concerts</option>
+            <option value="Events">Events</option>
+            <option value="Games">Games</option>
+            <option value="Books &amp; Media">Books &amp; Media</option>
+            <option value="Sports &amp; Recreation">Sports &amp; Recreation</option>
+            <option value="Hobbies">Hobbies</option>
+          </optgroup>
+          <optgroup label="Pets">
+            <option value="Pet Food">Pet Food</option>
+            <option value="Vet">Vet</option>
+            <option value="Pet Supplies">Pet Supplies</option>
+            <option value="Pet Grooming">Pet Grooming</option>
+          </optgroup>
+          <optgroup label="Family &amp; Kids">
+            <option value="Childcare">Childcare</option>
+            <option value="School Fees">School Fees</option>
+            <option value="Kids Activities">Kids Activities</option>
+            <option value="Baby Supplies">Baby Supplies</option>
+          </optgroup>
+          <optgroup label="Education">
+            <option value="Tuition">Tuition</option>
+            <option value="Textbooks">Textbooks</option>
+            <option value="Courses">Courses</option>
+            <option value="Student Loan">Student Loan</option>
+          </optgroup>
+          <optgroup label="Giving">
+            <option value="Tithe">Tithe</option>
+            <option value="Offering">Offering</option>
+            <option value="Family Support (Ghana)">Family Support (Ghana)</option>
+            <option value="Family Support (US)">Family Support (US)</option>
+            <option value="Friends Support">Friends Support</option>
+            <option value="Treating Friends">Treating Friends</option>
+            <option value="Gifts">Gifts</option>
+            <option value="Donations">Donations</option>
+          </optgroup>
+          <optgroup label="Finance">
+            <option value="Savings Transfer">Savings Transfer</option>
+            <option value="Bill Reserve">Bill Reserve</option>
+            <option value="Investment">Investment</option>
+            <option value="Loan Payment">Loan Payment</option>
+            <option value="Loan Given">Loan Given</option>
+            <option value="Credit Card Payment">Credit Card Payment</option>
+            <option value="Bank Fee">Bank Fee</option>
+            <option value="ATM Fee">ATM Fee</option>
+            <option value="Late Fee">Late Fee</option>
+            <option value="Interest Charge">Interest Charge</option>
+            <option value="Service Fee">Service Fee</option>
+            <option value="Taxes">Taxes</option>
+            <option value="Subscriptions">Subscriptions</option>
+          </optgroup>
+          <optgroup label="Other">
+            <option value="Personal Care">Personal Care</option>
+            <option value="Haircut">Haircut</option>
+            <option value="Education">Education</option>
+            <option value="Miscellaneous">Miscellaneous</option>
+          </optgroup>
+        </select>
+      </div>
+    </div>
+    <div class="sheet-field">
+      <span class="sheet-label" id="txn-acct-label">Paid with</span>
+      <div class="chips" id="txn-acct-chips" role="group" aria-labelledby="txn-acct-label"></div>
+      <div class="sheet-more hidden" id="txn-acct-more">
+        <label for="txn-account" class="sr-only">Account</label>
+        <select id="txn-account">
+          <!-- Populated by JS from ACCOUNTS -->
+        </select>
+      </div>
+    </div>
+    <div class="sheet-field" id="to-account-group" style="display:none">
+      <label for="txn-to-account">To account</label>
+      <select id="txn-to-account">
+        <!-- Populated by JS from ACCOUNTS -->
+      </select>
+    </div>
+    <div class="sheet-field">
+      <span class="sheet-label" id="txn-when-label">When</span>
+      <div class="chips" id="txn-date-chips" role="group" aria-labelledby="txn-when-label">
+        <button type="button" class="chip" data-when="today" aria-pressed="true">Today</button>
+        <button type="button" class="chip" data-when="yesterday" aria-pressed="false">Yesterday</button>
+        <button type="button" class="chip chip-more" data-when="pick" aria-pressed="false"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span id="txn-date-pick-label">Pick a date</span></button>
+      </div>
+      <div class="sheet-more hidden" id="txn-date-more">
+        <label for="txn-date" class="sr-only">Date</label>
+        <input type="date" id="txn-date" required>
+      </div>
+    </div>
+    <div class="sheet-field hidden" id="txn-repeat-group">
+      <label for="txn-recurring">Repeats</label>
+        <select id="txn-recurring">
+          <option value="">One-time</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+          <option value="annual">Annual</option>
+        </select>
+    </div>
+    <button class="btn btn-green sheet-save" id="save-txn">Save</button>
+    <div class="sheet-foot">
+      <button type="button" class="btn-link" id="save-txn-another">Save and add another</button>
+      <button type="button" class="btn-link btn-link-danger hidden" id="txn-delete-in-sheet">Delete transaction</button>
+      <button type="button" class="btn-link btn-link-muted" id="txn-repeat-toggle" aria-controls="txn-repeat-group" aria-expanded="false">Set repeat</button>
+    </div>
+  </div>
+
+  <button type="button" class="fab" id="fab-add-txn" aria-label="Add transaction"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+
+  <div class="action-toast hidden" id="action-toast" role="status">
+    <span id="action-toast-text"></span>
+    <button type="button" id="action-toast-btn">Undo</button>
+  </div>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="js/email-login.js" defer></script>
