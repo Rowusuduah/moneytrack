@@ -1338,8 +1338,7 @@ body:not(.light) #toast-msg.toast-error { color: #1A0906; }
     height: calc(var(--tabbar-h) + var(--safe-bottom));
     padding: 4px 4px var(--safe-bottom);
     display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0;
-    background: var(--nav-bg);
-    -webkit-backdrop-filter: saturate(1.4) blur(14px); backdrop-filter: saturate(1.4) blur(14px);
+    background: var(--surf);
     border-top: 1px solid var(--border);
     overflow: visible;
   }
