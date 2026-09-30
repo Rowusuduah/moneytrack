@@ -15,6 +15,8 @@
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
   <title>MoneyTrack</title>
   <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/desktop-workspace.css">
+  <link rel="stylesheet" href="css/mobile-workspace.css">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -87,7 +89,15 @@
 
     <button id="theme-toggle" aria-label="Toggle light/dark theme"></button>
     <button id="lock-btn" aria-label="Lock this device" title="Lock"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
+    <button type="button" id="mobile-more" aria-expanded="false" aria-controls="mobile-more-menu" aria-label="More sections">
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg><span>More</span>
+    </button>
   </nav>
+  <div id="mobile-more-menu" hidden aria-label="More sections">
+    <button type="button" data-open-tab="tab-analysis">Analysis <span>Trends and insights</span></button>
+    <button type="button" data-open-tab="tab-wealth">Wealth <span>Your plan and progress</span></button>
+    <button type="button" data-open-tab="tab-africa">Africa <span>Investments and exchange rate</span></button>
+  </div>
 
   <!-- Main -->
   <main id="main">
@@ -115,6 +125,10 @@
       <div class="sync-setup hidden" id="sync-setup">
         <span>Link this device to the same Google Drive account as your other device.</span>
         <button type="button" class="btn btn-green btn-sm" id="sync-connect">Sync with Google Drive</button>
+      </div>
+      <div class="drive-health hidden" id="drive-health" role="status" aria-live="polite">
+        <span id="drive-health-text"></span>
+        <button type="button" class="btn-link" id="drive-health-sync">Sync now</button>
       </div>
 
       <!-- Summary KPI cards -->
@@ -254,6 +268,9 @@
         </div>
       </div>
 
+      <button type="button" id="account-tools-toggle" aria-controls="account-tools" aria-expanded="false">More account tools <span aria-hidden="true">⌄</span></button>
+      <div id="account-tools"></div>
+
       <!-- Balance History -->
       <div class="card" data-collapse="balance-history" data-default="closed">
         <div class="card-title">Balance History
@@ -311,9 +328,9 @@
       <p class="section-sub">Log income and expenses, analyse spending patterns.</p>
 
       <!-- Filter Bar -->
-      <div class="card" style="padding: 14px 20px">
+      <div class="card" id="tracker-filter-card">
         <div class="filter-bar">
-          <span class="filter-label">Period:</span>
+          <label class="filter-label" for="filter-period">Period:</label>
           <select id="filter-period">
             <option value="all">All Time</option>
             <option value="today">Today</option>
@@ -329,20 +346,19 @@
           <span id="custom-range-to-label" style="display:none;font-size:11px;color:var(--muted)">To:</span>
           <input type="date" id="filter-to" style="display:none">
 
-          <span class="filter-label">Account:</span>
-          <select id="filter-account">
-            <!-- Populated by JS from ACCOUNTS -->
-          </select>
-
-          <span class="filter-label">Type:</span>
-          <select id="filter-type">
-            <option value="all">All Types</option>
-            <option value="income">Income</option>
-            <option value="expense">Expense</option>
-            <option value="transfer">Transfer</option>
-          </select>
-
-          <button class="btn btn-ghost btn-sm" id="export-txns">Export CSV</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="tracker-filter-toggle" aria-controls="tracker-extra-filters" aria-expanded="false">More filters</button>
+          <div id="tracker-extra-filters">
+            <label for="filter-account">Account</label>
+            <select id="filter-account"><!-- Populated by JS from ACCOUNTS --></select>
+            <label for="filter-type">Type</label>
+            <select id="filter-type">
+              <option value="all">All Types</option>
+              <option value="income">Income</option>
+              <option value="expense">Expense</option>
+              <option value="transfer">Transfer</option>
+            </select>
+            <button class="btn btn-ghost btn-sm" id="export-txns">Export CSV</button>
+          </div>
         </div>
 
         <!-- Summary Stats -->
@@ -390,7 +406,7 @@
       </div>
 
       <!-- Monthly Trends -->
-      <div class="card">
+      <div class="card" id="tracker-trends-card">
         <div class="card-title">6-Month Trends
           <span style="font-weight:400;font-size:11px;color:var(--muted)">Income · Expenses · Savings rate</span>
         </div>
@@ -408,7 +424,7 @@
       </div>
 
       <!-- Monthly Budgets -->
-      <div class="card" data-collapse="budgets" data-default="closed">
+      <div class="card" id="tracker-budget-card" data-collapse="budgets" data-default="closed">
         <div class="card-title">Monthly Budgets
           <span style="font-weight:400;font-size:11px;color:var(--muted)">Set spending limits per category</span>
         </div>
@@ -418,7 +434,7 @@
       </div>
 
       <!-- Transaction Log -->
-      <div class="card">
+      <div class="card" id="tracker-transactions-card">
         <div class="card-title">Transactions
           <div class="flex gap-8" style="align-items:center">
             <span id="txn-count" style="font-weight:400;font-size:11px;color:var(--muted)"></span>
@@ -506,29 +522,36 @@
              aria-labelledby="tab-things" class="sec">
 
       <h1 class="section-title">Things</h1>
-      <p class="section-sub">Track purchases and prices of any item you buy regularly.</p>
+      <p class="section-sub">Compare prices and link purchases to Tracker expenses.</p>
 
       <!-- List View (hidden when item detail is open) -->
       <div id="things-list-view">
 
         <!-- Within-page section nav -->
         <nav class="things-section-nav" aria-label="Things sections">
-          <a class="things-sec-link" href="#things-sec-overview">Overview</a>
-          <a class="things-sec-link" href="#things-sec-items">Items</a>
-          <a class="things-sec-link" href="#things-sec-stores">Stores</a>
-          <a class="things-sec-link" href="#things-sec-analysis">Analysis</a>
-          <a class="things-sec-link" href="#things-sec-purchases">Purchases</a>
-          <a class="things-sec-link" href="#things-sec-review">Needs Review</a>
+          <button type="button" class="things-sec-link" data-things-section="overview">Overview</button>
+          <button type="button" class="things-sec-link" data-things-section="items">Items</button>
+          <button type="button" class="things-sec-link" data-things-section="stores">Stores</button>
+          <button type="button" class="things-sec-link" data-things-section="analysis">Analysis</button>
+          <button type="button" class="things-sec-link" data-things-section="purchases">Purchases</button>
+          <button type="button" class="things-sec-link" data-things-section="review">Needs Review</button>
         </nav>
+        <label class="things-mobile-switcher" for="things-mobile-switcher">Show
+          <select id="things-mobile-switcher">
+            <option value="overview">Overview</option><option value="items">Items</option>
+            <option value="stores">Stores</option><option value="analysis">Analysis</option>
+            <option value="purchases">Purchases</option><option value="review">Needs Review</option>
+          </select>
+        </label>
 
         <!-- A. Overview -->
         <div id="things-sec-overview">
           <div class="summary-grid" id="things-kpis" aria-live="polite"></div>
-          <div id="things-controls" class="things-controls-bar"></div>
         </div>
 
         <!-- B. Items -->
         <div id="things-sec-items">
+          <div id="things-controls" class="things-controls-bar"></div>
           <div id="things-add-item-form" style="display:none" class="card"></div>
           <div id="things-item-grid" class="things-item-grid"></div>
         </div>
@@ -898,5 +921,6 @@
   <script src="js/drive-sync.js" defer></script>
   <script src="js/wealth.js" defer></script>
   <script src="js/africa.js" defer></script>
+  <script src="js/workspace-ui.js" defer></script>
 </body>
 </html>

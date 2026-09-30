@@ -408,26 +408,33 @@ function renderWlConfig() {
   const wasOpen = el.querySelector('details')?.open;
   const configured = wlPlanConfigured();
   document.getElementById('sec-wealth')?.classList.toggle('wl-unconfigured', !configured);
-  let fields = wlConfigField('wlc-pay', 'Net per paycheck', PLAN.netPerCheck) +
-    wlConfigField('wlc-anchor', 'A biweekly payday', PLAN.payAnchor, 'date') +
-    wlConfigField('wlc-save', 'Monthly savings target', PLAN.savingsTargetMo) +
+  const essentials = wlConfigField('wlc-pay', 'Net per paycheck', PLAN.netPerCheck) +
+    wlConfigField('wlc-anchor', 'A biweekly payday', PLAN.payAnchor, 'date');
+  const targets = wlConfigField('wlc-save', 'Monthly savings target', PLAN.savingsTargetMo) +
     wlConfigField('wlc-match', 'Monthly retirement contribution + match', PLAN.kMo) +
     wlConfigField('wlc-return', 'Real return assumption (%)', PLAN.returnPct) +
     wlConfigField('wlc-years', 'Projection years', PLAN.years);
+  let allocations = '';
+  let bills = '';
   PLAN.groups.forEach(g => {
-    fields += wlConfigField('wlc-group-' + g.id, g.label + ' monthly allocation', g.monthly);
-    g.bills.forEach(b => { fields += wlConfigField('wlc-bill-' + b.id, b.label + ' monthly bill', b.monthly); });
+    allocations += wlConfigField('wlc-group-' + g.id, g.label + ' monthly allocation', g.monthly);
+    g.bills.forEach(b => { bills += wlConfigField('wlc-bill-' + b.id, b.label + ' monthly bill', b.monthly); });
   });
+  let milestones = '';
   PLAN.milestones.forEach(m => {
-    fields += wlConfigField('wlc-ms-' + m.id, m.label + ' goal', m.amount);
-    fields += wlConfigField('wlc-ms-label-' + m.id, m.label + ' name', m.label, 'text');
+    milestones += wlConfigField('wlc-ms-' + m.id, m.label + ' goal', m.amount);
+    milestones += wlConfigField('wlc-ms-label-' + m.id, m.label + ' name', m.label, 'text');
   });
   el.innerHTML = '<details' + (!configured || wasOpen ? ' open' : '') + '>' +
     '<summary class="card-title">Private Wealth plan settings</summary>' +
-    '<p class="wl-sub">Your plan is saved in this browser and included in MoneyTrack Drive sync when connected. Import your private JSON file or enter your values here. Export a backup before clearing browser data. Keep the JSON file out of public repositories.</p>' +
+    '<p class="wl-sub">Start with your take-home pay and a payday. Add targets and details whenever you are ready. Your private plan is included in Drive sync when connected.</p>' +
     '<div class="wl-config-actions"><label class="wl-config-import">Import private plan JSON<input id="wlc-file" type="file" accept="application/json,.json"></label>' +
     '<button type="button" id="wlc-export">Export backup</button></div>' +
-    '<form id="wlc-form"><div class="wl-config-grid">' + fields + '</div>' +
+    '<form id="wlc-form"><p class="wl-config-heading">Start here</p><div class="wl-config-grid">' + essentials + '</div>' +
+    '<details class="wl-config-section"><summary>Targets and projections</summary><div class="wl-config-grid">' + targets + '</div></details>' +
+    '<details class="wl-config-section"><summary>Monthly allocations</summary><div class="wl-config-grid">' + allocations + '</div></details>' +
+    '<details class="wl-config-section"><summary>Monthly bills</summary><div class="wl-config-grid">' + bills + '</div></details>' +
+    '<details class="wl-config-section"><summary>Milestones</summary><div class="wl-config-grid">' + milestones + '</div></details>' +
     '<div class="wl-config-actions"><button type="submit">Save plan on this device</button></div></form>' +
     '<p class="wl-sub" id="wlc-status" role="status"></p></details>';
   if (el._wlBound) return;
