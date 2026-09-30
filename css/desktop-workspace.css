@@ -8,7 +8,8 @@
 .drive-health .btn-link { min-height: 28px; white-space: nowrap; font-size: 12.5px; }
 .drive-health-error { border-color: var(--red); color: var(--red); }
 @media (min-width: 821px) {
-  main { max-width: 1160px; }
+  main { max-width: none; }
+  main > .sec.on { min-height: calc(100dvh - var(--nav-h) - var(--safe-top) - 76px); }
   #mobile-more, #mobile-more-menu, .things-mobile-switcher,
   #tracker-filter-toggle, #account-tools-toggle { display: none; }
   #tracker-extra-filters { display: contents; }
@@ -30,11 +31,12 @@
   #analysis-grid { order: 5; }
   #tracker-trends-card { order: 6; }
   #recurring-card { order: 7; }
-  #things-list-view { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 0 22px; align-items: start; }
-  .things-section-nav { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; position: sticky; top: 90px; }
-  .things-sec-link { justify-content: flex-start; border-radius: 11px; width: 100%; }
+  #things-list-view { width: 100%; min-width: 0; }
+  .things-section-nav { display: flex; flex-direction: row; flex-wrap: wrap; position: static; margin-bottom: 20px; }
+  .things-sec-link { justify-content: center; width: auto; }
   .things-sec-link.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); font-weight: 650; }
-  #things-list-view > [id^="things-sec-"] { grid-column: 2; grid-row: 1; min-width: 0; }
+  #things-list-view > [id^="things-sec-"] { width: 100%; min-width: 0; }
+  #things-item-grid > .empty-state { grid-column: 1 / -1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: clamp(300px, calc(100dvh - 320px), 640px); }
 }
 
 @media (min-width: 1000px) {
@@ -64,9 +66,7 @@
   #theme-toggle { left: 24px; }
   #lock-btn { right: 24px; }
   main { margin: 0 0 0 var(--desktop-rail); max-width: none; padding: 32px clamp(24px, 3vw, 52px) 64px; }
-  main > .sec, main > .sync-alert { max-width: 1260px; margin-left: auto; margin-right: auto; }
-  #things-list-view { grid-template-columns: 190px minmax(0, 1fr); gap: 0 28px; }
-  .things-section-nav { top: 30px; }
+  main > .sec.on { min-height: calc(100dvh - 96px); }
 }
 
 .wl-config-heading { font-size: 14px; font-weight: 700; margin: 16px 0 10px; }
