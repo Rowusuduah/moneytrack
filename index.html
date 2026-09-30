@@ -91,6 +91,7 @@
 
   <!-- Main -->
   <main id="main">
+    <div class="sync-alert hidden" id="sync-alert" role="alert"></div>
 
     <!-- ══ ACCOUNTS TAB ═══════════════════════════════════════ -->
     <section id="sec-accounts" role="tabpanel"
@@ -106,10 +107,14 @@
           <div class="backup-banner-title" id="backup-banner-title">No backup on this device yet</div>
           <div class="backup-banner-text">Your records live only in this browser.</div>
           <div class="backup-banner-actions">
-            <button type="button" class="btn btn-green btn-sm" id="backup-now-drive">Back up to Google Drive</button>
+            <button type="button" class="btn btn-green btn-sm" id="backup-now-drive">Sync with Google Drive</button>
             <button type="button" class="btn-link" id="backup-now-file">Download a backup file</button>
           </div>
         </div>
+      </div>
+      <div class="sync-setup hidden" id="sync-setup">
+        <span>Link this device to the same Google Drive account as your other device.</span>
+        <button type="button" class="btn btn-green btn-sm" id="sync-connect">Sync with Google Drive</button>
       </div>
 
       <!-- Summary KPI cards -->
@@ -226,10 +231,11 @@
         </div>
         <div class="gdrive-sync">
           <div class="gdrive-label">Google Drive Sync</div>
+          <p class="sync-help">Use the same Google account on phone and laptop. Sync includes Tracker, Things, Africa, and your private Wealth plan. The Drive file is not encrypted.</p>
           <div class="flex gap-8" style="flex-wrap:wrap;align-items:center">
-            <button class="btn btn-ghost btn-sm" id="gdrive-save">&#8593; Save to Drive</button>
-            <button class="btn btn-ghost btn-sm" id="gdrive-load">&#8595; Load from Drive</button>
-            <span id="gdrive-status" class="gdrive-status"></span>
+            <button class="btn btn-ghost btn-sm" id="gdrive-save">Sync now</button>
+            <button class="btn btn-ghost btn-sm" id="gdrive-load">Replace from Drive…</button>
+            <span id="gdrive-status" class="gdrive-status" role="status" aria-live="polite"></span>
           </div>
         </div>
       </div>
@@ -887,7 +893,9 @@
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="js/email-login.js" defer></script>
+  <script src="js/sync-merge.js" defer></script>
   <script src="js/app.js" defer></script>
+  <script src="js/drive-sync.js" defer></script>
   <script src="js/wealth.js" defer></script>
   <script src="js/africa.js" defer></script>
 </body>

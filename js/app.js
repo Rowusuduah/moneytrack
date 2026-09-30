@@ -154,10 +154,6 @@ const KEY_GDRIVE_CONNECTED = 'moneytrack_gdrive_ok';
 let _gTokenClient  = null;
 let _gAccessToken  = null;
 let _gPendingOp    = null;
-let _gIsAutoSync   = false;
-let _driveSyncTimer = null;
-let _driveRetries  = 0;
-let _driveLoadRetries = 0;
 
 function initGDrive() {
   if (!GDRIVE_CLIENT_ID || typeof google === 'undefined' || !google.accounts?.oauth2) return;
@@ -167,13 +163,11 @@ function initGDrive() {
     scope: GDRIVE_SCOPE,
     callback: resp => {
       if (resp.error) {
-        if (!_gIsAutoSync) showToast('Google sign-in failed: ' + resp.error, 'error');
-        _gIsAutoSync = false;
+        showToast('Google sign-in failed: ' + resp.error, 'error');
         _gPendingOp = null;
         return;
       }
       _gAccessToken = resp.access_token;
-      _gIsAutoSync = false;
       if (_gPendingOp) { const op = _gPendingOp; _gPendingOp = null; op(); }
     },
   });
@@ -202,11 +196,13 @@ async function _gFetch(url, options = {}) {
   return resp;
 }
 
-async function _gFindFile() {
+async function _gListFiles() {
   const q = encodeURIComponent(`name='${GDRIVE_FILENAME}' and trashed=false`);
-  const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id)`);
+  const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&orderBy=modifiedTime%20desc&pageSize=1000&fields=files(id,modifiedTime),nextPageToken`);
+  if (!resp.ok) throw new Error(`Drive search failed (${resp.status})`);
   const data = await resp.json();
-  return data.files?.[0]?.id || null;
+  if (data.nextPageToken) throw new Error('Too many MoneyTrack backup files in Drive to sync safely');
+  return data.files || [];
 }
 
 async function _gCreateFile(content) {
@@ -289,11 +285,13 @@ function recordBackup(via) {
 function renderBackupUI() {
   const banner = document.getElementById('backup-banner');
   const line = document.getElementById('backup-status-line');
+  const setup = document.getElementById('sync-setup');
+  if (setup) setup.classList.toggle('hidden', localStorage.getItem(KEY_GDRIVE_CONNECTED) === '1');
   if (!banner && !line) return;
   const lastBackup = loadLastBackup();
   const rawChange = localStorage.getItem(KEY_LAST_CHANGE);
   const state = backupState({
-    hasData: loadTxns().length > 0 || loadSnapshots().length > 0,
+    hasData: BACKUP_KEYS.some(k => k !== KEY_THEME && localStorage.getItem(k) !== null),
     lastBackup,
     lastChange: rawChange ? Number(rawChange) : null,
     now: Date.now(),
@@ -325,14 +323,15 @@ function _saveLocalSafetyBackup() {
     const data = {};
     let hasData = false;
     BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) { data[k] = v; hasData = true; } });
-    if (!hasData) return;
+    if (!hasData) return true;
     const backup = { _saved: new Date().toISOString(), data };
     const existing = JSON.parse(localStorage.getItem(KEY_SAFETY_BACKUP) || '[]');
     existing.unshift(backup);
     // Keep only 3 most recent safety backups
     while (existing.length > 3) existing.pop();
     localStorage.setItem(KEY_SAFETY_BACKUP, JSON.stringify(existing));
-  } catch (e) { console.warn('[MoneyTrack] Safety backup failed:', e); }
+    return true;
+  } catch (e) { console.warn('[MoneyTrack] Safety backup failed:', e); return false; }
 }
 
 // Restore from safety backup (called manually from console if needed)
@@ -344,6 +343,7 @@ function restoreSafetyBackup(index = 0) {
     const backup = existing[index];
     console.log('Restoring safety backup from:', backup._saved);
     Object.entries(backup.data).forEach(([k, v]) => localStorage.setItem(k, v));
+    _markDataChanged();
     location.reload();
     return true;
   } catch (e) { console.error('Safety restore failed:', e); return false; }
@@ -366,177 +366,29 @@ function _getLocalDataDate() {
 
 function _gSetStatus(msg, isError) {
   const el = document.getElementById('gdrive-status');
-  if (!el) return;
-  el.textContent = msg;
-  el.style.color = isError ? 'var(--red)' : 'var(--muted)';
-}
-
-function saveToDrive() {
-  gWithToken(async () => {
-    try {
-      _gSetStatus('Saving…');
-      const data = {};
-      BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
-      const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
-
-      let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
-      if (!fileId) {
-        fileId = await _gFindFile();
-        if (fileId) localStorage.setItem(KEY_GDRIVE_FILE, fileId);
-      }
-
-      if (fileId) {
-        await _gUpdateFile(fileId, json);
-      } else {
-        fileId = await _gCreateFile(json);
-        localStorage.setItem(KEY_GDRIVE_FILE, fileId);
-      }
-      localStorage.setItem(KEY_GDRIVE_CONNECTED, '1');
-      _driveRetries = 0;
-      recordBackup('drive');
-      _gSetStatus(`Saved ${new Date().toLocaleTimeString()}`);
-    } catch (err) {
-      if (err._gStatus === 401) {
-        _driveRetries++;
-        if (_driveRetries <= 1) { saveToDrive(); return; }
-        _driveRetries = 0;
-        showToast('Google Drive authentication failed after retry.', 'error');
-      }
-      _gSetStatus('Save failed', true);
-      console.error('[MoneyTrack Drive]', err);
-      showToast('Save to Drive failed — check the console for details.', 'error');
-    }
-  });
-}
-
-function loadFromDrive() {
-  gWithToken(async () => {
-    try {
-      _gSetStatus('Loading…');
-      let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
-      if (!fileId) {
-        fileId = await _gFindFile();
-        if (!fileId) {
-          _gSetStatus('');
-          showToast('No MoneyTrack backup found in your Google Drive. Save from your PC first, then load on your phone.', 'info');
-          return;
-        }
-        localStorage.setItem(KEY_GDRIVE_FILE, fileId);
-      }
-
-      const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
-      const parsed = await resp.json();
-
-      if (!parsed.data || typeof parsed.data !== 'object') throw new Error('Invalid backup format');
-      const valid = Object.keys(parsed.data).filter(k => BACKUP_KEYS.includes(k));
-      if (!valid.length) throw new Error('No recognisable data found in file');
-      _validateRestoreData(valid, parsed);
-
-      const localDate = _getLocalDataDate();
-      const driveDate = parsed._exported || '';
-      const newerWarning = (localDate && driveDate && localDate > driveDate)
-        ? `\n\n⚠️ WARNING: Your local data (${localDate}) is NEWER than the Drive backup (${driveDate}). Loading will overwrite your recent changes!`
-        : '';
-      if (!confirm(`Load backup from ${driveDate || 'Google Drive'}?${newerWarning}\n\nThis will replace all current data on this device.`)) {
-        _gSetStatus(''); return;
-      }
-
-      _saveLocalSafetyBackup();
-      valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
-      localStorage.setItem(KEY_GDRIVE_CONNECTED, '1');
-      initTheme();
-      refreshAccountConfig();
-      renderAccountFields();
-      renderAccountsTab();
-      populateAccountSelects();
-      renderBudgetCard();
-      renderTracker();
-      renderAnalysisTab();
-      _driveLoadRetries = 0;
-      recordBackup('drive');
-      _gSetStatus(`Loaded ${parsed._exported || ''}`);
-    } catch (err) {
-      if (err._gStatus === 401) {
-        _driveLoadRetries++;
-        if (_driveLoadRetries <= 1) { loadFromDrive(); return; }
-        _driveLoadRetries = 0;
-        showToast('Google Drive authentication failed after retry.', 'error');
-      }
-      _gSetStatus('Load failed', true);
-      console.error('[MoneyTrack Drive]', err);
-      showToast('Load from Drive failed — check the console for details.', 'error');
-    }
-  });
-}
-
-// Silent auto-load on open — only loads if Drive data is newer than local data
-async function autoLoadFromDrive() {
-  try {
-    _gSetStatus('Syncing…');
-    let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
-    if (!fileId) {
-      fileId = await _gFindFile();
-      if (!fileId) { _gSetStatus(''); return; }
-      localStorage.setItem(KEY_GDRIVE_FILE, fileId);
-    }
-
-    const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
-    const parsed = await resp.json();
-
-    if (!parsed.data || typeof parsed.data !== 'object') { _gSetStatus(''); return; }
-    const valid = Object.keys(parsed.data).filter(k => BACKUP_KEYS.includes(k));
-    if (!valid.length) { _gSetStatus(''); return; }
-    try { _validateRestoreData(valid, parsed); } catch { _gSetStatus(''); return; }
-
-    // Compare Drive backup date with local data freshness. On a same-day tie we
-    // prefer LOCAL (upload it) so the device you're actively editing is never
-    // silently overwritten by an equally-dated older backup from another device.
-    const driveDate = parsed._exported || '';
-    const localDate = _getLocalDataDate();
-    if (localDate && driveDate && localDate >= driveDate) {
-      // Local data is newer (or same day) — push local to Drive instead of overwriting
-      _gSetStatus('Local data is newer — uploading…');
-      try {
-        const data = {};
-        BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
-        const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
-        if (fileId) { await _gUpdateFile(fileId, json); }
-        else { fileId = await _gCreateFile(json); localStorage.setItem(KEY_GDRIVE_FILE, fileId); }
-        recordBackup('drive');
-        _gSetStatus(`Uploaded local data ${new Date().toLocaleTimeString()}`);
-      } catch (upErr) {
-        console.error('[MoneyTrack Drive auto-upload]', upErr);
-        _gSetStatus('Upload failed');
-      }
-      return;
-    }
-
-    _saveLocalSafetyBackup();
-    valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
-    initTheme();
-    refreshAccountConfig();
-    renderAccountFields();
-    renderAccountsTab();
-    populateAccountSelects();
-    renderBudgetCard();
-    renderTracker();
-    renderAnalysisTab();
-    recordBackup('drive');   // this device now holds exactly the Drive copy
-    _gSetStatus(`Synced ${parsed._exported || ''}`);
-  } catch (err) {
-    if (err._gStatus === 401) { _gAccessToken = null; _gSetStatus(''); return; }
-    _gSetStatus('');
-    console.error('[MoneyTrack Drive auto-sync]', err);
+  if (el) {
+    el.textContent = msg;
+    el.style.color = isError ? 'var(--red)' : 'var(--muted)';
+  }
+  const alert = document.getElementById('sync-alert');
+  if (alert) {
+    alert.textContent = isError ? msg : '';
+    alert.classList.toggle('hidden', !isError);
   }
 }
 
-// Silently refresh the Google token without a popup.
-// Returns true if a fresh token is available, false otherwise.
+function saveToDrive() { MoneyTrackDriveSync.sync(true); }
+function loadFromDrive() { MoneyTrackDriveSync.load(); }
+
+// Google may expire an access token while the page stays open. Refresh silently
+// for background sync; a visible Sync now action can request consent if needed.
 function _silentTokenRefresh() {
   return new Promise(resolve => {
     if (!_gTokenClient) { resolve(false); return; }
     const prevCallback = _gTokenClient.callback;
+    const timeout = setTimeout(() => { _gTokenClient.callback = prevCallback; resolve(false); }, 15000);
     _gTokenClient.callback = resp => {
+      clearTimeout(timeout);
       _gTokenClient.callback = prevCallback;
       if (resp.error) { resolve(false); return; }
       _gAccessToken = resp.access_token;
@@ -546,77 +398,12 @@ function _silentTokenRefresh() {
   });
 }
 
-// Debounced auto-save — queued after every data write (fires 3 s after last change).
-// Silently refreshes token if expired — never triggers a visible auth popup.
-let _autoSaveRetrying = false;
-async function _runDriveSync() {
-  // If no token, try to silently get one
-  if (!_gAccessToken) {
-    if (!_gTokenClient) initGDrive();
-    if (_gTokenClient) {
-      const ok = await _silentTokenRefresh();
-      if (!ok) { _gSetStatus('Drive disconnected', true); return; }
-    } else { return; }
-  }
-  try {
-    const data = {};
-    BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
-    const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
-    let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
-    if (!fileId) {
-      fileId = await _gFindFile();
-      if (fileId) localStorage.setItem(KEY_GDRIVE_FILE, fileId);
-    }
-    if (fileId) { await _gUpdateFile(fileId, json); }
-    else { fileId = await _gCreateFile(json); localStorage.setItem(KEY_GDRIVE_FILE, fileId); }
-    recordBackup('drive');
-    _gSetStatus(`Auto-saved ${new Date().toLocaleTimeString()}`);
-    _autoSaveRetrying = false;
-  } catch (err) {
-    if (err._gStatus === 401 && !_autoSaveRetrying) {
-      // Token expired mid-request — refresh and retry once
-      _gAccessToken = null;
-      _autoSaveRetrying = true;
-      const ok = await _silentTokenRefresh();
-      if (ok) { queueDriveSync(); return; }
-      _gSetStatus('Drive disconnected', true);
-    }
-    _autoSaveRetrying = false;
-    console.error('[MoneyTrack Drive auto-save]', err);
-  }
-}
-
 function queueDriveSync() {
-  _markDataChanged();   // every data save passes through here
-  if (!localStorage.getItem(KEY_GDRIVE_CONNECTED)) return;
-  if (_driveSyncTimer) clearTimeout(_driveSyncTimer);
-  _driveSyncTimer = setTimeout(() => { _driveSyncTimer = null; _runDriveSync(); }, 3000);
+  _markDataChanged();
+  MoneyTrackDriveSync.queue();
 }
-
-// Flush a queued auto-sync immediately (e.g. before the tab is hidden/closed) so
-// the final change isn't stuck in the 3s debounce and lost from Drive.
-function flushDriveSync() {
-  if (_driveSyncTimer) { clearTimeout(_driveSyncTimer); _driveSyncTimer = null; _runDriveSync(); }
-}
-
-// Called on init: if user has previously authorised Drive, silently refresh token and auto-load
-function autoSyncDrive() {
-  if (!localStorage.getItem(KEY_GDRIVE_CONNECTED)) return;
-  let _tryAutoAttempts = 0;
-  function tryAuto() {
-    if (typeof google === 'undefined' || !google.accounts?.oauth2) {
-      _tryAutoAttempts++;
-      if (_tryAutoAttempts >= 20) { console.warn('[MoneyTrack] Google library not loaded after 10 s — giving up auto-sync.'); return; }
-      setTimeout(tryAuto, 500); return;
-    }
-    if (!_gTokenClient) initGDrive();
-    _gIsAutoSync = true;
-    _gPendingOp = autoLoadFromDrive;
-    _gTokenClient.requestAccessToken({ prompt: '' });
-  }
-  setTimeout(tryAuto, 800);
-}
-
+function flushDriveSync() { MoneyTrackDriveSync.flush(); }
+function autoSyncDrive() { MoneyTrackDriveSync.start(); }
 // ─── Toast Notifications ─────────────────────────────────────────
 // A toast with one action button (e.g. Undo), shown for `ms` or until used.
 function showActionToast(message, actionLabel, onAction, ms = 7000) {
@@ -1065,7 +852,7 @@ function saveThingsItems(a)  { _safeSave(KEY_THINGS_ITEMS, a); queueDriveSync();
 function loadThingsEntries() { try { return _safeParseJSON(localStorage.getItem(KEY_THINGS_ENTRIES), []); } catch (e) { console.error('[storage] Parse failed: things_entries', e); return []; } }
 function saveThingsEntries(a){ _safeSave(KEY_THINGS_ENTRIES, a); queueDriveSync(); }
 function loadThingsCustomCats()  { try { return _safeParseJSON(localStorage.getItem(KEY_THINGS_CATS), []); } catch (e) { console.error('[storage] Parse failed: things_cats', e); return []; } }
-function saveThingsCustomCats(a) { _safeSave(KEY_THINGS_CATS, a); }
+function saveThingsCustomCats(a) { _safeSave(KEY_THINGS_CATS, a); queueDriveSync(); }
 function getThingsCats()     { return [...new Set([...DEFAULT_THINGS_CATS, ...loadThingsCustomCats()])]; }
 function getItemEntries(id)  { return loadThingsEntries().filter(e => e.itemId === id).sort((a,b) => a.date.localeCompare(b.date)); }
 function loadThingsStores()  { try { return _safeParseJSON(localStorage.getItem(KEY_THINGS_STORES), []); } catch (e) { console.error('[storage] Parse failed: things_stores', e); return []; } }
@@ -3675,7 +3462,15 @@ function deleteTransaction(id) {
   saveTxns(txns);
   if (String(editingId) === String(id)) cancelEdit();
   renderTracker();
+  renderVisibleAfterTransactionChange();
   return true;
+}
+
+function renderVisibleAfterTransactionChange() {
+  const tab = document.body?.dataset.tab;
+  if (tab === 'accounts') renderAccountsTab();
+  else if (tab === 'analysis') renderAnalysisTab();
+  else if (tab === 'wealth') renderWealthTab();
 }
 
 function resetTxnForm() {
@@ -3907,7 +3702,7 @@ function onSheetSave(another) {
     closeTxnSheet();
     showToast(wasEditing ? 'Changes saved' : 'Transaction saved', 'success');
   }
-  if (_sheet('sec-accounts')?.classList.contains('on')) renderAccountsTab();
+  renderVisibleAfterTransactionChange();
 }
 
 function bindTxnSheet() {
@@ -4475,6 +4270,7 @@ function importBankCSV(file) {
       if (!confirm(`Import ${changeSummary} from "${file.name}"?\n\nFormat detected: ${formatLabel}\n${assignment}`)) return;
       saveTxns([...reconciled.existing, ...newTxns].sort((a, b) => b.date.localeCompare(a.date)));
       renderTracker();
+      renderVisibleAfterTransactionChange();
       showToast(`Imported ${newTxns.length} and corrected ${reconciled.migrated} transaction(s).`, 'success');
       if (skippedRows > 0) {
         setTimeout(() => showToast(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped (unrecognized date format).`, 'info'), 3800);
@@ -5526,7 +5322,7 @@ const BACKUP_KEYS = [
   KEY_DEBT_META, KEY_LOANS, KEY_ACCOUNTS, KEY_THEME,
   KEY_BILLS, KEY_GOALS,
   KEY_THINGS_ITEMS, KEY_THINGS_ENTRIES, KEY_THINGS_CATS, KEY_THINGS_STORES,
-  KEY_AFRICA,
+  KEY_AFRICA, 'moneytrack_wealth_plan_v1',
 ];
 
 function exportBackup() {
@@ -5573,8 +5369,9 @@ function importBackup(file) {
       if (!valid.length) throw new Error('No recognizable data found in file');
       _validateRestoreData(valid, parsed);
       if (!confirm(`Restore backup from ${parsed._exported || 'unknown date'}?\n\nThis will overwrite your current data. Make sure you have a backup of what you have now.`)) return;
-      _saveLocalSafetyBackup();
+      if (!_saveLocalSafetyBackup()) throw new Error('Could not save a local recovery copy. Export a backup file first.');
       valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
+      queueDriveSync();
       initTheme();
       refreshAccountConfig();
       renderAccountFields();
@@ -6240,6 +6037,7 @@ function bindEvents() {
   document.getElementById('qa-add-txn')?.addEventListener('click', () => openTxnSheet());
   bindTxnSheet();
   document.getElementById('backup-now-drive')?.addEventListener('click', saveToDrive);
+  document.getElementById('sync-connect')?.addEventListener('click', saveToDrive);
   document.getElementById('backup-now-file')?.addEventListener('click', exportBackup);
   document.getElementById('txn-type-chips')?.addEventListener('click', e => {
     const chip = e.target.closest('[data-filter-type]');

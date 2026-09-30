@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-MoneyTrack is a personal finance tracker built as a pure vanilla HTML/CSS/JavaScript SPA with no framework, no build tooling, and no backend. All data is persisted via `localStorage`.
+MoneyTrack is a personal finance tracker built as a pure vanilla HTML/CSS/JavaScript SPA with no framework, no build tooling, and no backend. App data is persisted in `localStorage`; an optional Google Drive connection syncs it between devices.
 
 ## File Structure
 
@@ -33,7 +33,8 @@ The `ACCOUNTS` array in `js/app.js` (line 10) is the **only** place account defi
 `WL_EMPTY_PLAN` in `js/wealth.js` is a zero-valued public schema, not a real
 person's plan. Real plan values are imported or edited in the Wealth tab and
 stored under `moneytrack_wealth_plan_v1` in browser `localStorage`. The user can
-export/import a private JSON backup. Never put real pay, allocations, milestones,
+export/import a private JSON backup; the plan is also included in MoneyTrack's
+Drive sync and regular JSON export. Drive backups are not encrypted. Never put real pay, allocations, milestones,
 or personal immigration/tax details in source, tests, docs, or any deployed file.
 `WEALTH_CATEGORY_MAP`
 in the same file maps transaction categories to plan groups; a category missing
@@ -127,6 +128,25 @@ skipped via `cardPaymentBillIds()` because the card balance is counted in full) 
 period, minus transfers into savings accounts since the last payday). `nextPayday()` uses the Wealth
 plan's biweekly `payAnchor`, else the rhythm of past 'Paycheck' income (weekly, biweekly or monthly).
 Every row of the math is shown on the card; keep it that way so the number is never a mystery.
+
+### Cross-device sync
+- `js/sync-merge.js` performs a pure three-way merge of local data, the last synced
+  baseline, and the Drive backup. Entity arrays merge by ID; snapshots and rate
+  histories merge by date; same-field conflicts and delete/edit conflicts stop
+  sync instead of choosing a winner. Unit coverage: `tests/sync.test.mjs`.
+- `js/drive-sync.js` stores the baseline in IndexedDB (`moneytrack-sync`) and
+  uses Google Drive `MoneyTrack_Backup.json`. It reads all same-named app-created
+  copies (older devices could have cached different file IDs), merges compatible
+  records, and writes the merged copy to each. It syncs on changes,
+  on open, on return online/foreground, and every minute while visible. The
+  baseline also holds the prior state of an unconfirmed upload, so a concurrent
+  overwrite can be detected and merged on the next read.
+- All keys in `BACKUP_KEYS`, including Things custom categories and the private
+  Wealth plan, must queue sync when saved. `Replace from Drive` is an explicit
+  recovery action; it makes a local safety copy first. Never silently replace
+  local data or clear site storage to troubleshoot sync.
+- Both devices must use the same Google account. The email-code login is only a
+  screen gate; it does not authenticate or encrypt Drive data.
 
 ### Data layer
 - `loadSnapshots()` / `saveSnapshots()` — account balance snapshots
