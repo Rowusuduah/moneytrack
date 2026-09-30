@@ -424,7 +424,7 @@ function renderWlConfig() {
   });
   el.innerHTML = '<details' + (!configured || wasOpen ? ' open' : '') + '>' +
     '<summary class="card-title">Private Wealth plan settings</summary>' +
-    '<p class="wl-sub">Your plan is stored only in this browser. Import your private JSON file once per device, or enter your own values here. Export a backup before clearing browser data. Keep the JSON file out of public repositories.</p>' +
+    '<p class="wl-sub">Your plan is saved in this browser and included in MoneyTrack Drive sync when connected. Import your private JSON file or enter your values here. Export a backup before clearing browser data. Keep the JSON file out of public repositories.</p>' +
     '<div class="wl-config-actions"><label class="wl-config-import">Import private plan JSON<input id="wlc-file" type="file" accept="application/json,.json"></label>' +
     '<button type="button" id="wlc-export">Export backup</button></div>' +
     '<form id="wlc-form"><div class="wl-config-grid">' + fields + '</div>' +
@@ -481,6 +481,7 @@ function wlSavePrivatePlan(input) {
   const next = wlNormalizePlan(input);
   localStorage.setItem(WL_PLAN_KEY, JSON.stringify(next));
   PLAN = next;
+  queueDriveSync();
   const slider = document.getElementById('wl-sl-save');
   if (slider) {
     slider.max = String(Math.max(5000, Math.ceil(PLAN.savingsTargetMo * 1.5 / 25) * 25));
@@ -830,7 +831,7 @@ function renderWlFooter(agg) {
       ' — add these categories to WEALTH_CATEGORY_MAP in js/wealth.js if they belong to a group.</div>';
   }
   html += '<p class="wl-sub" style="margin-top:' + (agg.unmapped.length ? '10px' : '0') + '">' +
-    'Plan values are stored in this browser. Use Private Wealth plan settings above to edit or export a backup.</p>';
+    'Plan values are stored in this browser and sync to Drive when connected. Use Private Wealth plan settings above to edit or export a backup.</p>';
   el.innerHTML = html;
 }
 // Filled in Task 6

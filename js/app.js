@@ -154,10 +154,6 @@ const KEY_GDRIVE_CONNECTED = 'moneytrack_gdrive_ok';
 let _gTokenClient  = null;
 let _gAccessToken  = null;
 let _gPendingOp    = null;
-let _gIsAutoSync   = false;
-let _driveSyncTimer = null;
-let _driveRetries  = 0;
-let _driveLoadRetries = 0;
 
 function initGDrive() {
   if (!GDRIVE_CLIENT_ID || typeof google === 'undefined' || !google.accounts?.oauth2) return;
@@ -167,13 +163,11 @@ function initGDrive() {
     scope: GDRIVE_SCOPE,
     callback: resp => {
       if (resp.error) {
-        if (!_gIsAutoSync) showToast('Google sign-in failed: ' + resp.error, 'error');
-        _gIsAutoSync = false;
+        showToast('Google sign-in failed: ' + resp.error, 'error');
         _gPendingOp = null;
         return;
       }
       _gAccessToken = resp.access_token;
-      _gIsAutoSync = false;
       if (_gPendingOp) { const op = _gPendingOp; _gPendingOp = null; op(); }
     },
   });
@@ -202,11 +196,13 @@ async function _gFetch(url, options = {}) {
   return resp;
 }
 
-async function _gFindFile() {
+async function _gListFiles() {
   const q = encodeURIComponent(`name='${GDRIVE_FILENAME}' and trashed=false`);
-  const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id)`);
+  const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&orderBy=modifiedTime%20desc&pageSize=1000&fields=files(id,modifiedTime),nextPageToken`);
+  if (!resp.ok) throw new Error(`Drive search failed (${resp.status})`);
   const data = await resp.json();
-  return data.files?.[0]?.id || null;
+  if (data.nextPageToken) throw new Error('Too many MoneyTrack backup files in Drive to sync safely');
+  return data.files || [];
 }
 
 async function _gCreateFile(content) {
@@ -289,11 +285,13 @@ function recordBackup(via) {
 function renderBackupUI() {
   const banner = document.getElementById('backup-banner');
   const line = document.getElementById('backup-status-line');
+  const setup = document.getElementById('sync-setup');
+  if (setup) setup.classList.toggle('hidden', localStorage.getItem(KEY_GDRIVE_CONNECTED) === '1');
   if (!banner && !line) return;
   const lastBackup = loadLastBackup();
   const rawChange = localStorage.getItem(KEY_LAST_CHANGE);
   const state = backupState({
-    hasData: loadTxns().length > 0 || loadSnapshots().length > 0,
+    hasData: BACKUP_KEYS.some(k => k !== KEY_THEME && localStorage.getItem(k) !== null),
     lastBackup,
     lastChange: rawChange ? Number(rawChange) : null,
     now: Date.now(),
@@ -325,14 +323,15 @@ function _saveLocalSafetyBackup() {
     const data = {};
     let hasData = false;
     BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) { data[k] = v; hasData = true; } });
-    if (!hasData) return;
+    if (!hasData) return true;
     const backup = { _saved: new Date().toISOString(), data };
     const existing = JSON.parse(localStorage.getItem(KEY_SAFETY_BACKUP) || '[]');
     existing.unshift(backup);
     // Keep only 3 most recent safety backups
     while (existing.length > 3) existing.pop();
     localStorage.setItem(KEY_SAFETY_BACKUP, JSON.stringify(existing));
-  } catch (e) { console.warn('[MoneyTrack] Safety backup failed:', e); }
+    return true;
+  } catch (e) { console.warn('[MoneyTrack] Safety backup failed:', e); return false; }
 }
 
 // Restore from safety backup (called manually from console if needed)
@@ -344,6 +343,7 @@ function restoreSafetyBackup(index = 0) {
     const backup = existing[index];
     console.log('Restoring safety backup from:', backup._saved);
     Object.entries(backup.data).forEach(([k, v]) => localStorage.setItem(k, v));
+    _markDataChanged();
     location.reload();
     return true;
   } catch (e) { console.error('Safety restore failed:', e); return false; }
@@ -366,177 +366,29 @@ function _getLocalDataDate() {
 
 function _gSetStatus(msg, isError) {
   const el = document.getElementById('gdrive-status');
-  if (!el) return;
-  el.textContent = msg;
-  el.style.color = isError ? 'var(--red)' : 'var(--muted)';
-}
-
-function saveToDrive() {
-  gWithToken(async () => {
-    try {
-      _gSetStatus('Saving…');
-      const data = {};
-      BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
-      const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
-
-      let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
-      if (!fileId) {
-        fileId = await _gFindFile();
-        if (fileId) localStorage.setItem(KEY_GDRIVE_FILE, fileId);
-      }
-
-      if (fileId) {
-        await _gUpdateFile(fileId, json);
-      } else {
-        fileId = await _gCreateFile(json);
-        localStorage.setItem(KEY_GDRIVE_FILE, fileId);
-      }
-      localStorage.setItem(KEY_GDRIVE_CONNECTED, '1');
-      _driveRetries = 0;
-      recordBackup('drive');
-      _gSetStatus(`Saved ${new Date().toLocaleTimeString()}`);
-    } catch (err) {
-      if (err._gStatus === 401) {
-        _driveRetries++;
-        if (_driveRetries <= 1) { saveToDrive(); return; }
-        _driveRetries = 0;
-        showToast('Google Drive authentication failed after retry.', 'error');
-      }
-      _gSetStatus('Save failed', true);
-      console.error('[MoneyTrack Drive]', err);
-      showToast('Save to Drive failed — check the console for details.', 'error');
-    }
-  });
-}
-
-function loadFromDrive() {
-  gWithToken(async () => {
-    try {
-      _gSetStatus('Loading…');
-      let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
-      if (!fileId) {
-        fileId = await _gFindFile();
-        if (!fileId) {
-          _gSetStatus('');
-          showToast('No MoneyTrack backup found in your Google Drive. Save from your PC first, then load on your phone.', 'info');
-          return;
-        }
-        localStorage.setItem(KEY_GDRIVE_FILE, fileId);
-      }
-
-      const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
-      const parsed = await resp.json();
-
-      if (!parsed.data || typeof parsed.data !== 'object') throw new Error('Invalid backup format');
-      const valid = Object.keys(parsed.data).filter(k => BACKUP_KEYS.includes(k));
-      if (!valid.length) throw new Error('No recognisable data found in file');
-      _validateRestoreData(valid, parsed);
-
-      const localDate = _getLocalDataDate();
-      const driveDate = parsed._exported || '';
-      const newerWarning = (localDate && driveDate && localDate > driveDate)
-        ? `\n\n⚠️ WARNING: Your local data (${localDate}) is NEWER than the Drive backup (${driveDate}). Loading will overwrite your recent changes!`
-        : '';
-      if (!confirm(`Load backup from ${driveDate || 'Google Drive'}?${newerWarning}\n\nThis will replace all current data on this device.`)) {
-        _gSetStatus(''); return;
-      }
-
-      _saveLocalSafetyBackup();
-      valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
-      localStorage.setItem(KEY_GDRIVE_CONNECTED, '1');
-      initTheme();
-      refreshAccountConfig();
-      renderAccountFields();
-      renderAccountsTab();
-      populateAccountSelects();
-      renderBudgetCard();
-      renderTracker();
-      renderAnalysisTab();
-      _driveLoadRetries = 0;
-      recordBackup('drive');
-      _gSetStatus(`Loaded ${parsed._exported || ''}`);
-    } catch (err) {
-      if (err._gStatus === 401) {
-        _driveLoadRetries++;
-        if (_driveLoadRetries <= 1) { loadFromDrive(); return; }
-        _driveLoadRetries = 0;
-        showToast('Google Drive authentication failed after retry.', 'error');
-      }
-      _gSetStatus('Load failed', true);
-      console.error('[MoneyTrack Drive]', err);
-      showToast('Load from Drive failed — check the console for details.', 'error');
-    }
-  });
-}
-
-// Silent auto-load on open — only loads if Drive data is newer than local data
-async function autoLoadFromDrive() {
-  try {
-    _gSetStatus('Syncing…');
-    let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
-    if (!fileId) {
-      fileId = await _gFindFile();
-      if (!fileId) { _gSetStatus(''); return; }
-      localStorage.setItem(KEY_GDRIVE_FILE, fileId);
-    }
-
-    const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
-    const parsed = await resp.json();
-
-    if (!parsed.data || typeof parsed.data !== 'object') { _gSetStatus(''); return; }
-    const valid = Object.keys(parsed.data).filter(k => BACKUP_KEYS.includes(k));
-    if (!valid.length) { _gSetStatus(''); return; }
-    try { _validateRestoreData(valid, parsed); } catch { _gSetStatus(''); return; }
-
-    // Compare Drive backup date with local data freshness. On a same-day tie we
-    // prefer LOCAL (upload it) so the device you're actively editing is never
-    // silently overwritten by an equally-dated older backup from another device.
-    const driveDate = parsed._exported || '';
-    const localDate = _getLocalDataDate();
-    if (localDate && driveDate && localDate >= driveDate) {
-      // Local data is newer (or same day) — push local to Drive instead of overwriting
-      _gSetStatus('Local data is newer — uploading…');
-      try {
-        const data = {};
-        BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
-        const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
-        if (fileId) { await _gUpdateFile(fileId, json); }
-        else { fileId = await _gCreateFile(json); localStorage.setItem(KEY_GDRIVE_FILE, fileId); }
-        recordBackup('drive');
-        _gSetStatus(`Uploaded local data ${new Date().toLocaleTimeString()}`);
-      } catch (upErr) {
-        console.error('[MoneyTrack Drive auto-upload]', upErr);
-        _gSetStatus('Upload failed');
-      }
-      return;
-    }
-
-    _saveLocalSafetyBackup();
-    valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
-    initTheme();
-    refreshAccountConfig();
-    renderAccountFields();
-    renderAccountsTab();
-    populateAccountSelects();
-    renderBudgetCard();
-    renderTracker();
-    renderAnalysisTab();
-    recordBackup('drive');   // this device now holds exactly the Drive copy
-    _gSetStatus(`Synced ${parsed._exported || ''}`);
-  } catch (err) {
-    if (err._gStatus === 401) { _gAccessToken = null; _gSetStatus(''); return; }
-    _gSetStatus('');
-    console.error('[MoneyTrack Drive auto-sync]', err);
+  if (el) {
+    el.textContent = msg;
+    el.style.color = isError ? 'var(--red)' : 'var(--muted)';
+  }
+  const alert = document.getElementById('sync-alert');
+  if (alert) {
+    alert.textContent = isError ? msg : '';
+    alert.classList.toggle('hidden', !isError);
   }
 }
 
-// Silently refresh the Google token without a popup.
-// Returns true if a fresh token is available, false otherwise.
+function saveToDrive() { MoneyTrackDriveSync.sync(true); }
+function loadFromDrive() { MoneyTrackDriveSync.load(); }
+
+// Google may expire an access token while the page stays open. Refresh silently
+// for background sync; a visible Sync now action can request consent if needed.
 function _silentTokenRefresh() {
   return new Promise(resolve => {
     if (!_gTokenClient) { resolve(false); return; }
     const prevCallback = _gTokenClient.callback;
+    const timeout = setTimeout(() => { _gTokenClient.callback = prevCallback; resolve(false); }, 15000);
     _gTokenClient.callback = resp => {
+      clearTimeout(timeout);
       _gTokenClient.callback = prevCallback;
       if (resp.error) { resolve(false); return; }
       _gAccessToken = resp.access_token;
@@ -546,77 +398,12 @@ function _silentTokenRefresh() {
   });
 }
 
-// Debounced auto-save — queued after every data write (fires 3 s after last change).
-// Silently refreshes token if expired — never triggers a visible auth popup.
-let _autoSaveRetrying = false;
-async function _runDriveSync() {
-  // If no token, try to silently get one
-  if (!_gAccessToken) {
-    if (!_gTokenClient) initGDrive();
-    if (_gTokenClient) {
-      const ok = await _silentTokenRefresh();
-      if (!ok) { _gSetStatus('Drive disconnected', true); return; }
-    } else { return; }
-  }
-  try {
-    const data = {};
-    BACKUP_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v !== null) data[k] = v; });
-    const json = JSON.stringify({ _version: 1, _exported: todayISO(), data }, null, 2);
-    let fileId = localStorage.getItem(KEY_GDRIVE_FILE);
-    if (!fileId) {
-      fileId = await _gFindFile();
-      if (fileId) localStorage.setItem(KEY_GDRIVE_FILE, fileId);
-    }
-    if (fileId) { await _gUpdateFile(fileId, json); }
-    else { fileId = await _gCreateFile(json); localStorage.setItem(KEY_GDRIVE_FILE, fileId); }
-    recordBackup('drive');
-    _gSetStatus(`Auto-saved ${new Date().toLocaleTimeString()}`);
-    _autoSaveRetrying = false;
-  } catch (err) {
-    if (err._gStatus === 401 && !_autoSaveRetrying) {
-      // Token expired mid-request — refresh and retry once
-      _gAccessToken = null;
-      _autoSaveRetrying = true;
-      const ok = await _silentTokenRefresh();
-      if (ok) { queueDriveSync(); return; }
-      _gSetStatus('Drive disconnected', true);
-    }
-    _autoSaveRetrying = false;
-    console.error('[MoneyTrack Drive auto-save]', err);
-  }
-}
-
 function queueDriveSync() {
-  _markDataChanged();   // every data save passes through here
-  if (!localStorage.getItem(KEY_GDRIVE_CONNECTED)) return;
-  if (_driveSyncTimer) clearTimeout(_driveSyncTimer);
-  _driveSyncTimer = setTimeout(() => { _driveSyncTimer = null; _runDriveSync(); }, 3000);
+  _markDataChanged();
+  MoneyTrackDriveSync.queue();
 }
-
-// Flush a queued auto-sync immediately (e.g. before the tab is hidden/closed) so
-// the final change isn't stuck in the 3s debounce and lost from Drive.
-function flushDriveSync() {
-  if (_driveSyncTimer) { clearTimeout(_driveSyncTimer); _driveSyncTimer = null; _runDriveSync(); }
-}
-
-// Called on init: if user has previously authorised Drive, silently refresh token and auto-load
-function autoSyncDrive() {
-  if (!localStorage.getItem(KEY_GDRIVE_CONNECTED)) return;
-  let _tryAutoAttempts = 0;
-  function tryAuto() {
-    if (typeof google === 'undefined' || !google.accounts?.oauth2) {
-      _tryAutoAttempts++;
-      if (_tryAutoAttempts >= 20) { console.warn('[MoneyTrack] Google library not loaded after 10 s — giving up auto-sync.'); return; }
-      setTimeout(tryAuto, 500); return;
-    }
-    if (!_gTokenClient) initGDrive();
-    _gIsAutoSync = true;
-    _gPendingOp = autoLoadFromDrive;
-    _gTokenClient.requestAccessToken({ prompt: '' });
-  }
-  setTimeout(tryAuto, 800);
-}
-
+function flushDriveSync() { MoneyTrackDriveSync.flush(); }
+function autoSyncDrive() { MoneyTrackDriveSync.start(); }
 // ─── Toast Notifications ─────────────────────────────────────────
 // A toast with one action button (e.g. Undo), shown for `ms` or until used.
 function showActionToast(message, actionLabel, onAction, ms = 7000) {
@@ -839,6 +626,12 @@ function fmt(n) {
   return (n < 0 ? '-' : '') + '$' + abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Big-number money: dollars as text, cents in a smaller span (escaped HTML).
+function withCents(v) {
+  const s = fmt(v), i = s.lastIndexOf('.');
+  return i > 0 ? `${escapeHTML(s.slice(0, i))}<span class="kpi-cents">${escapeHTML(s.slice(i))}</span>` : escapeHTML(s);
+}
+
 function fmtDate(iso) {
   if (!iso) return 'Unknown date';
   const [y, m, d] = iso.split('-');
@@ -1059,7 +852,7 @@ function saveThingsItems(a)  { _safeSave(KEY_THINGS_ITEMS, a); queueDriveSync();
 function loadThingsEntries() { try { return _safeParseJSON(localStorage.getItem(KEY_THINGS_ENTRIES), []); } catch (e) { console.error('[storage] Parse failed: things_entries', e); return []; } }
 function saveThingsEntries(a){ _safeSave(KEY_THINGS_ENTRIES, a); queueDriveSync(); }
 function loadThingsCustomCats()  { try { return _safeParseJSON(localStorage.getItem(KEY_THINGS_CATS), []); } catch (e) { console.error('[storage] Parse failed: things_cats', e); return []; } }
-function saveThingsCustomCats(a) { _safeSave(KEY_THINGS_CATS, a); }
+function saveThingsCustomCats(a) { _safeSave(KEY_THINGS_CATS, a); queueDriveSync(); }
 function getThingsCats()     { return [...new Set([...DEFAULT_THINGS_CATS, ...loadThingsCustomCats()])]; }
 function getItemEntries(id)  { return loadThingsEntries().filter(e => e.itemId === id).sort((a,b) => a.date.localeCompare(b.date)); }
 function loadThingsStores()  { try { return _safeParseJSON(localStorage.getItem(KEY_THINGS_STORES), []); } catch (e) { console.error('[storage] Parse failed: things_stores', e); return []; } }
@@ -1238,10 +1031,6 @@ function renderAccountKPIs() {
     nwDelta = calcNetWorth(lastSnap, allLoansKPI, lastSnap.date) - calcNetWorth(prevSnap, allLoansKPI, prevSnap.date);
     nwPrevDate = prevSnap.date;
   }
-  const withCents = v => {
-    const s = fmt(v), i = s.lastIndexOf('.');
-    return i > 0 ? `${escapeHTML(s.slice(0, i))}<span class="kpi-cents">${escapeHTML(s.slice(i))}</span>` : escapeHTML(s);
-  };
   const netKpi = kpis.find(k => k.label === 'Net Worth');
   const delta = nwDelta === null ? '' : `
       <div class="kpi-delta-row">
@@ -1267,7 +1056,8 @@ function renderAccountKPIs() {
         <div class="kpi-value${neg ? ' neg' : ''}">${k.text ?? fmt(k.value)}</div>
       </div>`;
   }).join('');
-  el.innerHTML = hero + `<div class="kpi-list">${rows}</div>`;
+  el.innerHTML = hero + '<div class="safe-card" id="safe-card"></div>' + `<div class="kpi-list">${rows}</div>`;
+  renderSafeToSpend();
 
   const dateEl = document.getElementById('accounts-date');
   if (dateEl) {
@@ -2071,23 +1861,207 @@ function payBill(bill, due, todayIso, template, id) {
   return { txn, bill: { ...bill, paidThrough: dueIso, lastPaidOn: todayIso, lastPaidTxn: id } };
 }
 
-// Total of every unpaid bill date from now through `days` ahead, overdue ones included.
-function billsDueTotal(bills, today, days) {
+// Every unpaid date of every bill from now through `endDate`, overdue ones included.
+function billOccurrences(bills, today, endDate) {
   const start = new Date(today); start.setHours(0, 0, 0, 0);
-  const end = new Date(start); end.setDate(end.getDate() + days);
-  let total = 0;
+  const out = [];
   for (const bill of bills || []) {
-    const amt = safeAmt(bill.amount);
-    if (!amt) continue;
     let b = bill, due = billDueDate(b, start), guard = 0;
-    while (due && due <= end && guard++ < 60) {
-      total += amt;
+    while (due && due <= endDate && guard++ < 60) {
+      out.push({ bill, due });
       if (b.frequency === 'once') break;
       b = { ...b, paidThrough: toLocalISO(due) };
       due = billDueDate(b, start);
     }
   }
-  return roundMoney(total);
+  return out;
+}
+
+// Total of every unpaid bill date from now through `days` ahead, overdue ones included.
+function billsDueTotal(bills, today, days) {
+  const end = new Date(today); end.setHours(0, 0, 0, 0); end.setDate(end.getDate() + days);
+  return roundMoney(billOccurrences(bills, today, end).reduce((s, o) => s + safeAmt(o.bill.amount), 0));
+}
+
+// ─── Safe to spend until payday ──────────────────────────────────
+// checking now − bills due before payday − card balances owed − savings plan this period.
+function _addDaysISO(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return toLocalISO(d); }
+function _daysBetweenISO(aIso, bIso) { return Math.round((new Date(bIso + 'T00:00:00') - new Date(aIso + 'T00:00:00')) / 86400000); }
+
+// Checking balance now: the latest snapshot's checking accounts plus checking activity
+// logged after it. The monthly carryover is not new money, so it is left out.
+function checkingNow(snaps, txns, accounts, todayIso) {
+  const ordered = orderedSnapshots(snaps, todayIso);
+  if (!ordered.length) return null;
+  const snap = ordered[ordered.length - 1];
+  const checking = new Set((accounts || []).filter(a => a.group === 'checking').map(a => a.id));
+  let amount = 0;
+  for (const id of checking) amount += safeAmt((snap.accounts || {})[id]);
+  for (const t of txns || []) {
+    if (!(t.date > snap.date) || !isISODateOnOrBefore(t.date, todayIso)) continue;
+    const amt = safeAmt(t.amount);
+    if (t.type === 'income' && checking.has(t.account) && t.category !== 'Money from Last Month') amount += amt;
+    else if (t.type === 'expense' && checking.has(t.account)) amount -= amt;
+    else if (t.type === 'transfer') {
+      if (checking.has(t.account)) amount -= amt;
+      if (checking.has(t.toAccount)) amount += amt;
+    }
+  }
+  return { amount: roundMoney(amount), since: snap.date };
+}
+
+// Next payday strictly after today: from the Wealth plan's biweekly payday, else from the
+// rhythm of past paychecks (weekly, biweekly or monthly). null when it can't be told.
+function nextPayday(plan, txns, todayIso) {
+  const anchor = plan && typeof plan.payAnchor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(plan.payAnchor) ? plan.payAnchor : '';
+  if (anchor) {
+    if (anchor > todayIso) return { date: anchor, periodDays: 14, source: 'plan' };
+    const steps = Math.floor(_daysBetweenISO(anchor, todayIso) / 14) + 1;
+    return { date: _addDaysISO(anchor, steps * 14), periodDays: 14, source: 'plan' };
+  }
+  const dates = [...new Set((txns || [])
+    .filter(t => t.type === 'income' && t.category === 'Paycheck' && isISODateOnOrBefore(t.date, todayIso))
+    .map(t => t.date))].sort();
+  if (dates.length < 2) return null;
+  const recent = dates.slice(-5);
+  const gaps = recent.slice(1).map((d, i) => _daysBetweenISO(recent[i], d)).sort((a, b) => a - b);
+  const gap = gaps[Math.floor(gaps.length / 2)];
+  const last = dates[dates.length - 1];
+  if (gap >= 26 && gap <= 33) {
+    const lastD = new Date(last + 'T00:00:00');
+    const dom = lastD.getDate();
+    const onDay = (y, m) => new Date(y, m, Math.min(dom, new Date(y, m + 1, 0).getDate()));
+    let m = lastD.getMonth() + 1;
+    let next = onDay(lastD.getFullYear(), m);
+    while (toLocalISO(next) <= todayIso) { m++; next = onDay(lastD.getFullYear(), m); }
+    const prev = onDay(lastD.getFullYear(), m - 1);
+    return { date: toLocalISO(next), periodDays: Math.round((next - prev) / 86400000), source: 'history' };
+  }
+  const period = gap >= 6 && gap <= 8 ? 7 : gap >= 13 && gap <= 16 ? 14 : 0;
+  if (!period) return null;
+  let next = last;
+  while (next <= todayIso) next = _addDaysISO(next, period);
+  return { date: next, periodDays: period, source: 'history' };
+}
+
+// Unpaid bill dates strictly before payday (a bill due on payday comes out of the new check).
+function billsDueBefore(bills, today, beforeIso, skipIds) {
+  const end = new Date(beforeIso + 'T00:00:00'); end.setDate(end.getDate() - 1);
+  const occ = billOccurrences((bills || []).filter(b => !(skipIds && skipIds.has(b.id)) && safeAmt(b.amount) > 0), today, end)
+    .sort((a, b) => a.due - b.due);
+  const names = [];
+  for (const o of occ) if (!names.includes(o.bill.name)) names.push(o.bill.name);
+  return { total: roundMoney(occ.reduce((s, o) => s + safeAmt(o.bill.amount), 0)), names };
+}
+
+// Bills that are card payments: the card balance is already counted in full, so these
+// would count it twice.
+function cardPaymentBillIds(bills, txns, accounts) {
+  const debt = new Set((accounts || []).filter(a => a.group === 'debt').map(a => a.id));
+  const ids = new Set();
+  for (const bill of bills || []) {
+    const tpl = billTemplate(bill, txns);
+    if (tpl && ((tpl.type === 'transfer' && debt.has(tpl.toAccount)) || tpl.category === 'Credit Card Payment')) ids.add(bill.id);
+  }
+  return ids;
+}
+
+// What is owed on cards right now (live, see cardOwedNow); overpaid cards count as 0.
+function cardsOwedNow(snaps, txns, accounts, todayIso) {
+  const ordered = orderedSnapshots(snaps, todayIso);
+  const snap = ordered.length ? ordered[ordered.length - 1] : null;
+  const debts = (accounts || []).filter(a => a.group === 'debt' && !a.deleted);
+  let total = 0;
+  const labels = [];
+  for (const a of debts) {
+    const owed = cardOwedNow(a, snap, txns, debts.length, todayIso).owed;
+    if (owed > 0) { total += owed; labels.push(a.label); }
+  }
+  return { total: roundMoney(total), labels };
+}
+
+// The Wealth plan's monthly savings target spread over pay periods, minus what already
+// moved into savings accounts since the last payday.
+function savingsPlanDue(plan, payday, txns, accounts, todayIso) {
+  const monthly = plan ? safeAmt(plan.savingsTargetMo) : 0;
+  if (!monthly || !payday) return 0;
+  const perPeriod = roundMoney(monthly * 12 * payday.periodDays / 365.25);
+  const since = _addDaysISO(payday.date, -payday.periodDays);
+  const savings = new Set((accounts || []).filter(a => a.group === 'savings').map(a => a.id));
+  const moved = (txns || []).filter(t => t.type === 'transfer' && savings.has(t.toAccount) && !savings.has(t.account)
+      && t.date >= since && isISODateOnOrBefore(t.date, todayIso))
+    .reduce((s, t) => s + safeAmt(t.amount), 0);
+  return roundMoney(Math.max(0, perPeriod - moved));
+}
+
+function safeToSpend({ checking, bills, cards, savings, todayIso, paydayIso }) {
+  const amount = roundMoney(checking - bills - cards - savings);
+  const days = Math.max(1, _daysBetweenISO(todayIso, paydayIso));
+  const short = amount < 0;
+  return { amount, days, perDay: short ? 0 : roundMoney(amount / days), short };
+}
+
+function _wealthPlanOrNull() { return typeof PLAN !== 'undefined' ? PLAN : null; }
+
+function _shortNameList(names) {
+  return names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} +${names.length - 3} more`;
+}
+
+// The "Safe to spend" card on Accounts (slot rendered by renderAccountKPIs).
+function renderSafeToSpend() {
+  const el = document.getElementById('safe-card');
+  if (!el) return;
+  const today = todayISO();
+  const snaps = loadSnapshots(), txns = loadTxns(), bills = loadBills();
+  const plan = _wealthPlanOrNull();
+  const checking = checkingNow(snaps, txns, ACCOUNTS, today);
+  const payday = nextPayday(plan, txns, today);
+  const head = until => `<div class="safe-head"><span class="safe-title">Safe to spend</span>${until ? `<span class="safe-until">${escapeHTML(until)}</span>` : ''}</div>`;
+  if (!checking) {
+    el.innerHTML = head('') + '<p class="safe-setup">Update your balances to see what is safe to spend until payday.</p>';
+    return;
+  }
+  if (!payday) {
+    el.innerHTML = head('') + '<p class="safe-setup">Set your payday in the Wealth plan, or log two paychecks with the Paycheck category, to see what is safe to spend until payday.</p>';
+    return;
+  }
+  const billsDue = billsDueBefore(bills, new Date(today + 'T00:00:00'), payday.date, cardPaymentBillIds(bills, txns, ACCOUNTS));
+  const cards = cardsOwedNow(snaps, txns, ACCOUNTS, today);
+  const savings = savingsPlanDue(plan, payday, txns, ACCOUNTS, today);
+  const s = safeToSpend({ checking: checking.amount, bills: billsDue.total, cards: cards.total, savings, todayIso: today, paydayIso: payday.date });
+
+  const pd = new Date(payday.date + 'T00:00:00');
+  const shortDate = pd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const until = `until payday, ${pd.toLocaleDateString('en-US', { weekday: 'short' })} ${shortDate}`;
+  let top;
+  if (s.short) {
+    top = `<div class="safe-amount safe-amount--short">−${withCents(-s.amount)}</div>
+      <div class="safe-sub safe-sub--short">Short before payday</div>
+      <div class="safe-sub">Bills and plans before ${escapeHTML(shortDate)} add up to more than what is in checking.</div>`;
+  } else {
+    const daily = s.days === 1 ? 'All of it is for today'
+      : `About $${Math.floor(s.perDay).toLocaleString('en-US')} a day for the next ${s.days} days`;
+    const held = [billsDue.total, cards.total, savings].filter(v => v > 0);
+    const bar = checking.amount > 0
+      ? `<div class="safe-bar" role="img" aria-label="${escapeHTML(`Of ${fmt(checking.amount)} in checking, ${fmt(checking.amount - s.amount)} is already spoken for and ${fmt(s.amount)} is free`)}">` +
+        held.map(v => `<span class="safe-seg" style="flex-grow:${Math.round(v * 100)}"></span>`).join('') +
+        (s.amount > 0 ? `<span class="safe-seg safe-seg--free" style="flex-grow:${Math.round(s.amount * 100)}"></span>` : '') + '</div>'
+      : '';
+    top = `<div class="safe-amount">${withCents(s.amount)}</div><div class="safe-sub">${escapeHTML(daily)}</div>${bar}`;
+  }
+  const rows = [['Checking now', checking.amount < 0 ? '−' + fmt(-checking.amount) : fmt(checking.amount)]];
+  if (billsDue.total > 0) rows.push([`Bills before payday: ${_shortNameList(billsDue.names)}`, '−' + fmt(billsDue.total)]);
+  if (cards.total > 0) {
+    const label = cards.labels.length === 1 ? `${cards.labels[0].replace(/\s*\([^)]*\)\s*$/, '')} balance you owe` : 'Card balances you owe';
+    rows.push([label, '−' + fmt(cards.total)]);
+  }
+  if (savings > 0) rows.push(['Savings plan this pay period', '−' + fmt(savings)]);
+  const since = new Date(checking.since + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const note = `Uses your ${since} balances plus what you logged since.` +
+    (payday.source === 'history' ? ' Payday is read from your past paychecks.' : '');
+  el.innerHTML = head(until) + top +
+    `<div class="safe-rows">${rows.map(([k, v]) => `<div class="safe-row"><span>${escapeHTML(k)}</span><span>${escapeHTML(v)}</span></div>`).join('')}</div>` +
+    `<p class="safe-note">${escapeHTML(note)}</p>`;
 }
 
 let _billsManaging = false;
@@ -3488,7 +3462,15 @@ function deleteTransaction(id) {
   saveTxns(txns);
   if (String(editingId) === String(id)) cancelEdit();
   renderTracker();
+  renderVisibleAfterTransactionChange();
   return true;
+}
+
+function renderVisibleAfterTransactionChange() {
+  const tab = document.body?.dataset.tab;
+  if (tab === 'accounts') renderAccountsTab();
+  else if (tab === 'analysis') renderAnalysisTab();
+  else if (tab === 'wealth') renderWealthTab();
 }
 
 function resetTxnForm() {
@@ -3720,7 +3702,7 @@ function onSheetSave(another) {
     closeTxnSheet();
     showToast(wasEditing ? 'Changes saved' : 'Transaction saved', 'success');
   }
-  if (_sheet('sec-accounts')?.classList.contains('on')) renderAccountsTab();
+  renderVisibleAfterTransactionChange();
 }
 
 function bindTxnSheet() {
@@ -4288,6 +4270,7 @@ function importBankCSV(file) {
       if (!confirm(`Import ${changeSummary} from "${file.name}"?\n\nFormat detected: ${formatLabel}\n${assignment}`)) return;
       saveTxns([...reconciled.existing, ...newTxns].sort((a, b) => b.date.localeCompare(a.date)));
       renderTracker();
+      renderVisibleAfterTransactionChange();
       showToast(`Imported ${newTxns.length} and corrected ${reconciled.migrated} transaction(s).`, 'success');
       if (skippedRows > 0) {
         setTimeout(() => showToast(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped (unrecognized date format).`, 'info'), 3800);
@@ -5339,7 +5322,7 @@ const BACKUP_KEYS = [
   KEY_DEBT_META, KEY_LOANS, KEY_ACCOUNTS, KEY_THEME,
   KEY_BILLS, KEY_GOALS,
   KEY_THINGS_ITEMS, KEY_THINGS_ENTRIES, KEY_THINGS_CATS, KEY_THINGS_STORES,
-  KEY_AFRICA,
+  KEY_AFRICA, 'moneytrack_wealth_plan_v1',
 ];
 
 function exportBackup() {
@@ -5386,8 +5369,9 @@ function importBackup(file) {
       if (!valid.length) throw new Error('No recognizable data found in file');
       _validateRestoreData(valid, parsed);
       if (!confirm(`Restore backup from ${parsed._exported || 'unknown date'}?\n\nThis will overwrite your current data. Make sure you have a backup of what you have now.`)) return;
-      _saveLocalSafetyBackup();
+      if (!_saveLocalSafetyBackup()) throw new Error('Could not save a local recovery copy. Export a backup file first.');
       valid.forEach(k => localStorage.setItem(k, parsed.data[k]));
+      queueDriveSync();
       initTheme();
       refreshAccountConfig();
       renderAccountFields();
@@ -6053,6 +6037,7 @@ function bindEvents() {
   document.getElementById('qa-add-txn')?.addEventListener('click', () => openTxnSheet());
   bindTxnSheet();
   document.getElementById('backup-now-drive')?.addEventListener('click', saveToDrive);
+  document.getElementById('sync-connect')?.addEventListener('click', saveToDrive);
   document.getElementById('backup-now-file')?.addEventListener('click', exportBackup);
   document.getElementById('txn-type-chips')?.addEventListener('click', e => {
     const chip = e.target.closest('[data-filter-type]');
