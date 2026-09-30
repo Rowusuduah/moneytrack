@@ -287,6 +287,7 @@ function renderBackupUI() {
   const line = document.getElementById('backup-status-line');
   const setup = document.getElementById('sync-setup');
   if (setup) setup.classList.toggle('hidden', localStorage.getItem(KEY_GDRIVE_CONNECTED) === '1');
+  renderDriveHealth();
   if (!banner && !line) return;
   const lastBackup = loadLastBackup();
   const rawChange = localStorage.getItem(KEY_LAST_CHANGE);
@@ -302,6 +303,21 @@ function renderBackupUI() {
     if (title && state.title) title.textContent = state.title;
   }
   if (line) line.textContent = backupStatusLine(lastBackup, Date.now());
+}
+
+function renderDriveHealth(message, isError = false) {
+  const health = document.getElementById('drive-health');
+  const text = document.getElementById('drive-health-text');
+  if (!health || !text) return;
+  const connected = localStorage.getItem(KEY_GDRIVE_CONNECTED) === '1';
+  health.classList.toggle('hidden', !connected);
+  if (!connected) return;
+  const last = loadLastBackup();
+  const changed = Number(localStorage.getItem(KEY_LAST_CHANGE) || 0);
+  text.textContent = message || (last?.via === 'drive'
+    ? changed > last.at ? 'Drive set up · changes waiting to sync' : `Last Drive sync ${_agoText(Date.now() - last.at)} ago`
+    : 'Drive set up · checking for updates');
+  health.classList.toggle('drive-health-error', !!isError);
 }
 
 // Ask the browser to keep this site's storage instead of clearing it under pressure.
@@ -365,6 +381,7 @@ function _getLocalDataDate() {
 }
 
 function _gSetStatus(msg, isError) {
+  renderDriveHealth(msg, isError);
   const el = document.getElementById('gdrive-status');
   if (el) {
     el.textContent = msg;
@@ -3471,6 +3488,7 @@ function renderVisibleAfterTransactionChange() {
   if (tab === 'accounts') renderAccountsTab();
   else if (tab === 'analysis') renderAnalysisTab();
   else if (tab === 'wealth') renderWealthTab();
+  else if (tab === 'things') renderThingsTab();
 }
 
 function resetTxnForm() {
@@ -4556,7 +4574,7 @@ function renderThingsDashboard() {
   el.innerHTML = `
     <div class="kpi"><div class="kpi-label">Items Tracked</div><div class="kpi-value">${items.length}</div></div>
     <div class="kpi"><div class="kpi-label">Entries Logged</div><div class="kpi-value">${entries.length}</div></div>
-    <div class="kpi"><div class="kpi-label">Total Spent</div><div class="kpi-value">${fmt(totalSpent)}</div></div>
+    <div class="kpi"><div class="kpi-label">Price log total</div><div class="kpi-value">${fmt(totalSpent)}</div></div>
     <div class="kpi"><div class="kpi-label">Rising Prices</div><div class="kpi-value things-trend-up">${risingCount}</div></div>
   `;
 }
@@ -4654,6 +4672,8 @@ function renderThingsDetailView(itemId) {
   detailView.style.display = '';
 
   const entries = getItemEntries(itemId);
+  const txns = loadTxns();
+  const txnsById = new Map(txns.map(t => [String(t.id), t]));
   const stats   = calcItemStats(entries);
   const insight = generateInsight(item, entries);
 
@@ -4666,12 +4686,15 @@ function renderThingsDetailView(itemId) {
     const diffBadge = diff && diff.unitCostPct != null
       ? `<span class="things-diff-badge ${diff.unitCostPct > 0 ? 'up' : 'down'}">${diff.unitCostPct > 0 ? '+' : ''}${diff.unitCostPct.toFixed(1)}%</span>`
       : '';
+    const linked = entry.transactionId ? txnsById.get(String(entry.transactionId)) : null;
+    const linkLabel = linked && linked.type === 'expense' && !NON_EXPENSE_CATS.has(linked.category)
+      ? 'Tracker linked' : entry.transactionId ? 'Review link' : 'Link expense';
     return `
       <tr>
         <td>${fmtDate(entry.date)}</td>
         <td>${escapeHTML(entry.store || '—')}</td>
         <td>${entry.quantity} ${escapeHTML(entry.unit)}</td>
-        <td>${fmt(entry.totalPrice)}</td>
+        <td>${fmt(entry.totalPrice)}<br><button class="btn btn-ghost btn-sm" data-link-entry="${escapeHTML(entry.id)}" aria-label="${linkLabel} for ${fmtDate(entry.date)} purchase">${linkLabel}</button></td>
         <td>${uc != null ? fmt(uc) : '—'}${diffBadge}</td>
         <td><button class="txn-btn del" data-del-entry="${escapeHTML(entry.id)}" aria-label="Delete entry">✕</button></td>
       </tr>
@@ -4707,6 +4730,7 @@ function renderThingsDetailView(itemId) {
         <button class="btn btn-green btn-sm" id="things-show-add-entry">+ Log Purchase</button>
       </div>
       <div id="things-add-entry-form" style="display:none"></div>
+      <div id="things-link-panel" aria-live="polite"></div>
 
       ${entries.length ? `
       <div style="overflow-x:auto">
@@ -4724,6 +4748,80 @@ function renderThingsDetailView(itemId) {
     const svg = document.getElementById(`things-svg-${itemId}`);
     if (svg) buildThingsChart(entries, svg);
   }
+}
+
+// A Things purchase is a price-history record, not a second expense. Linking
+// associates it with a transaction the user already logged; no totals change.
+function thingsLinkCandidates(entry, txns, search = '') {
+  const q = String(search).trim().toLowerCase();
+  return txns.filter(t => t.id != null && t.type === 'expense' && !NON_EXPENSE_CATS.has(t.category))
+    .filter(t => !q || [t.date, t.description, t.category, t.amount, ACCOUNT_LABELS[t.account] || t.account]
+      .some(v => String(v || '').toLowerCase().includes(q)))
+    .sort((a, b) => {
+      const score = t => (t.date === entry.date ? 4 : 0) + (Math.abs(Number(t.amount) - Number(entry.totalPrice)) < 0.005 ? 2 : 0);
+      return score(b) - score(a) || String(b.date).localeCompare(String(a.date)) || String(a.id).localeCompare(String(b.id));
+    }).slice(0, 12);
+}
+
+function renderThingsLinkCandidates(entryId) {
+  const panel = document.getElementById('things-link-panel');
+  const results = panel?.querySelector('#things-link-results');
+  const entry = loadThingsEntries().find(e => String(e.id) === String(entryId));
+  if (!results || !entry) return;
+  const candidates = thingsLinkCandidates(entry, loadTxns(), panel.querySelector('#things-link-search')?.value || '');
+  results.innerHTML = candidates.length ? candidates.map(t => {
+    const match = t.date === entry.date && Math.abs(Number(t.amount) - Number(entry.totalPrice)) < 0.005;
+    return `<button type="button" class="btn btn-ghost btn-sm" data-link-choice="${escapeHTML(String(t.id))}" data-link-for="${escapeHTML(entry.id)}" style="display:block;width:100%;text-align:left;margin-top:6px;white-space:normal">
+      ${escapeHTML(t.description || 'Expense')} · ${fmt(safeAmt(t.amount))} · ${fmtDate(t.date)}
+      <small style="display:block;color:var(--muted)">${escapeHTML(t.category || '')} · ${escapeHTML(ACCOUNT_LABELS[t.account] || t.account || '')}${match ? ' · Date and amount match' : ''}</small>
+    </button>`;
+  }).join('') : '<p class="muted" style="margin:8px 0">No matching Tracker expenses. Search a date, amount, or description.</p>';
+}
+
+function showThingsLinkPanel(entryId) {
+  const panel = document.getElementById('things-link-panel');
+  const entry = loadThingsEntries().find(e => String(e.id) === String(entryId));
+  if (!panel || !entry) return;
+  const linked = entry.transactionId && loadTxns().find(t => String(t.id) === String(entry.transactionId));
+  const validLinked = linked && linked.type === 'expense' && !NON_EXPENSE_CATS.has(linked.category);
+  panel.innerHTML = `<div class="card" style="margin:10px 0" role="region" aria-label="Link purchase to Tracker">
+    <div class="card-title">Link this purchase to Tracker</div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 10px">${fmt(entry.totalPrice)} on ${fmtDate(entry.date)}. Linking does not add another expense or change totals. A single receipt can cover several items. To count new spending, add an expense in Tracker first.</p>
+    ${validLinked ? `<p style="font-size:12px">Linked to ${escapeHTML(linked.description || 'Expense')} · ${fmt(safeAmt(linked.amount))}</p>
+      <button class="btn btn-ghost btn-sm" data-open-linked="${escapeHTML(String(linked.id))}">Open Tracker expense</button>` : entry.transactionId ? '<p style="font-size:12px;color:var(--red)">The linked Tracker expense is missing or has changed type. Choose another or remove the link.</p>' : ''}
+    ${entry.transactionId ? `<button class="btn btn-ghost btn-sm" data-unlink-entry="${escapeHTML(entry.id)}">Remove link</button>` : ''}
+    <label for="things-link-search" style="display:block;margin-top:10px">Find an existing expense</label>
+    <input id="things-link-search" class="acct-input" type="search" placeholder="Search date, amount, or description" autocomplete="off" data-link-for="${escapeHTML(entry.id)}">
+    <div id="things-link-results"></div>
+    <button class="btn btn-ghost btn-sm" id="things-close-link" style="margin-top:8px">Cancel</button>
+  </div>`;
+  renderThingsLinkCandidates(entryId);
+  panel.querySelector('#things-link-search')?.focus();
+}
+
+function withThingsEntryLink(entries, entryId, transactionId) {
+  return entries.map(entry => {
+    if (String(entry.id) !== String(entryId)) return entry;
+    if (transactionId) return { ...entry, transactionId };
+    const { transactionId: oldLink, ...unlinked } = entry;
+    return unlinked;
+  });
+}
+
+function setThingsEntryLink(entryId, transactionId) {
+  const entries = loadThingsEntries();
+  const entry = entries.find(e => String(e.id) === String(entryId));
+  if (!entry) return false;
+  let linkedId = null;
+  if (transactionId) {
+    const txn = loadTxns().find(t => String(t.id) === String(transactionId));
+    if (!txn || txn.type !== 'expense' || NON_EXPENSE_CATS.has(txn.category)) return false;
+    linkedId = txn.id;
+  }
+  saveThingsEntries(withThingsEntryLink(entries, entryId, linkedId));
+  renderThingsDetailView(entry.itemId);
+  showToast(transactionId ? 'Purchase linked to Tracker expense' : 'Tracker link removed', 'success');
+  return true;
 }
 
 function buildThingsChart(entries, svgEl) {
@@ -6038,6 +6136,7 @@ function bindEvents() {
   bindTxnSheet();
   document.getElementById('backup-now-drive')?.addEventListener('click', saveToDrive);
   document.getElementById('sync-connect')?.addEventListener('click', saveToDrive);
+  document.getElementById('drive-health-sync')?.addEventListener('click', saveToDrive);
   document.getElementById('backup-now-file')?.addEventListener('click', exportBackup);
   document.getElementById('txn-type-chips')?.addEventListener('click', e => {
     const chip = e.target.closest('[data-filter-type]');
@@ -6244,6 +6343,15 @@ function bindEvents() {
       if (e.target.id === 'things-show-add-entry')   { renderThingsAddEntryForm(thingsDetailId); return; }
       if (e.target.id === 'things-cancel-add-entry') { const f = document.getElementById('things-add-entry-form'); if (f) f.style.display='none'; return; }
       if (e.target.id === 'things-save-entry')       { saveThingsEntry(thingsDetailId); return; }
+      if (e.target.id === 'things-close-link')       { const p = document.getElementById('things-link-panel'); if (p) p.innerHTML = ''; return; }
+      const linkEntry = e.target.closest('[data-link-entry]');
+      if (linkEntry) { showThingsLinkPanel(linkEntry.dataset.linkEntry); return; }
+      const linkChoice = e.target.closest('[data-link-choice]');
+      if (linkChoice) { setThingsEntryLink(linkChoice.dataset.linkFor, linkChoice.dataset.linkChoice); return; }
+      const unlinkEntry = e.target.closest('[data-unlink-entry]');
+      if (unlinkEntry) { setThingsEntryLink(unlinkEntry.dataset.unlinkEntry, null); return; }
+      const openLinked = e.target.closest('[data-open-linked]');
+      if (openLinked) { editTransaction(openLinked.dataset.openLinked); return; }
       const detailBtn = e.target.closest('[data-things-detail]');
       if (detailBtn) { showThingsDetail(detailBtn.dataset.thingsDetail); return; }
       const delItem = e.target.closest('[data-del-thing]');
@@ -6252,6 +6360,10 @@ function bindEvents() {
       if (delEntry) { deleteThingsEntry(delEntry.dataset.delEntry, thingsDetailId); return; }
     });
     thingsSec.addEventListener('input', e => {
+      if (e.target.id === 'things-link-search') {
+        renderThingsLinkCandidates(e.target.dataset.linkFor);
+        return;
+      }
       if (e.target.id === 'things-search' || e.target.id === 'things-cat-filter' || e.target.id === 'things-sort') {
         thingsFilters.search   = document.getElementById('things-search')?.value || '';
         thingsFilters.category = document.getElementById('things-cat-filter')?.value || '';

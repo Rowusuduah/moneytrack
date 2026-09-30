@@ -25,6 +25,26 @@ globalThis.setInterval = (fn, ms, ...a) => { const t = _setInterval(fn, ms, ...a
 vm.runInThisContext(readFileSync(new URL('../js/app.js', import.meta.url), 'utf8'));
 const A = globalThis;
 
+test('Things link candidates prefer an existing expense with matching date and amount', () => {
+  const entry = { id: 'item-purchase', date: '2026-09-12', totalPrice: 25 };
+  const txns = [
+    { id: 'other', type: 'expense', category: 'Groceries', date: '2026-09-10', amount: 25, description: 'Other trip' },
+    { id: 'match', type: 'expense', category: 'Groceries', date: '2026-09-12', amount: 25, description: 'Walmart' },
+    { id: 'transfer', type: 'transfer', date: '2026-09-12', amount: 25, description: 'Move money' },
+    { id: 'card-payment', type: 'expense', category: 'Credit Card Payment', date: '2026-09-12', amount: 25, description: 'Statement' },
+  ];
+  assert.deepEqual(A.thingsLinkCandidates(entry, txns).map(t => t.id), ['match', 'other']);
+  assert.deepEqual(A.thingsLinkCandidates(entry, txns, 'walmart').map(t => t.id), ['match']);
+});
+
+test('Things entry links are opt-in and preserve purchase IDs and other entries', () => {
+  const entries = [{ id: 'a', itemId: 'soap', totalPrice: 25 }, { id: 'b', itemId: 'gas', totalPrice: 40 }];
+  const linked = A.withThingsEntryLink(entries, 'a', 'txn-1');
+  assert.deepEqual(linked, [{ id: 'a', itemId: 'soap', totalPrice: 25, transactionId: 'txn-1' }, entries[1]]);
+  assert.deepEqual(entries[0], { id: 'a', itemId: 'soap', totalPrice: 25 });
+  assert.deepEqual(A.withThingsEntryLink(linked, 'a', null), entries);
+});
+
 // ── Gas fixture (spec §16) ────────────────────────────────────────
 // Reporting date frozen at 2026-09-18 per spec.
 const GAS_FIXTURE = [
