@@ -627,7 +627,7 @@ function savingsWithdrawalForPeriod(txns, snapPair, accounts) {
   const currentSnap = snapPair?.endSnap || null;
   const comparable = snapshotPairComparable(snapPair);
   const savings = new Set((accounts || []).filter(a => a.group === 'savings').map(a => a.id));
-  const recorded = {}, covered = {}, byAccount = {};
+  const recorded = {}, internal = {}, inferred = {}, covered = {}, byAccount = {}, entries = [];
   for (const t of txns || []) {
     if (!savings.has(t.account) || !(
       t.type === 'expense' ||
@@ -635,23 +635,29 @@ function savingsWithdrawalForPeriod(txns, snapPair, accounts) {
     )) continue;
     const amount = safeAmt(t.amount);
     if (!amount) continue;
-    recorded[t.account] = roundMoney((recorded[t.account] || 0) + amount);
+    const internalMove = t.type === 'transfer' && savings.has(t.toAccount);
+    const bucket = internalMove ? internal : recorded;
+    bucket[t.account] = roundMoney((bucket[t.account] || 0) + amount);
+    entries.push({ date: t.date, account: t.account, toAccount: t.toAccount || '',
+      description: t.description || '', amount, internal: internalMove });
     if (comparable && t.date >= priorSnap.date && t.date <= currentSnap.date) {
       covered[t.account] = roundMoney((covered[t.account] || 0) + amount);
     }
   }
   const drops = comparable ? savingsBalanceDrops(priorSnap, currentSnap, accounts) : { byAccount: {} };
-  let recordedTotal = 0, unrecordedTotal = 0;
+  let recordedTotal = 0, internalTotal = 0, unrecordedTotal = 0;
   for (const id of savings) {
     const logged = recorded[id] || 0;
     const unexplained = Math.max(0, roundMoney((drops.byAccount[id] || 0) - (covered[id] || 0)));
+    if (unexplained) inferred[id] = unexplained;
     if (logged || unexplained) byAccount[id] = roundMoney(logged + unexplained);
     recordedTotal = roundMoney(recordedTotal + logged);
+    internalTotal = roundMoney(internalTotal + (internal[id] || 0));
     unrecordedTotal = roundMoney(unrecordedTotal + unexplained);
   }
   return {
     total: roundMoney(recordedTotal + unrecordedTotal), byAccount,
-    recordedTotal, unrecordedTotal, priorSnap, currentSnap,
+    recordedTotal, internalTotal, unrecordedTotal, internal, inferred, entries, priorSnap, currentSnap,
     comparable, netTotal: drops.netTotal,
   };
 }
@@ -660,26 +666,53 @@ function savingsDropText(drop) {
   if (!drop) return '';
   const dates = drop.priorSnap && drop.currentSnap
     ? `${fmtDate(drop.priorSnap.date)} → ${fmtDate(drop.currentSnap.date)}` : '';
-  if (drop.total <= 0) return `No savings decrease between ${dates}.`;
+  if (drop.total <= 0) return drop.internalTotal > 0
+    ? `No money left savings; ${fmt(drop.internalTotal)} moved between savings accounts.`
+    : dates ? `No savings decrease between ${dates}.` : 'No money taken from savings.';
   const priorB = drop.priorSnap?.accounts || {};
   const parts = savingsWithdrawalParts(drop.byAccount, id => safeAmt(priorB[id]))
     .map(({ id, amt, priorBal, pct }) =>
       `${ACCOUNT_LABELS[id] || id}: ${fmt(amt)}` +
       (drop.recordedTotal ? '' : pct !== null ? ` (${pct}% of its ${fmt(priorBal)})` : ''));
-  if (drop.recordedTotal) {
+  if (drop.recordedTotal || drop.internalTotal) {
     const detail = drop.unrecordedTotal > 0
       ? `${fmt(drop.recordedTotal)} logged + ${fmt(drop.unrecordedTotal)} inferred from balance changes`
       : 'logged transactions';
-    return `Taken from savings — ${parts.join(' · ')} (${detail}; not counted in Money Out)`;
+    const internalNote = drop.internalTotal > 0 ? `; ${fmt(drop.internalTotal)} moved between savings accounts separately` : '';
+    return `From savings — ${parts.join(' · ')} (${detail}${internalNote}; not counted in Money Out)`;
   }
   const netTotal = drop.netTotal == null ? drop.total : drop.netTotal;
   if (netTotal <= 0) {
-    return `Savings account decrease — ${parts.join(' · ')}; total savings did not decrease because other savings balances rose (${dates}; not counted in Money Out)`;
+    return `Unexplained savings account decrease — ${parts.join(' · ')}; total savings did not decrease because other savings balances rose (${dates}; not counted in Money Out)`;
   }
   const offsetNote = netTotal < drop.total
     ? `; total savings' net decrease: ${fmt(netTotal)} after increases elsewhere`
     : '';
-  return `Taken from savings — ${parts.join(' · ')}${offsetNote} (${dates}; not counted in Money Out)`;
+  return `Unexplained savings decrease — ${parts.join(' · ')}${offsetNote} (${dates}; not counted in Money Out)`;
+}
+
+function savingsEvidenceHTML(result) {
+  const label = id => escapeHTML(ACCOUNT_LABELS[id] || id || 'Unassigned account');
+  const rows = result.entries.filter(e => !e.internal).map(e =>
+    `<li>${escapeHTML(fmtDate(e.date))} · ${label(e.account)}` +
+    `${e.toAccount ? ` → ${label(e.toAccount)}` : ''}` +
+    `${e.description ? ` · ${escapeHTML(e.description)}` : ''} · ${escapeHTML(fmt(e.amount))}</li>`);
+  const internalRows = result.entries.filter(e => e.internal).map(e =>
+    `<li>${escapeHTML(fmtDate(e.date))} · ${label(e.account)} → ${label(e.toAccount)} · ${escapeHTML(fmt(e.amount))}</li>`);
+  const inferredRows = Object.entries(result.inferred || {}).map(([id, amount]) =>
+    `<li>${label(id)} · ${escapeHTML(fmt(amount))} between ${escapeHTML(fmtDate(result.priorSnap.date))} and ${escapeHTML(fmtDate(result.currentSnap.date))}</li>`);
+  const section = (heading, items) => items.length
+    ? `<div class="savings-evidence-group"><strong>${heading}</strong><ul>${items.join('')}</ul></div>` : '';
+  return section('Logged outflows', rows) +
+    section('Unexplained balance decreases', inferredRows) +
+    section('Moves between savings accounts (excluded)', internalRows) +
+    (result.comparable
+      ? `<p>Compared saved balances from ${escapeHTML(fmtDate(result.priorSnap.date))} to ${escapeHTML(fmtDate(result.currentSnap.date))}. Unexplained decreases need review; a balance change alone cannot identify its cause.</p>`
+      : '<p>Two saved balance dates in this period are needed to find unlogged changes.</p>');
+}
+
+function savingsDisclosureHTML(result) {
+  return `<details class="savings-disclosure"><summary>${escapeHTML(savingsDropText(result))}<span>How calculated</span></summary>${savingsEvidenceHTML(result)}</details>`;
 }
 
 function fmt(n) {
@@ -1136,10 +1169,11 @@ function renderAccountSavingsChange() {
   const pair = snapshotRangePair(loadSnapshots(), anISO(period.start), todayISO());
   const txns = anTxnsBetween(loadTxns(), period.start, new Date(todayISO() + 'T00:00:00'));
   const withdrawal = savingsWithdrawalForPeriod(txns, pair, ACCOUNTS);
-  el.textContent = withdrawal.total > 0 ? savingsDropText(withdrawal)
-    : withdrawal.comparable ? 'No money taken from savings this month.'
+  const hasMovement = withdrawal.total > 0 || withdrawal.internalTotal > 0;
+  if (hasMovement) el.innerHTML = savingsDisclosureHTML(withdrawal);
+  else el.textContent = withdrawal.comparable ? 'No money taken from savings this month.'
     : 'Log a savings withdrawal or save balances on two different dates this month.';
-  el.classList.toggle('muted', withdrawal.total <= 0);
+  el.classList.toggle('muted', !hasMovement);
 }
 
 function renderNWTrend() {
@@ -1829,7 +1863,7 @@ function renderFinancialRatios() {
       color: emergencyMonths === null ? 'var(--muted)' : emergencyMonths >= 6 ? 'var(--green)' : emergencyMonths >= 3 ? 'var(--gold)' : 'var(--red)',
     },
     {
-      label: '3-Month Savings Rate',
+      label: '3-Month Money Left %',
       value: savingsRate !== null ? Math.round(savingsRate * 100) + '%' : '—',
       sub:   '(3-mo income − expenses) ÷ income',
       color: savingsRate === null ? 'var(--muted)' : savingsRate >= 0.2 ? 'var(--green)' : savingsRate >= 0 ? 'var(--gold)' : 'var(--red)',
@@ -2739,11 +2773,13 @@ function renderTrackerSummary(txns, snapPair, range, savingsTxns = txns) {
   const outEl  = document.getElementById('stat-out');
   const netEl  = document.getElementById('stat-net');
   const rateEl = document.getElementById('stat-rate');
+  const savingsInEl = document.getElementById('stat-savings-in');
   const leftEl = document.getElementById('stat-left');
   const savEl  = document.getElementById('stat-savings-spend');
   const carEl  = document.getElementById('stat-carryover');
 
   if (inEl)  inEl.textContent  = fmt(income);
+  if (savingsInEl) savingsInEl.textContent = fmt(anMovedToSavings(savingsTxns, ACCOUNTS));
   if (outEl) outEl.textContent = fmt(expense);
   if (leftEl) {
     leftEl.textContent = fmt(totalLeft);
@@ -2759,11 +2795,12 @@ function renderTrackerSummary(txns, snapPair, range, savingsTxns = txns) {
   }
   if (savEl) {
     const withdrawal = savingsWithdrawalForPeriod(savingsTxns, snapPair, ACCOUNTS);
-    savEl.textContent = withdrawal.total > 0 ? savingsDropText(withdrawal)
-      : (!withdrawal.comparable && withdrawal.currentSnap
-        ? 'Savings change unavailable — log a withdrawal or save balances on two different dates in this period.' : '');
-    savEl.classList.toggle('muted', withdrawal.total <= 0);
-    savEl.classList.toggle('hidden', withdrawal.total <= 0 && !withdrawal.currentSnap);
+    const hasMovement = withdrawal.total > 0 || withdrawal.internalTotal > 0;
+    if (hasMovement) savEl.innerHTML = savingsDisclosureHTML(withdrawal);
+    else savEl.textContent = !withdrawal.comparable && withdrawal.currentSnap
+      ? 'Savings change unavailable — log a withdrawal or save balances on two different dates in this period.' : '';
+    savEl.classList.toggle('muted', !hasMovement);
+    savEl.classList.toggle('hidden', !hasMovement && !withdrawal.currentSnap);
   }
   if (netEl) {
     netEl.textContent = fmt(net);
@@ -3034,7 +3071,7 @@ function renderMonthlyTrends() {
       <th style="text-align:right">Income</th>
       <th style="text-align:right">Expenses</th>
       <th style="text-align:right">Net</th>
-      <th style="text-align:right">Saved %</th>
+      <th style="text-align:right">Money Left %</th>
     </tr></thead>
     <tbody>${months.map(m => {
       const inc  = roundMoney(m.income);
@@ -5608,6 +5645,17 @@ function anMovedToSavingsInvestments(txns, accounts) {
   }, 0));
 }
 
+function anMovedToSavings(txns, accounts) {
+  const groups = Object.fromEntries((accounts || []).map(a => [a.id, a.group]));
+  return roundMoney((txns || []).reduce((sum, t) => {
+    if (t.type === 'transfer' && groups[t.toAccount] === 'savings' && groups[t.account] &&
+        groups[t.account] !== 'savings' && groups[t.account] !== 'investment') return sum + safeAmt(t.amount);
+    if (t.type === 'expense' && t.category === 'Savings Transfer' && groups[t.account] &&
+        groups[t.account] !== 'savings' && groups[t.account] !== 'investment') return sum + safeAmt(t.amount);
+    return sum;
+  }, 0));
+}
+
 function anPctDelta(cur, prev) {
   if (!(prev > 0)) return null;
   return Math.round((cur - prev) / prev * 100);
@@ -5671,8 +5719,8 @@ function renderAnalysisScorecard(cur, prev, snapPair, prevSnapPair) {
   const c = anPeriodTotals(cur), p = anPeriodTotals(prev);
   const savings = savingsWithdrawalForPeriod(cur, snapPair, ACCOUNTS);
   const prevSavings = savingsWithdrawalForPeriod(prev, prevSnapPair, ACCOUNTS);
-  const savingsAvailable = savings.comparable || savings.recordedTotal > 0;
-  const prevSavingsAvailable = prevSavings.comparable || prevSavings.recordedTotal > 0;
+  const savingsAvailable = savings.comparable || savings.recordedTotal > 0 || savings.internalTotal > 0;
+  const prevSavingsAvailable = prevSavings.comparable || prevSavings.recordedTotal > 0 || prevSavings.internalTotal > 0;
   const rateDelta = (c.rate !== null && p.rate !== null) ? c.rate - p.rate : null;
   const cards = [
     { label: 'Money In',  value: fmt(c.income),  color: 'var(--green)',
@@ -5682,16 +5730,23 @@ function renderAnalysisScorecard(cur, prev, snapPair, prevSnapPair) {
     { label: 'Net',       value: fmt(c.net),
       color: c.net >= 0 ? 'var(--green)' : 'var(--red)',
       badge: anDeltaBadge(anPctDelta(c.net, p.net), true) },
-    { label: 'Saved',     value: c.rate === null ? '—' : c.rate + '%',
+    { label: 'Money Left %', value: c.rate === null ? '—' : c.rate + '%',
       color: c.rate === null ? 'var(--muted)' : c.rate >= 20 ? 'var(--green)' : c.rate >= 0 ? 'var(--gold)' : 'var(--red)',
       badge: anDeltaBadge(rateDelta, true, ' pts') },
+    { label: 'Moved to Savings', value: fmt(anMovedToSavings(cur, ACCOUNTS)), color: 'var(--green)',
+      badge: anDeltaBadge(anPctDelta(anMovedToSavings(cur, ACCOUNTS), anMovedToSavings(prev, ACCOUNTS)), true) },
     { label: 'From Savings', value: savingsAvailable ? fmt(savings.total) : '—',
       color: savings.total > 0 ? 'var(--gold)' : 'var(--muted)',
       badge: savingsAvailable && prevSavingsAvailable
         ? anDeltaBadge(anPctDelta(savings.total, prevSavings.total), false)
-        : '<span class="an-delta muted">—</span>' },
+        : '<span class="an-delta muted">—</span>', detail: savingsEvidenceHTML(savings) },
   ];
-  el.innerHTML = cards.map(k => `<div class="ts-card">
+  el.innerHTML = cards.map(k => k.detail ? `<details class="ts-card savings-disclosure an-savings-card">
+    <summary><span class="ts-label">${k.label} <span>How calculated</span></span>
+    <span class="ts-value" style="color:${k.color}">${k.value}</span>
+    <span class="an-badge-row">${k.badge}</span></summary>
+    ${k.detail}
+  </details>` : `<div class="ts-card">
     <div class="ts-label">${k.label}</div>
     <div class="ts-value" style="color:${k.color}">${k.value}</div>
     <div class="an-badge-row">${k.badge}</div>
@@ -5913,14 +5968,14 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
     }
   }
 
-  // Savings rate vs previous period
+  // Money left as a share of recorded income vs previous period
   if (c.rate !== null && p.rate !== null && c.rate !== p.rate) {
     const d = c.rate - p.rate;
     insights.push(d > 0
-      ? { icon: '💪', html: `Savings rate of <b>${c.rate}%</b> beat the previous ${mode} by ${d} points.` }
-      : { icon: '⚠️', html: `Savings rate slipped to <b>${c.rate}%</b> — down ${Math.abs(d)} points from the previous ${mode}.` });
+      ? { icon: '💪', html: `Money left after counted expenses was <b>${c.rate}%</b> of income — up ${d} points from the previous ${mode}.` }
+      : { icon: '⚠️', html: `Money left after counted expenses was <b>${c.rate}%</b> of income — down ${Math.abs(d)} points from the previous ${mode}.` });
   } else if (c.rate !== null && c.rate >= 20) {
-    insights.push({ icon: '💪', html: `You kept <b>${c.rate}%</b> of your income this ${mode} — above the 20% guideline.` });
+    insights.push({ icon: '💪', html: `You had <b>${c.rate}%</b> of recorded income left after counted expenses this ${mode}.` });
   }
 
   // Money moved to savings & investments
@@ -6210,6 +6265,7 @@ function bindEvents() {
   document.getElementById('export-backup')?.addEventListener('click', exportBackup);
   document.getElementById('gdrive-save')?.addEventListener('click', saveToDrive);
   document.getElementById('gdrive-load')?.addEventListener('click', loadFromDrive);
+  document.getElementById('gdrive-key')?.addEventListener('click', saveToDrive);
   document.getElementById('import-backup-input')?.addEventListener('change', e => {
     importBackup(e.target.files[0]);
     e.target.value = '';
@@ -6537,7 +6593,7 @@ function init() {
 // ─── Lock screen (email code) ────────────────────────────────────
 // js/email-login.js (shared with Deadline Tracker and FE Civil) emails a 6-digit code to the
 // owner's Gmail and stores a signed 30-day pass. This is a screen lock, not encryption of
-// localStorage or of exported / Google Drive backups.
+// localStorage or exported JSON. Drive backups have a separate recovery key.
 const LOCK_CONFIRM = "Lock MoneyTrack, Deadline Tracker and FE Civil on this device? You'll need a new email code to open them.";
 
 function showApp() {

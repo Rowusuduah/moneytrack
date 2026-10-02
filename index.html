@@ -245,10 +245,11 @@
         </div>
         <div class="gdrive-sync">
           <div class="gdrive-label">Google Drive Sync</div>
-          <p class="sync-help">Use the same Google account on phone and laptop. Sync includes Tracker, Things, Africa, and your private Wealth plan. The Drive file is not encrypted.</p>
+          <p class="sync-help">Use the same Google account on phone and laptop. Sync now sets up a recovery key and encrypts the Drive backup; older copies remain readable until setup finishes. Keep the key outside this app. Local data and exported JSON remain readable.</p>
           <div class="flex gap-8" style="flex-wrap:wrap;align-items:center">
             <button class="btn btn-ghost btn-sm" id="gdrive-save">Sync now</button>
             <button class="btn btn-ghost btn-sm" id="gdrive-load">Replace from Drive…</button>
+            <button class="btn btn-ghost btn-sm" id="gdrive-key">Protect or unlock backup</button>
             <span id="gdrive-status" class="gdrive-status" role="status" aria-live="polite"></span>
           </div>
         </div>
@@ -376,8 +377,12 @@
             <div class="ts-value" id="stat-net">$0.00</div>
           </div>
           <div class="ts-card">
-            <div class="ts-label">Saved</div>
+            <div class="ts-label">Money Left %</div>
             <div class="ts-value" id="stat-rate" style="color:var(--muted)">—</div>
+          </div>
+          <div class="ts-card">
+            <div class="ts-label">Moved to Savings</div>
+            <div class="ts-value text-green" id="stat-savings-in">$0.00</div>
           </div>
           <div class="ts-card">
             <div class="ts-label">Total Left</div>
@@ -408,7 +413,7 @@
       <!-- Monthly Trends -->
       <div class="card" id="tracker-trends-card">
         <div class="card-title">6-Month Trends
-          <span style="font-weight:400;font-size:11px;color:var(--muted)">Income · Expenses · Savings rate</span>
+          <span style="font-weight:400;font-size:11px;color:var(--muted)">Income · Expenses · Money Left %</span>
         </div>
         <div id="monthly-trends">
           <!-- Rendered by JS -->
@@ -914,9 +919,32 @@
     <button type="button" id="action-toast-btn">Undo</button>
   </div>
 
+  <dialog id="backup-key-dialog" class="backup-key-dialog" aria-labelledby="backup-key-title">
+    <form id="backup-key-form">
+      <h2 id="backup-key-title">Protect Drive backup</h2>
+      <p id="backup-key-explanation"></p>
+      <div id="backup-key-created" hidden>
+        <label for="backup-key-code">Your recovery key</label>
+        <textarea id="backup-key-code" class="acct-input" rows="2" readonly spellcheck="false"></textarea>
+        <button type="button" class="btn btn-ghost btn-sm" id="backup-key-copy">Copy key</button>
+        <label class="backup-key-confirm"><input type="checkbox" id="backup-key-saved"> I saved this key outside MoneyTrack.</label>
+      </div>
+      <div id="backup-key-unlock" hidden>
+        <label for="backup-key-input">Recovery key</label>
+        <input type="password" id="backup-key-input" class="acct-input" autocomplete="off" spellcheck="false">
+      </div>
+      <p id="backup-key-error" role="alert"></p>
+      <div class="backup-key-actions">
+        <button type="button" class="btn btn-ghost" id="backup-key-cancel">Cancel</button>
+        <button type="submit" class="btn btn-green" id="backup-key-submit">Enable encryption</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="js/email-login.js" defer></script>
   <script src="js/sync-merge.js" defer></script>
+  <script src="js/backup-crypto.js" defer></script>
   <script src="js/app.js" defer></script>
   <script src="js/drive-sync.js" defer></script>
   <script src="js/wealth.js" defer></script>

@@ -102,7 +102,7 @@ test('selected month uses its first snapshot through its latest snapshot everywh
   assert.equal(A.savingsWithdrawalPct(result.total, result.priorSnap.accounts.usf_savings_1), 4.2);
   A.refreshAccountConfig();
   assert.equal(A.savingsDropText(result),
-    'Taken from savings — USF Savings 1: $340.66 (4.2% of its $8,050.00) (Sep 1, 2026 → Sep 17, 2026; not counted in Money Out)');
+    'Unexplained savings decrease — USF Savings 1: $340.66 (4.2% of its $8,050.00) (Sep 1, 2026 → Sep 17, 2026; not counted in Money Out)');
   const analysisPair = A.anSnapPair(snapshots, new Date(2026, 8, 1), new Date(2026, 8, 30));
   assert.equal(analysisPair.startSnap.date, '2026-09-01');
   assert.equal(analysisPair.endSnap.date, '2026-09-17');
@@ -172,8 +172,8 @@ test('Tracker and Analysis render the same snapshot-derived withdrawal without a
   g.document.getElementById = id => elements[id] || null;
   try {
     A.renderTrackerSummary([], pair);
-    assert.match(elements['stat-savings-spend'].textContent, /\$340\.66/);
-    assert.match(elements['stat-savings-spend'].textContent, /4\.2% of its \$8,050\.00/);
+    assert.match(elements['stat-savings-spend'].innerHTML, /\$340\.66/);
+    assert.match(elements['stat-savings-spend'].innerHTML, /4\.2% of its \$8,050\.00/);
     assert.equal(elements['stat-out'].textContent, '$0.00');
 
     A.renderAnalysisScorecard([], [], pair, { startSnap: null, endSnap: null });
@@ -216,7 +216,7 @@ test('a logged savings withdrawal appears without any balance snapshots', () => 
     A.renderAnalysisScorecard(txns, [], pair, pair);
     A.renderAnalysisInsights(txns, [], new Date(2026, 8, 1), new Date(2026, 8, 30), pair);
     assert.equal(elements['stat-out'].textContent, '$25.00');
-    assert.match(elements['stat-savings-spend'].textContent, /\$340\.00/);
+    assert.match(elements['stat-savings-spend'].innerHTML, /\$340\.00/);
     assert.match(elements['an-scorecard'].innerHTML, /From Savings[\s\S]*\$340\.00/);
     assert.match(elements['an-insights'].innerHTML, /\$340\.00/);
   } finally {
@@ -249,6 +249,33 @@ test('recorded outflows reconcile with snapshots without double counting', () =>
   assert.equal(afterLastSnapshot.total, 350);
 });
 
+test('moving money between savings accounts is shown separately', () => {
+  const accounts = [{ id: 's1', group: 'savings' }, { id: 's2', group: 'savings' }];
+  const pair = {
+    startSnap: { date: '2026-09-01', accounts: { s1: 1000, s2: 0 } },
+    endSnap: { date: '2026-09-20', accounts: { s1: 800, s2: 200 } },
+  };
+  const result = A.savingsWithdrawalForPeriod([
+    { date: '2026-09-10', type: 'transfer', account: 's1', toAccount: 's2', amount: 200, description: 'internal move' },
+  ], pair, accounts);
+  assert.equal(result.total, 0);
+  assert.equal(result.internalTotal, 200);
+  assert.equal(result.unrecordedTotal, 0);
+  assert.match(A.savingsDropText(result), /No money left savings/);
+  assert.match(A.savingsEvidenceHTML(result), /Moves between savings accounts/);
+});
+
+test('savings evidence escapes imported transaction descriptions', () => {
+  A.refreshAccountConfig();
+  const result = A.savingsWithdrawalForPeriod([
+    { date: '2026-09-10', type: 'expense', account: 'usf_savings_1', amount: 8,
+      description: '<img src=x onerror=alert(1)>' },
+  ], { startSnap: null, endSnap: null }, [{ id: 'usf_savings_1', group: 'savings' }]);
+  const html = A.savingsEvidenceHTML(result);
+  assert.match(html, /&lt;img/);
+  assert.doesNotMatch(html, /<img/);
+});
+
 test('Analysis counts transfers into savings and investments as moved money', () => {
   const accounts = [
     { id: 'checking', group: 'checking' },
@@ -265,6 +292,7 @@ test('Analysis counts transfers into savings and investments as moved money', ()
     { type: 'transfer', account: '', toAccount: 'savings', amount: 999 },
   ];
   assert.equal(A.anMovedToSavingsInvestments(txns, accounts), 325);
+  assert.equal(A.anMovedToSavings(txns, accounts), 225);
 });
 
 test('Analysis pulse shows logged contributions before the first balance snapshot', () => {

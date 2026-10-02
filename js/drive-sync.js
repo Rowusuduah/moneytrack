@@ -5,6 +5,7 @@
 const MoneyTrackDriveSync = (() => {
   const DB_NAME = 'moneytrack-sync';
   const BASE_KEY = 'last-synced-data';
+  const CRYPTO_KEY = 'drive-backup-key-v1';
   let timer = null, running = false, repeat = false, started = false;
 
   function openDB() {
@@ -30,6 +31,103 @@ const MoneyTrackDriveSync = (() => {
         tx.onerror = () => reject(tx.error);
       });
     } finally { db.close(); }
+  }
+
+  async function keyStore(value) {
+    const db = await openDB();
+    try {
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction('state', value === undefined ? 'readonly' : 'readwrite');
+        const req = value === undefined ? tx.objectStore('state').get(CRYPTO_KEY)
+          : tx.objectStore('state').put(value, CRYPTO_KEY);
+        req.onsuccess = () => { if (value === undefined) resolve(req.result || null); };
+        req.onerror = () => reject(req.error);
+        tx.oncomplete = () => { if (value !== undefined) resolve(); };
+        tx.onerror = () => reject(tx.error);
+      });
+    } finally { db.close(); }
+  }
+
+  async function askRecovery(mode, expectedKeyId) {
+    const dialog = document.getElementById('backup-key-dialog');
+    if (!dialog?.showModal) throw new Error('This browser cannot show the recovery key form.');
+    const form = document.getElementById('backup-key-form');
+    const created = document.getElementById('backup-key-created');
+    const unlock = document.getElementById('backup-key-unlock');
+    const code = document.getElementById('backup-key-code');
+    const input = document.getElementById('backup-key-input');
+    const saved = document.getElementById('backup-key-saved');
+    const error = document.getElementById('backup-key-error');
+    const candidate = mode === 'setup' ? await MoneyTrackBackupCrypto.createRecovery() : null;
+    document.getElementById('backup-key-title').textContent = mode === 'setup' ? 'Protect Drive backup' : 'Unlock Drive backup';
+    document.getElementById('backup-key-explanation').textContent = mode === 'setup'
+      ? 'Save this recovery key outside MoneyTrack before continuing. It is shown once. Losing it after browser data is cleared means the Drive backup cannot be recovered. Existing Drive copies will be replaced with encrypted copies; older Drive revisions may remain readable.'
+      : 'Enter the recovery key saved when Drive encryption was enabled. The email login code cannot decrypt this backup.';
+    created.hidden = mode !== 'setup';
+    unlock.hidden = mode !== 'unlock';
+    code.value = candidate?.recoveryKey || '';
+    input.value = '';
+    saved.checked = false;
+    error.textContent = '';
+    document.getElementById('backup-key-submit').textContent = mode === 'setup' ? 'Enable encryption' : 'Unlock backup';
+    return new Promise(resolve => {
+      let finished = false;
+      const onCancel = e => { e.preventDefault(); finish(null); };
+      const finish = value => {
+        if (finished) return;
+        finished = true;
+        code.value = '';
+        input.value = '';
+        if (candidate) candidate.recoveryKey = '';
+        form.onsubmit = null;
+        document.getElementById('backup-key-cancel').onclick = null;
+        document.getElementById('backup-key-copy').onclick = null;
+        dialog.removeEventListener('cancel', onCancel);
+        dialog.close();
+        resolve(value);
+      };
+      form.onsubmit = async e => {
+        e.preventDefault();
+        if (mode === 'setup') {
+          if (!saved.checked) { error.textContent = 'Save the recovery key before enabling encryption.'; return; }
+          finish({ key: candidate.key, keyId: candidate.keyId });
+          return;
+        }
+        try {
+          const imported = await MoneyTrackBackupCrypto.importRecovery(input.value);
+          if (imported.keyId !== expectedKeyId) throw new Error('This key does not match the Drive backup.');
+          finish(imported);
+        } catch (err) { error.textContent = err.message; }
+      };
+      document.getElementById('backup-key-cancel').onclick = () => finish(null);
+      document.getElementById('backup-key-copy').onclick = async () => {
+        try { await navigator.clipboard.writeText(candidate.recoveryKey); }
+        catch { code.select(); }
+      };
+      dialog.addEventListener('cancel', onCancel);
+      dialog.showModal();
+      (mode === 'setup' ? code : input).focus();
+    });
+  }
+
+  async function keyForBackup(envelope, interactive) {
+    const stored = await keyStore();
+    if (stored?.key && stored.keyId === envelope._keyId) return stored;
+    if (!interactive) throw new Error('Encrypted backup locked — tap Sync now and enter your recovery key.');
+    const recovered = await askRecovery('unlock', envelope._keyId);
+    if (!recovered) throw new Error('Encrypted backup remains locked.');
+    await keyStore(recovered);
+    return recovered;
+  }
+
+  async function encryptionKey(interactive) {
+    const stored = await keyStore();
+    if (stored?.key && stored.keyId) return stored;
+    if (!interactive) throw new Error('Set up a Drive recovery key with Sync now before background sync can continue.');
+    const created = await askRecovery('setup');
+    if (!created) throw new Error('Drive encryption setup was cancelled.');
+    await keyStore(created);
+    return created;
   }
 
   function localData() {
@@ -62,7 +160,7 @@ const MoneyTrackDriveSync = (() => {
     });
   }
 
-  async function driveFile() {
+  async function driveFile(interactive = false) {
     const found = await _gListFiles();
     if (!found.length) {
       if (localStorage.getItem(KEY_GDRIVE_CONNECTED) === '1')
@@ -74,14 +172,20 @@ const MoneyTrackDriveSync = (() => {
       const resp = await _gFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`);
       if (!resp.ok) throw new Error(`Drive read failed (${resp.status})`);
       const parsed = await resp.json();
-      if (!parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data))
+      if (Number(parsed._version) >= 3 && parsed._encrypted !== true)
+        throw new Error('A Drive backup claims encryption but has no encrypted data.');
+      const payload = parsed._encrypted
+        ? await MoneyTrackBackupCrypto.decrypt(parsed,
+          (await keyForBackup(parsed, interactive)).key, parsed._keyId)
+        : parsed.data;
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload))
         throw new Error('A Drive file named MoneyTrack_Backup.json is not a MoneyTrack backup');
-      const valid = Object.keys(parsed.data).filter(k => BACKUP_KEYS.includes(k));
+      const valid = Object.keys(payload).filter(k => BACKUP_KEYS.includes(k));
       if (!valid.length) throw new Error('A Drive backup contains no MoneyTrack data');
-      _validateRestoreData(valid, parsed);
+      _validateRestoreData(valid, { data: payload });
       copies.push({ id: file.id, version: Number(parsed._version) || 1,
         exported: parsed._exportedAt || parsed._exported,
-        data: Object.fromEntries(valid.map(k => [k, parsed.data[k]])) });
+        data: Object.fromEntries(valid.map(k => [k, payload[k]])) });
     }
     // Legacy devices could have created same-named files independently. Treat
     // missing records as unknown, not deleted; only shared IDs with different
@@ -99,7 +203,8 @@ const MoneyTrackDriveSync = (() => {
   }
 
   async function upload(ids, data) {
-    const body = JSON.stringify({ _version: 2, _exported: todayISO(), _exportedAt: new Date().toISOString(), data });
+    const vault = await encryptionKey(false);
+    const body = JSON.stringify(await MoneyTrackBackupCrypto.encrypt(data, vault.key, vault.keyId));
     if (ids.length) {
       for (const id of ids) await _gUpdateFile(id, body);
     } else {
@@ -121,7 +226,8 @@ const MoneyTrackDriveSync = (() => {
       const state = await baseStore();
       const base = state.data || {};
       const local = localData();
-      const remote = await driveFile();
+      const remote = await driveFile(interactive);
+      await encryptionKey(interactive);
       const combinedCopies = remote.copies?.some(copy => !sameData(copy.data, remote.data));
       if (remote.ids.length && remote.version < 2 && Object.keys(base).length) {
         _gSetStatus('An older app version changed Drive — update the other device, then sync again', true);
@@ -140,7 +246,7 @@ const MoneyTrackDriveSync = (() => {
       }
       if (!sameData(merged.data, local) && !_saveLocalSafetyBackup())
         throw new Error('Could not save a recovery copy. Export a backup file first.');
-      const uploaded = remote.version < 2 || !sameData(merged.data, remote.data) ||
+      const uploaded = remote.version < 3 || !sameData(merged.data, remote.data) ||
         remote.copies?.some(copy => !sameData(copy.data, merged.data));
       if (uploaded) await upload(remote.ids, merged.data);
       await baseStore({ data: merged.data,
@@ -181,11 +287,11 @@ const MoneyTrackDriveSync = (() => {
     running = true;
     try {
       if (!await token(true)) { _gSetStatus('Drive disconnected', true); return; }
-      const remote = await driveFile();
+      const remote = await driveFile(true);
       if (!remote.ids.length) { showToast('No MoneyTrack backup found in this Google account.', 'info'); return; }
       if (!confirm(`Replace this device's MoneyTrack data with the Drive copy from ${remote.exported || 'an unknown time'}?\n\nA recovery copy of this device will be saved first.`)) return;
       if (!_saveLocalSafetyBackup()) throw new Error('Could not save a recovery copy. Export a backup file first.');
-      if (remote.version < 2) await upload(remote.ids, remote.data);
+      if (remote.version < 3) { await encryptionKey(true); await upload(remote.ids, remote.data); }
       for (const key of BACKUP_KEYS) {
         if (Object.hasOwn(remote.data, key)) localStorage.setItem(key, remote.data[key]);
         else localStorage.removeItem(key);

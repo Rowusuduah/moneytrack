@@ -1330,6 +1330,35 @@ body:not(.light) #toast-msg.toast-error { color: #1A0906; }
   #nav { -webkit-backdrop-filter: saturate(1.4) blur(14px); backdrop-filter: saturate(1.4) blur(14px); }
 }
 
+/* Savings figures show their transaction and snapshot evidence on tap. */
+.savings-disclosure { min-width: 0; }
+.savings-disclosure > summary { cursor: pointer; list-style: none; }
+.savings-disclosure > summary::-webkit-details-marker { display: none; }
+.savings-disclosure > summary span:last-child { color: var(--muted); font-size: 11px; margin-left: 5px; }
+.savings-disclosure[open] > summary { margin-bottom: 10px; }
+.savings-evidence-group { border-top: 1px solid var(--hair); padding-top: 8px; margin-top: 8px; color: var(--text); }
+.savings-evidence-group ul { margin: 6px 0 0; padding-left: 18px; }
+.savings-evidence-group li { margin: 4px 0; overflow-wrap: anywhere; }
+.savings-disclosure p { color: var(--muted); margin: 8px 0 0; }
+.an-savings-card[open] { grid-column: span 2; }
+.an-savings-card .ts-label span { font-weight: 400; text-transform: none; letter-spacing: 0; }
+.an-savings-card summary > span { display: block; }
+
+.backup-key-dialog { width: min(92vw, 480px); max-height: 90vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surf); color: var(--text); box-shadow: var(--shadow); padding: 22px; }
+.backup-key-dialog::backdrop { background: rgba(0, 0, 0, .72); }
+.backup-key-dialog h2 { margin: 0 0 8px; font-size: 20px; }
+.backup-key-dialog p { color: var(--muted); line-height: 1.45; }
+.backup-key-dialog label { display: block; margin: 12px 0 5px; }
+.backup-key-dialog textarea, .backup-key-dialog input[type=password] { width: 100%; box-sizing: border-box; }
+.backup-key-dialog textarea { overflow-wrap: anywhere; resize: vertical; }
+.backup-key-dialog .backup-key-confirm { display: flex; align-items: flex-start; gap: 8px; }
+.backup-key-dialog .backup-key-confirm input { margin-top: 3px; }
+.backup-key-dialog #backup-key-error { color: var(--red); min-height: 1.2em; }
+.backup-key-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+@media (min-width: 821px) {
+  #sec-tracker .tracker-summary, #an-scorecard { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 @media (max-width: 768px) {
   .tracker-summary { grid-template-columns: repeat(2, 1fr); }
 }

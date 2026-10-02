@@ -34,7 +34,7 @@ The `ACCOUNTS` array in `js/app.js` (line 10) is the **only** place account defi
 person's plan. Real plan values are imported or edited in the Wealth tab and
 stored under `moneytrack_wealth_plan_v1` in browser `localStorage`. The user can
 export/import a private JSON backup; the plan is also included in MoneyTrack's
-Drive sync and regular JSON export. Drive backups are not encrypted. Never put real pay, allocations, milestones,
+Drive sync and regular JSON export. New Drive backups are encrypted after the owner saves a separate recovery key; localStorage and exported JSON remain readable. Never put real pay, allocations, milestones,
 or personal immigration/tax details in source, tests, docs, or any deployed file.
 `WEALTH_CATEGORY_MAP`
 in the same file maps transaction categories to plan groups; a category missing
@@ -53,8 +53,8 @@ the saved budgets — it never clears categories the plan doesn't price.
 Gmail; a correct code stores a signed 30-day pass in `rowusuduah_login_pass_v1`, shared with
 Deadline Tracker and FE Civil on the same origin (Lock in any of them locks all three). A
 recovery key (kept offline by the owner; only its SHA-256 is in code) unlocks one page load.
-This gate is not encryption: localStorage data and exported or Drive backups need separate
-protection.
+This gate is not encryption: localStorage data and exported JSON need separate
+protection. Drive encryption has its own recovery key, unrelated to email login.
 
 ### Africa investments
 The Africa tab (`js/africa.js`, storage key `moneytrack_africa`) tracks
@@ -89,7 +89,8 @@ group is `savings` (`isSavingsSpend()`) is not monthly spending, so it is
 excluded from Money Out / Net / budgets / savings rate and still appears in the
 Spending-by-account breakdown, which is account-oriented on purpose. Accounts,
 Tracker, and Analysis show logged outflows from savings accounts immediately:
-expenses and transfers whose source is savings. For a selected
+expenses and transfers whose source is savings. Transfers between two savings
+accounts are shown separately, not included in the "From Savings" headline. For a selected
 week/month/year/custom period, compare the first saved snapshot inside that
 period with its latest saved snapshot. Add only the balance decrease that is
 not explained by logged outflows between those snapshots, per account; this
@@ -97,9 +98,13 @@ prevents counting the same withdrawal twice. A single dated snapshot cannot
 establish a balance decrease, but logged withdrawals still appear. Snapshot-only
 withdrawal percentages divide by the starting snapshot balance. Current periods
 end today, so future-dated snapshots and transactions cannot enter today's
-figures. Analysis "Moved to savings & investments" counts transfers into those
+figures. Inferred drops are called unexplained rather than known withdrawals.
+Analysis "Moved to savings & investments" counts transfers into those
 groups from outside them, as well as legacy Savings Transfer/Investment expenses;
 internal moves between savings and investments are not new contributions.
+The "Money Left %" card is (recorded income - counted expenses) / recorded income;
+"Moved to Savings" separately shows recorded transfers into savings from outside
+the savings/investment pool (plus legacy Savings Transfer expenses).
 
 ### Add sheet, Coming up, backups (everyday flows)
 - **Add / edit sheet.** `#txn-form-card` is a dialog sheet, not a Tracker card. It opens from the
@@ -149,7 +154,15 @@ Every row of the math is shown on the card; keep it that way so the number is ne
   recovery action; it makes a local safety copy first. Never silently replace
   local data or clear site storage to troubleshoot sync.
 - Both devices must use the same Google account. The email-code login is only a
-  screen gate; it does not authenticate or encrypt Drive data.
+  screen gate; Drive encryption uses the separate recovery key below.
+- `js/backup-crypto.js` wraps Drive backup data in AES-GCM with a fresh random
+  IV per upload. A random 256-bit recovery key is displayed once during setup;
+  the non-extractable browser key and its ID are stored in IndexedDB. Save the
+  recovery key outside the app before confirming. Another device enters it once.
+  A locked encrypted backup must never be overwritten with plaintext or a new
+  key. Legacy plaintext Drive copies are migrated on first interactive sync,
+  though older Drive revisions may remain readable. LocalStorage, the merge
+  baseline, local safety copies and exported JSON are not encrypted.
 
 ### Data layer
 - `loadSnapshots()` / `saveSnapshots()` — account balance snapshots
