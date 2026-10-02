@@ -186,6 +186,103 @@ test('Tracker and Analysis render the same snapshot-derived withdrawal without a
   }
 });
 
+test('a logged savings withdrawal appears without any balance snapshots', () => {
+  A.refreshAccountConfig();
+  const txns = [
+    { date: '2026-09-05', type: 'transfer', account: 'usf_savings_1', toAccount: 'chase_checking', amount: 300 },
+    { date: '2026-09-06', type: 'expense', account: 'usf_savings_1', category: 'Medical', amount: 40 },
+    { date: '2026-09-07', type: 'transfer', account: 'chase_checking', toAccount: 'usf_savings_1', amount: 100 },
+    { date: '2026-09-08', type: 'expense', account: 'chase_checking', category: 'Groceries', amount: 25 },
+  ];
+  const pair = { startSnap: null, endSnap: null };
+  const withdrawal = A.savingsWithdrawalForPeriod(txns, pair, [
+    { id: 'usf_savings_1', group: 'savings' },
+    { id: 'chase_checking', group: 'checking' },
+  ]);
+  assert.equal(withdrawal.total, 340);
+  assert.deepEqual(withdrawal.byAccount, { usf_savings_1: 340 });
+  assert.match(A.savingsDropText(withdrawal), /\$340\.00/);
+  assert.equal(A.anPeriodTotals(txns).expense, 25);
+
+  const elements = {};
+  for (const id of ['stat-in', 'stat-out', 'stat-net', 'stat-rate', 'stat-left',
+    'stat-savings-spend', 'stat-carryover', 'an-scorecard', 'an-insights']) {
+    elements[id] = { textContent: '', innerHTML: '', style: {}, classList: { toggle() {} } };
+  }
+  const originalGet = g.document.getElementById;
+  g.document.getElementById = id => elements[id] || null;
+  try {
+    A.renderTrackerSummary(txns, pair);
+    A.renderAnalysisScorecard(txns, [], pair, pair);
+    A.renderAnalysisInsights(txns, [], new Date(2026, 8, 1), new Date(2026, 8, 30), pair);
+    assert.equal(elements['stat-out'].textContent, '$25.00');
+    assert.match(elements['stat-savings-spend'].textContent, /\$340\.00/);
+    assert.match(elements['an-scorecard'].innerHTML, /From Savings[\s\S]*\$340\.00/);
+    assert.match(elements['an-insights'].innerHTML, /\$340\.00/);
+  } finally {
+    g.document.getElementById = originalGet;
+  }
+});
+
+test('recorded outflows reconcile with snapshots without double counting', () => {
+  const accounts = [{ id: 's1', group: 'savings' }];
+  const pair = {
+    startSnap: { date: '2026-09-01', accounts: { s1: 1000 } },
+    endSnap: { date: '2026-09-20', accounts: { s1: 700 } },
+  };
+  const logged = [{ date: '2026-09-10', type: 'transfer', account: 's1', toAccount: 'checking', amount: 200 }];
+  const result = A.savingsWithdrawalForPeriod(logged, pair, accounts);
+  assert.equal(result.recordedTotal, 200);
+  assert.equal(result.unrecordedTotal, 100);
+  assert.equal(result.total, 300);
+
+  const complete = A.savingsWithdrawalForPeriod([
+    { date: '2026-09-10', type: 'transfer', account: 's1', toAccount: 'checking', amount: 300 },
+  ], pair, accounts);
+  assert.equal(complete.total, 300);
+  assert.equal(complete.unrecordedTotal, 0);
+
+  const afterLastSnapshot = A.savingsWithdrawalForPeriod([
+    ...logged,
+    { date: '2026-09-25', type: 'expense', account: 's1', amount: 50 },
+  ], pair, accounts);
+  assert.equal(afterLastSnapshot.total, 350);
+});
+
+test('Analysis counts transfers into savings and investments as moved money', () => {
+  const accounts = [
+    { id: 'checking', group: 'checking' },
+    { id: 'savings', group: 'savings' },
+    { id: 'invest', group: 'investment' },
+  ];
+  const txns = [
+    { type: 'transfer', account: 'checking', toAccount: 'savings', amount: 200 },
+    { type: 'transfer', account: 'checking', toAccount: 'invest', amount: 100 },
+    { type: 'transfer', account: 'savings', toAccount: 'invest', amount: 50 },
+    { type: 'expense', account: 'checking', category: 'Savings Transfer', amount: 25 },
+    { type: 'expense', account: 'savings', category: 'Investment', amount: 10 },
+    { type: 'transfer', account: 'savings', toAccount: 'checking', amount: 75 },
+    { type: 'transfer', account: '', toAccount: 'savings', amount: 999 },
+  ];
+  assert.equal(A.anMovedToSavingsInvestments(txns, accounts), 325);
+});
+
+test('Analysis pulse shows logged contributions before the first balance snapshot', () => {
+  A.refreshAccountConfig();
+  const el = { innerHTML: '' };
+  const originalGet = g.document.getElementById;
+  g.document.getElementById = id => id === 'an-pulse' ? el : null;
+  try {
+    A.renderAnalysisPulse({ startSnap: null, endSnap: null }, [], [
+      { type: 'transfer', account: 'chase_checking', toAccount: 'usf_savings_1', amount: 125 },
+    ]);
+    assert.match(el.innerHTML, /Moved to savings &amp; investments/);
+    assert.match(el.innerHTML, /\$125\.00/);
+  } finally {
+    g.document.getElementById = originalGet;
+  }
+});
+
 // ── 3-month savings rate: pooled, not average-of-ratios ──────────────────────
 
 test('pooledSavingsRate weights by dollars, not by month', () => {

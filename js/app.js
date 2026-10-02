@@ -618,15 +618,60 @@ function savingsBalanceDropForRange(snaps, accounts, startISO, endISO) {
   return { ...savingsBalanceDrops(priorSnap, currentSnap, accounts), priorSnap, currentSnap };
 }
 
+// Transactions show withdrawals immediately. Balance snapshots can also reveal
+// withdrawals that were never logged. Reconcile each account's snapshot drop
+// against recorded outflows between those snapshots so the same move is not
+// counted twice. The caller supplies transactions for the selected period.
+function savingsWithdrawalForPeriod(txns, snapPair, accounts) {
+  const priorSnap = snapPair?.startSnap || null;
+  const currentSnap = snapPair?.endSnap || null;
+  const comparable = snapshotPairComparable(snapPair);
+  const savings = new Set((accounts || []).filter(a => a.group === 'savings').map(a => a.id));
+  const recorded = {}, covered = {}, byAccount = {};
+  for (const t of txns || []) {
+    if (!savings.has(t.account) || !(
+      t.type === 'expense' ||
+      (t.type === 'transfer' && t.toAccount !== t.account)
+    )) continue;
+    const amount = safeAmt(t.amount);
+    if (!amount) continue;
+    recorded[t.account] = roundMoney((recorded[t.account] || 0) + amount);
+    if (comparable && t.date >= priorSnap.date && t.date <= currentSnap.date) {
+      covered[t.account] = roundMoney((covered[t.account] || 0) + amount);
+    }
+  }
+  const drops = comparable ? savingsBalanceDrops(priorSnap, currentSnap, accounts) : { byAccount: {} };
+  let recordedTotal = 0, unrecordedTotal = 0;
+  for (const id of savings) {
+    const logged = recorded[id] || 0;
+    const unexplained = Math.max(0, roundMoney((drops.byAccount[id] || 0) - (covered[id] || 0)));
+    if (logged || unexplained) byAccount[id] = roundMoney(logged + unexplained);
+    recordedTotal = roundMoney(recordedTotal + logged);
+    unrecordedTotal = roundMoney(unrecordedTotal + unexplained);
+  }
+  return {
+    total: roundMoney(recordedTotal + unrecordedTotal), byAccount,
+    recordedTotal, unrecordedTotal, priorSnap, currentSnap,
+    comparable, netTotal: drops.netTotal,
+  };
+}
+
 function savingsDropText(drop) {
-  if (!drop?.priorSnap || !drop?.currentSnap) return '';
-  const dates = `${fmtDate(drop.priorSnap.date)} → ${fmtDate(drop.currentSnap.date)}`;
+  if (!drop) return '';
+  const dates = drop.priorSnap && drop.currentSnap
+    ? `${fmtDate(drop.priorSnap.date)} → ${fmtDate(drop.currentSnap.date)}` : '';
   if (drop.total <= 0) return `No savings decrease between ${dates}.`;
-  const priorB = drop.priorSnap.accounts || {};
+  const priorB = drop.priorSnap?.accounts || {};
   const parts = savingsWithdrawalParts(drop.byAccount, id => safeAmt(priorB[id]))
     .map(({ id, amt, priorBal, pct }) =>
       `${ACCOUNT_LABELS[id] || id}: ${fmt(amt)}` +
-      (pct !== null ? ` (${pct}% of its ${fmt(priorBal)})` : ''));
+      (drop.recordedTotal ? '' : pct !== null ? ` (${pct}% of its ${fmt(priorBal)})` : ''));
+  if (drop.recordedTotal) {
+    const detail = drop.unrecordedTotal > 0
+      ? `${fmt(drop.recordedTotal)} logged + ${fmt(drop.unrecordedTotal)} inferred from balance changes`
+      : 'logged transactions';
+    return `Taken from savings — ${parts.join(' · ')} (${detail}; not counted in Money Out)`;
+  }
   const netTotal = drop.netTotal == null ? drop.total : drop.netTotal;
   if (netTotal <= 0) {
     return `Savings account decrease — ${parts.join(' · ')}; total savings did not decrease because other savings balances rose (${dates}; not counted in Money Out)`;
@@ -1088,20 +1133,13 @@ function renderAccountSavingsChange() {
   const el = document.getElementById('account-savings-change');
   if (!el) return;
   const period = analysisPeriod('month', 0);
-  const drop = savingsBalanceDropForRange(loadSnapshots(), ACCOUNTS, anISO(period.start), todayISO());
-  if (!drop.currentSnap) {
-    el.textContent = 'Save balances on two different dates to calculate money taken from savings automatically.';
-    el.classList.add('muted');
-    return;
-  }
-  if (drop.priorSnap.date === drop.currentSnap.date) {
-    el.textContent = 'Save balances on another date this month to calculate money taken from savings.';
-    el.classList.add('muted');
-    return;
-  }
-  el.textContent = savingsDropText(drop);
-  const netDrop = drop.netTotal == null ? drop.total : drop.netTotal;
-  el.classList.toggle('muted', netDrop <= 0);
+  const pair = snapshotRangePair(loadSnapshots(), anISO(period.start), todayISO());
+  const txns = anTxnsBetween(loadTxns(), period.start, new Date(todayISO() + 'T00:00:00'));
+  const withdrawal = savingsWithdrawalForPeriod(txns, pair, ACCOUNTS);
+  el.textContent = withdrawal.total > 0 ? savingsDropText(withdrawal)
+    : withdrawal.comparable ? 'No money taken from savings this month.'
+    : 'Log a savings withdrawal or save balances on two different dates this month.';
+  el.classList.toggle('muted', withdrawal.total <= 0);
 }
 
 function renderNWTrend() {
@@ -2682,7 +2720,7 @@ function getFilteredTxns() {
   });
 }
 
-function renderTrackerSummary(txns, snapPair, range) {
+function renderTrackerSummary(txns, snapPair, range, savingsTxns = txns) {
   let income = 0, expense = 0;
   txns.forEach(t => {
     // Transfers excluded — internal moves don't affect income or expense totals
@@ -2720,18 +2758,12 @@ function renderTrackerSummary(txns, snapPair, range) {
     carEl.classList.toggle('hidden', carryover <= 0);
   }
   if (savEl) {
-    const priorSnap = snapPair?.startSnap || null;
-    const currentSnap = snapPair?.endSnap || null;
-    const values = savingsBalanceDrops(priorSnap, currentSnap, ACCOUNTS);
-    const drop = { ...values, priorSnap, currentSnap };
-    const comparable = snapshotPairComparable(snapPair);
-    const grossDrop = drop.total;
-    const netDrop = drop.netTotal == null ? drop.total : drop.netTotal;
-    savEl.textContent = comparable && grossDrop > 0
-      ? savingsDropText(drop)
-      : (!comparable && currentSnap ? 'Savings change unavailable — save balances on two different dates in this period.' : '');
-    savEl.classList.toggle('muted', !comparable || netDrop <= 0);
-    savEl.classList.toggle('hidden', comparable ? grossDrop <= 0 : !currentSnap);
+    const withdrawal = savingsWithdrawalForPeriod(savingsTxns, snapPair, ACCOUNTS);
+    savEl.textContent = withdrawal.total > 0 ? savingsDropText(withdrawal)
+      : (!withdrawal.comparable && withdrawal.currentSnap
+        ? 'Savings change unavailable — log a withdrawal or save balances on two different dates in this period.' : '');
+    savEl.classList.toggle('muted', withdrawal.total <= 0);
+    savEl.classList.toggle('hidden', withdrawal.total <= 0 && !withdrawal.currentSnap);
   }
   if (netEl) {
     netEl.textContent = fmt(net);
@@ -3133,7 +3165,9 @@ function renderTracker() {
   const range = trackerDateRange(filters);
   const endISO = range.endISO && range.endISO < todayISO() ? range.endISO : todayISO();
   const snapPair = snapshotRangePair(loadSnapshots(), range.startISO, endISO);
-  renderTrackerSummary(txns, snapPair, range);
+  const savingsTxns = loadTxns().filter(t =>
+    isISODateOnOrBefore(t.date, endISO) && (!range.startISO || t.date >= range.startISO));
+  renderTrackerSummary(txns, snapPair, range, savingsTxns);
   renderCategoryBreakdown(txns);
   renderDailyChart(txns);
   renderAccountBreakdown(txns);
@@ -5560,6 +5594,20 @@ function anPeriodTotals(txns) {
   return { income, expense, net, rate, savingsSpend };
 }
 
+// Count contributions from outside the savings/investment pool. Moving money
+// between two accounts already in that pool is not a new contribution.
+function anMovedToSavingsInvestments(txns, accounts) {
+  const groups = Object.fromEntries((accounts || []).map(a => [a.id, a.group]));
+  const target = group => group === 'savings' || group === 'investment';
+  return roundMoney((txns || []).reduce((sum, t) => {
+    if (t.type === 'transfer' && groups[t.account] && target(groups[t.toAccount]) && !target(groups[t.account]) &&
+        t.toAccount !== t.account) return sum + safeAmt(t.amount);
+    if (t.type === 'expense' && (t.category === 'Savings Transfer' || t.category === 'Investment') &&
+        !target(groups[t.account])) return sum + safeAmt(t.amount);
+    return sum;
+  }, 0));
+}
+
 function anPctDelta(cur, prev) {
   if (!(prev > 0)) return null;
   return Math.round((cur - prev) / prev * 100);
@@ -5621,10 +5669,10 @@ function renderAnalysisScorecard(cur, prev, snapPair, prevSnapPair) {
   const el = document.getElementById('an-scorecard');
   if (!el) return;
   const c = anPeriodTotals(cur), p = anPeriodTotals(prev);
-  const savingsDrop = savingsBalanceDrops(snapPair?.startSnap, snapPair?.endSnap, ACCOUNTS).total;
-  const prevSavingsDrop = savingsBalanceDrops(prevSnapPair?.startSnap, prevSnapPair?.endSnap, ACCOUNTS).total;
-  const savingsComparable = snapshotPairComparable(snapPair);
-  const prevSavingsComparable = snapshotPairComparable(prevSnapPair);
+  const savings = savingsWithdrawalForPeriod(cur, snapPair, ACCOUNTS);
+  const prevSavings = savingsWithdrawalForPeriod(prev, prevSnapPair, ACCOUNTS);
+  const savingsAvailable = savings.comparable || savings.recordedTotal > 0;
+  const prevSavingsAvailable = prevSavings.comparable || prevSavings.recordedTotal > 0;
   const rateDelta = (c.rate !== null && p.rate !== null) ? c.rate - p.rate : null;
   const cards = [
     { label: 'Money In',  value: fmt(c.income),  color: 'var(--green)',
@@ -5637,10 +5685,10 @@ function renderAnalysisScorecard(cur, prev, snapPair, prevSnapPair) {
     { label: 'Saved',     value: c.rate === null ? '—' : c.rate + '%',
       color: c.rate === null ? 'var(--muted)' : c.rate >= 20 ? 'var(--green)' : c.rate >= 0 ? 'var(--gold)' : 'var(--red)',
       badge: anDeltaBadge(rateDelta, true, ' pts') },
-    { label: 'From Savings', value: savingsComparable ? fmt(savingsDrop) : '—',
-      color: savingsComparable && savingsDrop > 0 ? 'var(--gold)' : 'var(--muted)',
-      badge: savingsComparable && prevSavingsComparable
-        ? anDeltaBadge(anPctDelta(savingsDrop, prevSavingsDrop), false)
+    { label: 'From Savings', value: savingsAvailable ? fmt(savings.total) : '—',
+      color: savings.total > 0 ? 'var(--gold)' : 'var(--muted)',
+      badge: savingsAvailable && prevSavingsAvailable
+        ? anDeltaBadge(anPctDelta(savings.total, prevSavings.total), false)
         : '<span class="an-delta muted">—</span>' },
   ];
   el.innerHTML = cards.map(k => `<div class="ts-card">
@@ -5758,12 +5806,14 @@ function renderAnalysisPulse(snapPair, loans, cur) {
   if (!el) return;
   const { startSnap, endSnap } = snapPair;
 
-  const savedMoved = roundMoney(cur
-    .filter(t => t.type === 'expense' && (t.category === 'Savings Transfer' || t.category === 'Investment'))
-    .reduce((sum, t) => sum + safeAmt(t.amount), 0));
+  const savedMoved = anMovedToSavingsInvestments(cur, ACCOUNTS);
+  const movedRow = `<div class="an-pulse-row">
+    <div class="an-pulse-label">Moved to savings &amp; investments</div>
+    <div class="an-pulse-value" style="color:${savedMoved > 0 ? 'var(--green)' : 'var(--muted)'}">${fmt(savedMoved)}</div>
+  </div>`;
 
   if (!endSnap) {
-    el.innerHTML = anEmpty('No account snapshots yet — save one on the Accounts tab.');
+    el.innerHTML = movedRow + anEmpty('Save account balances on the Accounts tab to see balance changes.');
     return;
   }
 
@@ -5801,11 +5851,6 @@ function renderAnalysisPulse(snapPair, loans, cur) {
     <div class="an-pulse-value">${sameSnap ? '' : `<span class="an-delta ${diff >= 0 ? 'good' : 'bad'}">${diff >= 0 ? '▲' : '▼'} ${fmt(Math.abs(diff))}</span>`} ${fmt(nwEnd)}</div>
   </div>`;
 
-  const movedRow = `<div class="an-pulse-row">
-    <div class="an-pulse-label">Moved to savings &amp; investments</div>
-    <div class="an-pulse-value" style="color:${savedMoved > 0 ? 'var(--green)' : 'var(--muted)'}">${fmt(savedMoved)}</div>
-  </div>`;
-
   const note = sameSnap
     ? '<div style="font-size:11px;color:var(--muted);margin-top:8px">Only one snapshot in range — save snapshots regularly to see change over time.</div>'
     : `<div style="font-size:11px;color:var(--muted);margin-top:8px">Change measured between your ${fmtDate(startSnap.date)} and ${fmtDate(endSnap.date)} snapshots.</div>`;
@@ -5821,8 +5866,8 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
   const c = anPeriodTotals(cur), p = anPeriodTotals(prev);
   const expenses = anRealExpenses(cur);
   const insights = [];
-  const savingsDrop = savingsBalanceDrops(snapPair?.startSnap, snapPair?.endSnap, ACCOUNTS);
-  const savingsComparable = snapshotPairComparable(snapPair);
+  const savings = savingsWithdrawalForPeriod(cur, snapPair, ACCOUNTS);
+  const savingsComparable = savings.comparable;
   const snapshotMovement = savingsComparable && ACCOUNTS.some(a =>
     safeAmt((snapPair.startSnap.accounts || {})[a.id]) !== safeAmt((snapPair.endSnap.accounts || {})[a.id]));
   if (!cur.length && !snapshotMovement) { el.innerHTML = anEmpty('No transactions or account balance changes this period yet.'); return; }
@@ -5836,21 +5881,10 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
     insights.push({ icon: '🏆', html: `<b>${escapeHTML(cat)}</b> was your biggest spending category — ${fmt(roundMoney(amt))} (${Math.round(amt / c.expense * 100)}% of the total).` });
   }
 
-  // Savings withdrawals come directly from snapshot balance decreases, so the
-  // insight updates automatically whenever current balances are saved.
-  if (savingsComparable && savingsDrop.total > 0) {
-    const startB = (snapPair.startSnap && snapPair.startSnap.accounts) || {};
-    const parts = savingsWithdrawalParts(savingsDrop.byAccount, id => safeAmt(startB[id]))
-      .map(({ id, amt, priorBal, pct }) =>
-        `<b>${escapeHTML(ACCOUNT_LABELS[id] || id)}</b>: ${fmt(amt)}` +
-        (pct !== null ? ` (${pct}% of its ${fmt(priorBal)})` : ''));
-    const netDrop = savingsDrop.netTotal == null ? savingsDrop.total : savingsDrop.netTotal;
-    const detail = netDrop <= 0
-      ? `Total savings did not decrease because other savings balances rose. Account decreases: `
-      : netDrop < savingsDrop.total
-        ? `Account decreases totaled <b>${fmt(savingsDrop.total)}</b>; total savings fell a net <b>${fmt(netDrop)}</b> after increases elsewhere. `
-        : `Your saved balances show <b>${fmt(savingsDrop.total)}</b> taken out of savings this ${mode} — `;
-    insights.push({ icon: netDrop <= 0 ? '↔️' : '🏧', html: detail + parts.join(' · ') + '.' });
+  // Keep the insight in step with the scorecard and Tracker: logged outflows
+  // appear immediately, and unmatched balance decreases fill any gap.
+  if (savings.total > 0) {
+    insights.push({ icon: '🏧', html: escapeHTML(savingsDropText(savings)) });
   }
 
   // Fastest-growing category vs previous period (needs ≥ $20 baseline)
@@ -5890,9 +5924,7 @@ function renderAnalysisInsights(cur, prev, start, end, snapPair) {
   }
 
   // Money moved to savings & investments
-  const saved = roundMoney(cur
-    .filter(t => t.type === 'expense' && (t.category === 'Savings Transfer' || t.category === 'Investment'))
-    .reduce((sum, t) => sum + safeAmt(t.amount), 0));
+  const saved = anMovedToSavingsInvestments(cur, ACCOUNTS);
   if (saved > 0 && c.income > 0) {
     insights.push({ icon: '🏦', html: `You moved <b>${fmt(saved)}</b> into savings & investments — ${Math.round(saved / c.income * 100)}% of your income.` });
   }

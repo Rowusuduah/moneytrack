@@ -87,16 +87,19 @@ asset move, not spending. The Tracker's carryover line counts only
 'Money from Last Month', never other excluded income. An expense whose account
 group is `savings` (`isSavingsSpend()`) is not monthly spending, so it is
 excluded from Money Out / Net / budgets / savings rate and still appears in the
-Spending-by-account breakdown, which is account-oriented on purpose. The user
-records current account balances as snapshots; therefore the Accounts and
-Tracker "Taken from savings" lines and Analysis "From Savings" figure must be
-derived automatically from savings-account decreases, not from manually logged
-savings expense transactions. For a selected week/month/year/custom period,
-compare the first saved snapshot inside that period with its latest saved
-snapshot. Do not cross the period boundary when fewer than two dated snapshots
-exist; show the calculation as unavailable instead. The percentage denominator
-is that starting snapshot balance. Current periods end today, so future-dated
-snapshots cannot become the comparison endpoint.
+Spending-by-account breakdown, which is account-oriented on purpose. Accounts,
+Tracker, and Analysis show logged outflows from savings accounts immediately:
+expenses and transfers whose source is savings. For a selected
+week/month/year/custom period, compare the first saved snapshot inside that
+period with its latest saved snapshot. Add only the balance decrease that is
+not explained by logged outflows between those snapshots, per account; this
+prevents counting the same withdrawal twice. A single dated snapshot cannot
+establish a balance decrease, but logged withdrawals still appear. Snapshot-only
+withdrawal percentages divide by the starting snapshot balance. Current periods
+end today, so future-dated snapshots and transactions cannot enter today's
+figures. Analysis "Moved to savings & investments" counts transfers into those
+groups from outside them, as well as legacy Savings Transfer/Investment expenses;
+internal moves between savings and investments are not new contributions.
 
 ### Add sheet, Coming up, backups (everyday flows)
 - **Add / edit sheet.** `#txn-form-card` is a dialog sheet, not a Tracker card. It opens from the
