@@ -139,3 +139,22 @@ test('when commitments are bigger than checking, you are short and there is no d
   assert.deepEqual(s, { amount: -118.40, days: 11, perDay: 0, short: true });
   assert.equal(A.safeToSpend({ checking: 100, bills: 0, cards: 0, savings: 0, todayIso: '2026-09-28', paydayIso: '2026-09-29' }).days, 1);
 });
+
+// ── Tracker Total Left for one account ───────────────────────────────
+
+test('one-account Total Left matches the bank: carryover + all money in/out, transfers included', () => {
+  const txns = [
+    tx('2026-10-01', 'income', 36.93, 'chase_checking', 'Money from Last Month', 'Left from September'),
+    tx('2026-10-02', 'income', 2778.95, 'chase_checking', 'Paycheck', 'Stantec'),
+    tx('2026-10-03', 'expense', 859.52, 'chase_checking', 'Rent', 'Rent'),
+    tx('2026-10-04', 'expense', 50, 'chase_checking', 'Loan Given', 'Lent to a friend: still leaves the account'),
+    tx('2026-10-05', 'income', 20, 'chase_checking', 'Loan Repaid to Me', 'Paid back: still arrives'),
+    tx('2026-10-16', 'transfer', 200, 'chase_checking', 'Miscellaneous', 'Zelle to USF', 'usf_checking'),
+    tx('2026-10-17', 'transfer', 100, 'usf_checking', 'Miscellaneous', 'Back to Chase', 'chase_checking'),
+    tx('2026-10-18', 'expense', 999, 'usf_checking', 'Groceries', 'Other account: ignored'),
+  ];
+  const carry = A.openingCarryover(txns, '2026-10-01');
+  // 36.93 + 2778.95 - 859.52 - 50 + 20 - 200 + 100
+  assert.equal(A.accountTotalLeft(txns, 'chase_checking', carry), 1826.36);
+  assert.equal(A.accountTotalLeft([], 'chase_checking', 0), 0);
+});

@@ -136,11 +136,14 @@
   #txn-search { min-height: 44px; font-size: 16px; }
   #tracker-transactions-card .txn-type-chips { margin-bottom: 10px; }
   .txn-row { min-width: 0; }
-  .txn-row .txn-desc, .txn-row .txn-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .txn-row .txn-desc { min-width: 0; }
+  .txn-row .txn-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .txn-row .txn-amount { white-space: nowrap; }
   .txn-day-card { padding-inline: 12px; border-radius: 14px; }
   .cat-row { min-width: 0; gap: 7px; }
-  .cat-label { min-width: 0; flex: 0 1 38%; }
+  .cat-label { min-width: 0; flex: 0 1 38%; white-space: normal; line-height: 1.2; overflow-wrap: anywhere; }
+  #account-tools-toggle .toggle-chevron { transition: transform .15s; }
+  #account-tools-toggle[aria-expanded="true"] .toggle-chevron { transform: rotate(180deg); }
   .cat-bar-wrap { min-width: 8px; }
   .cat-amount { min-width: 0; white-space: nowrap; }
   .cat-pct { min-width: 0; }

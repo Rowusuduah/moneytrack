@@ -518,7 +518,16 @@ body { scrollbar-width: thin; scrollbar-color: var(--brig) transparent; }
 .an-delta.muted { color: var(--muted); }
 .an-delta-cell  { min-width: 52px; text-align: right; }
 
-.an-rhythm { height: 96px; }
+/* Bars share the card's width so a whole month (or a 5-week rhythm) fills it, never scrolls off. */
+.daily-chart .day-col { flex: 1 1 0; min-width: 0; }
+.daily-chart .day-bar { width: min(20px, 80%); }
+.an-rhythm { height: 150px; }
+.an-rhythm .day-col { gap: 4px; }
+.an-rhythm .day-bar { width: min(44px, 60%); }
+@media (min-width: 821px) { .an-rhythm { height: 210px; } }
+/* 6-Month Trends lives in a narrow column (phone, or the laptop's right rail): keep all five columns visible. */
+.trends-table th, .trends-table td { padding-inline: 5px; font-size: 12.5px; white-space: nowrap; }
+.trends-table .th-long { display: none; }
 .an-bar-amt { font-size: 8px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .an-big-row {
@@ -1596,7 +1605,11 @@ body.light .seg button[aria-checked="true"] { box-shadow: 0 1px 3px rgba(20,20,1
 .txn-icon--income   { background: var(--green-soft); color: var(--green); }
 .txn-icon--transfer { background: var(--accent-soft); color: var(--accent-text); }
 .txn-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.txn-row .txn-desc { font-size: 15px; font-weight: 600; }
+/* Long descriptions get a second line before they are cut. */
+.txn-row .txn-desc {
+  font-size: 15px; font-weight: 600; white-space: normal; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
 .txn-row .txn-meta { font-size: 12.5px; color: var(--muted); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .txn-row .txn-amount { font-size: 15px; font-weight: 600; color: var(--text); }
 .txn-amount--income   { color: var(--green) !important; }

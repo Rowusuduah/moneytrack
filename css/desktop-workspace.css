@@ -40,14 +40,16 @@
 }
 
 @media (min-width: 1000px) {
-  #sec-tracker.on { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .85fr); gap: 0 16px; }
+  /* Row 7 is a flexible spacer: the long transaction list grows into it instead of
+     stretching the right-hand cards into tall empty boxes. */
+  #sec-tracker.on { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .85fr); grid-template-rows: repeat(6, auto) 1fr auto; gap: 0 16px; }
   #sec-tracker > .section-title, #sec-tracker > .section-sub, #tracker-filter-card { grid-column: 1 / -1; }
-  #tracker-transactions-card { grid-column: 1; grid-row: 4 / span 3; }
-  #analysis-grid { grid-column: 2; grid-row: 4; grid-template-columns: minmax(0, 1fr); }
+  #tracker-transactions-card { grid-column: 1; grid-row: 4 / span 4; }
+  #analysis-grid { grid-column: 2; grid-row: 4; grid-template-columns: minmax(0, 1fr); align-self: start; }
   #analysis-grid > .card { min-width: 0; }
-  #tracker-budget-card { grid-column: 2; grid-row: 5; }
-  #tracker-trends-card { grid-column: 2; grid-row: 6; }
-  #recurring-card { grid-column: 1 / -1; grid-row: 7; }
+  #tracker-budget-card { grid-column: 2; grid-row: 5; align-self: start; }
+  #tracker-trends-card { grid-column: 2; grid-row: 6; align-self: start; }
+  #recurring-card { grid-column: 1 / -1; grid-row: 8; }
 }
 
 @media (min-width: 1180px) {

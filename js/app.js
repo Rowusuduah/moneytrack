@@ -2705,6 +2705,40 @@ function openingCarryover(txns, rangeStartISO) {
     .reduce((sum, t) => sum + safeAmt(t.amount), 0));
 }
 
+// Total Left for ONE account, meant to match that bank balance: the carryover plus every
+// dollar in and out of the account, including transfers and money that is not counted as
+// earnings or spending (loans given/repaid). The all-accounts view keeps carryover + Net.
+function accountTotalLeft(txns, accountId, carryover) {
+  let left = safeAmt(carryover);
+  for (const t of txns || []) {
+    const amt = safeAmt(t.amount);
+    if (t.type === 'income' && t.account === accountId && t.category !== 'Money from Last Month') left += amt;
+    else if (t.type === 'expense' && t.account === accountId) left -= amt;
+    else if (t.type === 'transfer' && t.account !== t.toAccount) {
+      if (t.toAccount === accountId) left += amt;
+      if (t.account === accountId) left -= amt;
+    }
+  }
+  return roundMoney(left);
+}
+
+// Total Left for ONE account, meant to match that account's bank balance: what it carried
+// in plus every dollar in and out of it, including transfers and the lending categories the
+// all-accounts totals leave out (they still move this account's cash).
+function accountTotalLeft(txns, accountId, carryover) {
+  let left = safeAmt(carryover);
+  for (const t of txns || []) {
+    const amt = safeAmt(t.amount);
+    if (t.type === 'income' && t.account === accountId && t.category !== 'Money from Last Month') left += amt;
+    else if (t.type === 'expense' && t.account === accountId) left -= amt;
+    else if (t.type === 'transfer' && t.account !== t.toAccount) {
+      if (t.toAccount === accountId) left += amt;
+      if (t.account === accountId) left -= amt;
+    }
+  }
+  return roundMoney(left);
+}
+
 function getFilteredTxns() {
   const all = loadTxns();
   const today = new Date(); today.setHours(0,0,0,0);
@@ -2767,7 +2801,8 @@ function renderTrackerSummary(txns, snapPair, range, savingsTxns = txns) {
   const net  = roundMoney(income - expense);
   const rate = income > 0 ? Math.round(net / income * 100) : null;
 
-  const totalLeft = roundMoney(carryover + net);
+  const oneAccount = filters.account !== 'all' ? filters.account : '';
+  const totalLeft = oneAccount ? accountTotalLeft(txns, oneAccount, carryover) : roundMoney(carryover + net);
 
   const inEl   = document.getElementById('stat-in');
   const outEl  = document.getElementById('stat-out');
@@ -2788,10 +2823,12 @@ function renderTrackerSummary(txns, snapPair, range, savingsTxns = txns) {
   if (carEl) {
     // Carryover is excluded from Money In (it is not new earnings) but it is
     // still real money in the account — show the equation so the month adds up.
-    carEl.textContent = carryover > 0
+    carEl.textContent = oneAccount
+      ? `Total Left = carried over ${fmt(carryover)} + everything in − everything out of ${ACCOUNT_LABELS[oneAccount] || 'this account'}, transfers included = ${fmt(totalLeft)} — check this against your bank`
+      : carryover > 0
       ? `Total Left = carried over ${fmt(carryover)} + Net ${fmt(net)} = ${fmt(totalLeft)} — check this against your bank`
       : '';
-    carEl.classList.toggle('hidden', carryover <= 0);
+    carEl.classList.toggle('hidden', !oneAccount && carryover <= 0);
   }
   if (savEl) {
     const withdrawal = savingsWithdrawalForPeriod(savingsTxns, snapPair, ACCOUNTS);
@@ -2921,12 +2958,18 @@ function renderDailyChart(txns) {
   const max = Math.max(...days.map(d => d.total), 1);
   if (labelEl) labelEl.textContent = periodLabel;
 
+  // Every day shares the card's width, so the whole period is always visible. Short
+  // ranges label each spending day; longer ones label a steady 1/5/10... rhythm so
+  // narrow columns never collide.
+  const dense = days.length > 14;
   el.innerHTML = days.map(d => {
     const h = Math.max(2, Math.round(d.total / max * 60));
     const hasData = d.total > 0;
+    const dayNum = Number(d.label.split('/')[1]);
+    const showLbl = dense ? (dayNum === 1 || dayNum % 5 === 0) : hasData;
     return `<div class="day-col" title="${d.label}: ${fmt(d.total)}">
       <div class="day-bar" style="height:${h}px;opacity:${hasData ? '.8' : '.2'}"></div>
-      <div class="day-lbl">${d.total > 0 ? d.label.split('/')[1] : ''}</div>
+      <div class="day-lbl">${showLbl ? dayNum : ''}</div>
     </div>`;
   }).join('');
 }
@@ -3065,13 +3108,13 @@ function renderMonthlyTrends() {
     else if (isRealExpense(t)) bucket.expense += safeAmt(t.amount);
   });
 
-  el.innerHTML = `<div style="overflow-x:auto"><table class="history-table">
+  el.innerHTML = `<div style="overflow-x:auto"><table class="history-table trends-table">
     <thead><tr>
       <th>Month</th>
       <th style="text-align:right">Income</th>
       <th style="text-align:right">Expenses</th>
       <th style="text-align:right">Net</th>
-      <th style="text-align:right">Money Left %</th>
+      <th style="text-align:right"><span class="th-long">Money </span>Left %</th>
     </tr></thead>
     <tbody>${months.map(m => {
       const inc  = roundMoney(m.income);
@@ -5802,10 +5845,12 @@ function renderAnalysisRhythm(cur, start, end) {
 
   const max = Math.max(...buckets.map(b => b.total), 1);
   el.innerHTML = buckets.map(b => {
-    const h = Math.max(2, Math.round(b.total / max * 60));
+    // Share of the chart's height (leaving room for the amount and label rows), so the
+    // bars scale with the card on phone and laptop alike.
+    const pct = Math.round(b.total / max * 72);
     return `<div class="day-col" title="${escapeHTML(b.label)}: ${fmt(b.total)}">
       <div class="an-bar-amt">${b.total > 0 ? fmtShort(b.total) : ''}</div>
-      <div class="day-bar" style="height:${h}px;opacity:${b.total > 0 ? '.85' : '.2'}"></div>
+      <div class="day-bar" style="height:max(2px, ${pct}%);opacity:${b.total > 0 ? '.85' : '.2'}"></div>
       <div class="day-lbl">${escapeHTML(b.label)}</div>
     </div>`;
   }).join('');
