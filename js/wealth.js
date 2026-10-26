@@ -387,6 +387,92 @@ function wlProject(savMo, retPct, years) {
   return { total, contrib, growth: total - contrib, reserve, funded, fundM, reserveMonths };
 }
 
+/* ── Payday Loop (pure; docs/superpowers/specs/2026-10-25-payday-loop-design.md) ── */
+
+const WL_LOOP_KEY = 'moneytrack_loop_v1';
+const WL_REVIEW_MONTHS = [3, 6, 12];
+const WL_RATINGS = ['better', 'as expected', 'worse'];
+const wlIsIso = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) &&
+  wlIsoLocal(new Date(s + 'T00:00:00')) === s;
+const wlText = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
+
+// Months until start + monthly deposits (growing at annualPct) reach target; 0 when
+// already there, null when not reached within 100 years.
+function wlMonthsToTarget(start, monthly, annualPct, target) {
+  let bal = Math.max(0, Number(start) || 0);
+  const dep = Math.max(0, Number(monthly) || 0), i = (Number(annualPct) || 0) / 100 / 12;
+  if (bal >= target) return 0;
+  for (let m = 1; m <= 1200; m++) {
+    bal = bal * (1 + i) + dep;
+    if (bal >= target) return m;
+  }
+  return null;
+}
+
+// One paycheck: half of each monthly group, half the monthly savings target routed to the
+// first unfilled milestone (or long-term once all are full), and what is left to live on.
+function wlPaydaySplit(plan, net, savingsTotal) {
+  const groups = plan.groups.map(g => ({ id: g.id, label: g.label, amount: wlRound(g.monthly / 2) }));
+  const savings = wlRound(plan.savingsTargetMo / 2);
+  let left = Math.max(0, savingsTotal || 0), to = 'Long-term';
+  for (const ms of plan.milestones) {
+    if (left < ms.amount - 0.005) { to = ms.label; break; }
+    left -= ms.amount;
+  }
+  const raw = wlRound(net - groups.reduce((t, g) => t + g.amount, 0) - savings);
+  return { groups, savings: { amount: savings, to }, living: Math.max(0, raw), short: raw < 0, shortBy: raw < 0 ? -raw : 0 };
+}
+
+// Biweekly paydays from the plan anchor: the last one on or before today, and the next.
+function wlPaydayAround(anchorIso, todayIso) {
+  const a = new Date(anchorIso + 'T00:00:00'), t = new Date(todayIso + 'T00:00:00');
+  const steps = Math.floor(Math.round((t - a) / 86400000) / 14);
+  const last = new Date(a.getFullYear(), a.getMonth(), a.getDate() + steps * 14);
+  const next = new Date(last.getFullYear(), last.getMonth(), last.getDate() + 14);
+  return { last: wlIsoLocal(last), next: wlIsoLocal(next) };
+}
+
+function wlAddMonths(iso, months) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const last = new Date(y, m - 1 + months + 1, 0).getDate();
+  return wlIsoLocal(new Date(y, m - 1 + months, Math.min(d, last)));
+}
+
+function wlLoopNormalize(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const paydays = (Array.isArray(src.paydays) ? src.paydays : []).filter(p =>
+    p && typeof p.id === 'string' && p.id && wlIsIso(p.date) && Number.isFinite(Number(p.net)) && Number(p.net) >= 0
+  ).map(p => ({
+    id: p.id, date: p.date, net: wlRound(Number(p.net)),
+    savings: Math.max(0, wlRound(Number(p.savings) || 0)), to: wlText(p.to, 80),
+    paceDate: /^\d{4}-\d{2}$/.test(p.paceDate || '') ? p.paceDate : '',
+  }));
+  const decisions = (Array.isArray(src.decisions) ? src.decisions : []).filter(d =>
+    d && typeof d.id === 'string' && d.id && wlIsIso(d.date) && wlText(d.what, 200)
+  ).map(d => {
+    const reviewMonths = WL_REVIEW_MONTHS.includes(Number(d.reviewMonths)) ? Number(d.reviewMonths) : 6;
+    return {
+      id: d.id, date: d.date, what: wlText(d.what, 200), why: wlText(d.why, 500), expect: wlText(d.expect, 500),
+      reviewMonths, reviewOn: wlAddMonths(d.date, reviewMonths),
+      decideBy: wlIsIso(d.decideBy) ? d.decideBy : '',
+      outcome: wlText(d.outcome, 500), rating: WL_RATINGS.includes(d.rating) ? d.rating : '',
+    };
+  });
+  return { paydays, decisions };
+}
+
+// What needs attention: open decisions with a decide-by date within 30 days (or past),
+// and reviews whose date has arrived without an outcome.
+function wlLoopAgenda(store, todayIso) {
+  const t = new Date(todayIso + 'T00:00:00');
+  const horizon = wlIsoLocal(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 30));
+  const open = store.decisions.filter(d => !d.rating);
+  return {
+    decideSoon: open.filter(d => d.decideBy && d.decideBy <= horizon).sort((a, b) => a.decideBy.localeCompare(b.decideBy)),
+    reviewsDue: open.filter(d => d.reviewOn <= todayIso).sort((a, b) => a.reviewOn.localeCompare(b.reviewOn)),
+  };
+}
+
 /* ── Renderers (browser only — app.js globals allowed from here down) ── */
 
 const WL_MONTHS = ['January','February','March','April','May','June',
@@ -527,8 +613,11 @@ function renderWealthTab() {
   if (!wlPlanConfigured()) {
     const sub = document.getElementById('wl-month-sub');
     if (sub) sub.textContent = 'Set up your private plan to use the Wealth dashboard.';
+    const loop = document.getElementById('wl-loop');
+    if (loop) loop.hidden = true;
     return;
   }
+  if (typeof renderWlLoop === 'function') renderWlLoop();
   const slider = document.getElementById('wl-sl-save');
   if (slider && !slider._wlInitialized) {
     slider.max = String(Math.max(5000, Math.ceil(PLAN.savingsTargetMo * 1.5 / 25) * 25));

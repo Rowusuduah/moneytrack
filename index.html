@@ -604,6 +604,13 @@
 
       <div class="card" id="wl-header" aria-live="polite"><!-- Rendered by JS --></div>
 
+      <!-- Payday Loop: docs/superpowers/specs/2026-10-25-payday-loop-design.md -->
+      <div class="wl-loop" id="wl-loop" hidden>
+        <div class="card" id="wl-loop-payday" aria-live="polite"><!-- Rendered by JS --></div>
+        <div class="card" id="wl-loop-road" aria-live="polite"><!-- Rendered by JS --></div>
+        <div class="card" id="wl-loop-decisions" aria-live="polite"><!-- Rendered by JS --></div>
+      </div>
+
       <div class="wl-mode" id="wl-toggle" role="group" aria-label="Time window">
         <button type="button" data-wlv="day"   aria-pressed="false">Day</button>
         <button type="button" data-wlv="week"  aria-pressed="false">Week</button>
@@ -948,6 +955,7 @@
   <script src="js/app.js" defer></script>
   <script src="js/drive-sync.js" defer></script>
   <script src="js/wealth.js" defer></script>
+  <script src="js/payday-loop.js" defer></script>
   <script src="js/africa.js" defer></script>
   <script src="js/workspace-ui.js" defer></script>
 </body>

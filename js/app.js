@@ -5534,7 +5534,7 @@ const BACKUP_KEYS = [
   KEY_DEBT_META, KEY_LOANS, KEY_ACCOUNTS, KEY_THEME,
   KEY_BILLS, KEY_GOALS,
   KEY_THINGS_ITEMS, KEY_THINGS_ENTRIES, KEY_THINGS_CATS, KEY_THINGS_STORES,
-  KEY_AFRICA, 'moneytrack_wealth_plan_v1',
+  KEY_AFRICA, 'moneytrack_wealth_plan_v1', 'moneytrack_loop_v1',
 ];
 
 function exportBackup() {
