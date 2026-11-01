@@ -207,3 +207,21 @@ test('the Backup card says when and where the last backup went', () => {
   assert.equal(A.backupStatusLine({ at: NOW - 3 * D, via: 'file' }, NOW), 'Last backup: 3 days ago, as a downloaded file');
   assert.equal(A.backupStatusLine(null, NOW), 'No backup on this device yet');
 });
+
+test('Mark paid finds a payment you already logged for that bill instead of logging a second one', () => {
+  const INS = { id: 'b-ins', name: 'Insurance', amount: 162.01, account: 'usf_checking', frequency: 'monthly', dayOfMonth: 12, anchorDate: null };
+  const template = { type: 'expense', category: 'Car Insurance', account: 'usf_checking', toAccount: '' };
+  const mine = tx('2026-11-01', 'Car insurance', 'Car Insurance', 'chase_checking', 'expense', 140.01);
+  const rentLinked = tx('2026-11-01', 'November Rent', 'Rent', 'chase_checking', 'expense', 849.83);
+  const bills = [INS, { ...RENT, lastPaidTxn: rentLinked.id }];
+  const txns = [mine, rentLinked, tx('2026-10-03', 'Car Insurance', 'Car Insurance', 'chase_checking', 'expense', 140.01),
+    tx('2026-11-01', 'ALDI', 'Groceries', 'chase_checking', 'expense', 51.06)];
+  assert.equal(A.findLoggedBillPayment(INS, '2026-11-12', txns, template, '2026-11-01', bills)?.id, mine.id);
+  // An entry already linked to another bill is never reused.
+  assert.equal(A.findLoggedBillPayment({ ...RENT, amount: 850 }, '2026-12-01', txns, { type: 'expense', category: 'Rent' },
+    '2026-11-01', bills), null);
+  // Nothing logged in the window (last month's payment is too old): no match.
+  assert.equal(A.findLoggedBillPayment(INS, '2026-11-12', txns.filter(t => t !== mine), template, '2026-11-01', bills), null);
+  // A wildly different amount is not this bill.
+  assert.equal(A.findLoggedBillPayment(INS, '2026-11-12', [{ ...mine, amount: 900 }], template, '2026-11-01', bills), null);
+});

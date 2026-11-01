@@ -1941,6 +1941,25 @@ function billTemplate(bill, txns) {
   return hit ? { type: 'expense', category: hit[1], account: bill.account || '', toAccount: '' } : null;
 }
 
+// A payment for this bill that was already logged by hand: same category as the bill's usual
+// entry or the bill's name in the description, dated from 20 days before the due date to today,
+// within half to one-and-a-half times the bill amount, and not already linked to another bill.
+// Mark paid uses it instead of logging the same payment twice.
+function findLoggedBillPayment(bill, dueIso, txns, template, todayIso, bills) {
+  const from = _addDaysISO(dueIso, -20);
+  const after = bill.paidThrough || '';
+  const linked = new Set((bills || []).filter(b => b.id !== bill.id && b.lastPaidTxn).map(b => String(b.lastPaidTxn)));
+  const name = normalizeDesc(bill.name);
+  const amt = safeAmt(bill.amount);
+  const type = template && template.type === 'transfer' ? 'transfer' : 'expense';
+  const hits = (txns || []).filter(t => t.type === type && t.date >= from && t.date > after &&
+    isISODateOnOrBefore(t.date, todayIso) && !linked.has(String(t.id)) &&
+    ((template && t.category === template.category) || (name && normalizeDesc(t.description).includes(name))) &&
+    (!amt || (safeAmt(t.amount) >= amt * 0.5 && safeAmt(t.amount) <= amt * 1.5)));
+  hits.sort((a, b) => b.date.localeCompare(a.date));
+  return hits[0] || null;
+}
+
 // The transaction a "Mark paid" logs today, and the bill moved past `due`.
 // The stored bill is not mutated; lastPaidTxn lets Undo remove the right row.
 function payBill(bill, due, todayIso, template, id) {
@@ -2263,6 +2282,16 @@ function markBillPaid(id) {
   if (!due) return;
   const txns = loadTxns();
   const template = billTemplate(bill, txns);
+  const logged = findLoggedBillPayment(bill, toLocalISO(due), txns, template, todayISO(), bills);
+  if (logged) {
+    bills[idx] = { ...bill, paidThrough: toLocalISO(due), lastPaidOn: todayISO(), lastPaidTxn: logged.id };
+    saveBills(bills);
+    renderAccountsTab();
+    showActionToast(`${bill.name} marked paid with your entry "${logged.description}" (${fmt(logged.amount)}). Nothing new logged.`,
+      'Undo', () => { const all = loadBills(); const j = all.findIndex(b => b.id === bill.id);
+        if (j !== -1) { all[j] = bill; saveBills(all); } renderAccountsTab(); showToast(`${bill.name} is unpaid again`, 'info'); });
+    return;
+  }
   const account = bill.account || template?.account;
   const accountActive = activeAccounts().some(a => a.id === account);
   if (!template || !safeAmt(bill.amount) || !accountActive) {
