@@ -423,6 +423,24 @@ function wlPaydaySplit(plan, net, savingsTotal) {
   return { groups, savings: { amount: savings, to }, living: Math.max(0, raw), short: raw < 0, shortBy: raw < 0 ? -raw : 0 };
 }
 
+// Money leaving the savings/investment pool (spending from it, transfers out of it). Withdrawals
+// of at least `bigAt` are listed one by one so a planned one-off (a lawyer's fee, say) can be
+// shown by name instead of silently defining the usual pace.
+function wlSavingsOutflows(txns, poolIds, bigAt) {
+  let total = 0, usual = 0;
+  const big = [];
+  for (const t of txns || []) {
+    if (!poolIds.has(t.account)) continue;
+    if (!(t.type === 'expense' || (t.type === 'transfer' && !poolIds.has(t.toAccount)))) continue;
+    const amt = Math.max(0, Number(t.amount) || 0);
+    total += amt;
+    if (amt >= bigAt) big.push({ date: t.date, amount: wlRound(amt), description: t.description || '' });
+    else usual += amt;
+  }
+  big.sort((a, b) => b.amount - a.amount);
+  return { total: wlRound(total), usual: wlRound(usual), big };
+}
+
 // Biweekly paydays from the plan anchor: the last one on or before today, and the next.
 function wlPaydayAround(anchorIso, todayIso) {
   const a = new Date(anchorIso + 'T00:00:00'), t = new Date(todayIso + 'T00:00:00');

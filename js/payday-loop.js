@@ -38,19 +38,18 @@ function wlAddMonthsYm(todayIso, months) {
 
 // Over the last 3 full months: average moved into savings & investments, and average logged
 // back out of them (spending from savings, transfers to checking), so the net pace is honest.
+// Withdrawals of WL_BIG_OUT or more are named separately: the usual pace leaves them out.
+const WL_BIG_OUT = 1000;
 function wlActualPace(txns, todayIso) {
   const t = new Date(todayIso + 'T00:00:00');
   const s = wlIsoLocal(new Date(t.getFullYear(), t.getMonth() - 3, 1));
   const e = wlIsoLocal(new Date(t.getFullYear(), t.getMonth(), 0));
   const win = txns.filter(x => x.date >= s && x.date <= e);
   const pool = new Set(ACCOUNTS.filter(a => a.group === 'savings' || a.group === 'investment').map(a => a.id));
-  const out = win.reduce((sum, x) => {
-    if (!pool.has(x.account)) return sum;
-    if (x.type === 'expense' || (x.type === 'transfer' && !pool.has(x.toAccount))) return sum + safeAmt(x.amount);
-    return sum;
-  }, 0);
+  const o = wlSavingsOutflows(win, pool, WL_BIG_OUT);
   const moved = anMovedToSavingsInvestments(win, ACCOUNTS);
-  return { moved: roundMoney(moved / 3), out: roundMoney(out / 3), net: roundMoney((moved - out) / 3) };
+  return { moved: roundMoney(moved / 3), out: roundMoney(o.total / 3), net: roundMoney((moved - o.total) / 3),
+    usualOut: roundMoney(o.usual / 3), usual: roundMoney((moved - o.usual) / 3), big: o.big };
 }
 
 function wlRoadNumbers(txns, todayIso) {
@@ -60,7 +59,7 @@ function wlRoadNumbers(txns, todayIso) {
     .reduce((s, a) => s + safeAmt(b[a.id]), 0));
   const rate = wlRoadMode === 'real' ? PLAN.returnPct : PLAN.returnPct + WL_INFLATION_PCT;
   const pace = wlActualPace(txns, todayIso);
-  const actual = Math.max(0, pace.net);
+  const actual = Math.max(0, pace.usual);
   const planned = roundMoney(PLAN.savingsTargetMo + PLAN.kMo);
   const at = monthly => {
     const m = wlMonthsToTarget(start, monthly, rate, 1000000);
@@ -142,9 +141,13 @@ function renderWlLoopRoad(store, txns, today) {
     '<button type="button" data-loop="mode" data-mode="paper" aria-pressed="' + pressed('paper') + '">On paper</button>' +
     '</span></div>' +
     '<div class="wl-road-grid">' +
-    '<div><div class="wl-sub">At what you actually kept (' + fmt(r.pace.net) + '/mo, last 3 months)</div>' +
-    (r.pace.net > 0 ? when(r.atActual) : '<b>more came out than went in</b>') +
-    '<div class="wl-sub">' + fmt(r.pace.moved) + '/mo moved in − ' + fmt(r.pace.out) + '/mo taken back out</div></div>' +
+    '<div><div class="wl-sub">At your usual pace (' + fmt(r.pace.usual) + '/mo kept, last 3 months)</div>' +
+    (r.pace.usual > 0 ? when(r.atActual) : '<b>more came out than went in</b>') +
+    '<div class="wl-sub">' + fmt(r.pace.moved) + '/mo moved in − ' + fmt(r.pace.usualOut) + '/mo taken back out</div>' +
+    (r.pace.big.length ? '<div class="wl-sub wl-road-big">Big one-offs left out of this pace: ' +
+      r.pace.big.map(x => escapeHTML((x.description || 'withdrawal').split('. ')[0]) + ' ' + fmt(x.amount) + ' (' + escapeHTML(fmtDate(x.date)) + ')').join(' · ') +
+      '. Counting them, you kept ' + fmt(r.pace.net) + '/mo.</div>' : '') +
+    '</div>' +
     '<div><div class="wl-sub">At your plan pace (' + fmt(r.planned) + '/mo)</div>' + when(r.atPlan) + '</div></div>' +
     moved +
     '<p class="wl-sub">Starts from ' + fmt(r.start) + ' in savings and investments' +

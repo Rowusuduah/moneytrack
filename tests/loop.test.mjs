@@ -91,3 +91,18 @@ test('payday around today: last payday on or before today and the next one (biwe
   // Anchor in the future still steps back correctly.
   assert.deepEqual(W.wlPaydayAround('2027-01-08', '2026-10-25'), { last: '2026-10-16', next: '2026-10-30' });
 });
+
+test('savings outflows: one-offs of $1,000+ are listed separately, smaller ones stay in the usual pace', () => {
+  const pool = new Set(['sav', 'inv']);
+  const txns = [
+    { date: '2026-10-05', type: 'expense', amount: 5400, account: 'sav', toAccount: '', description: 'Lawyer' },
+    { date: '2026-10-01', type: 'expense', amount: 311.45, account: 'sav', toAccount: '', description: 'Fees' },
+    { date: '2026-10-02', type: 'transfer', amount: 1200, account: 'sav', toAccount: 'chk', description: 'To checking' },
+    { date: '2026-10-03', type: 'transfer', amount: 500, account: 'sav', toAccount: 'inv', description: 'Internal move' },
+    { date: '2026-10-04', type: 'expense', amount: 80, account: 'chk', toAccount: '', description: 'Not savings' },
+  ];
+  const r = W.wlSavingsOutflows(txns, pool, 1000);
+  assert.equal(r.total, 6911.45);
+  assert.equal(r.usual, 311.45);
+  assert.deepEqual(r.big.map(x => [x.description, x.amount]), [['Lawyer', 5400], ['To checking', 1200]]);
+});
