@@ -175,3 +175,23 @@ test('an entry dated on the snapshot day counts only if it was added after the s
   assert.equal(A.txnAfterSnapshot({ date: '2026-11-02' }, old[0]), true);
   assert.equal(A.txnAfterSnapshot({ date: '2026-10-31', createdAt: '2026-11-02T00:00:00Z' }, snaps[0]), false);
 });
+
+test('a "Savings Transfer" expense logged from checking counts as savings already moved (Payday Loop logs it this way)', () => {
+  const payday = { date: '2026-11-13', periodDays: 14 };
+  const plan = { savingsTargetMo: 2500 };
+  const moved = [
+    tx('2026-11-01', 'expense', 2500, 'chase_checking', 'Savings Transfer', 'Payday savings'),
+    tx('2026-11-01', 'expense', 40, 'usf_savings_1', 'Savings Transfer', 'From savings itself: not new saving'),
+  ];
+  assert.equal(A.savingsPlanDue(plan, payday, moved, ACCTS, '2026-11-01'), 0);
+  const part = [tx('2026-11-01', 'expense', 500, 'chase_checking', 'Savings Transfer', 'Part of it')];
+  // 2,500 a month over 14 of 365.25 days = 1,149.90; 500 already moved.
+  assert.equal(A.savingsPlanDue(plan, payday, part, ACCTS, '2026-11-01'), 649.9);
+});
+
+test('the Checking row shows what is there now, with the last update underneath when they differ', () => {
+  assert.deepEqual(A.checkingKpi(1672.45, { amount: 722.62, since: '2026-11-01' }, 'Chase Checking, USF Checking'),
+    { value: 722.62, sub: '$1,672.45 at your Nov 1, 2026 update · Chase Checking, USF Checking' });
+  assert.deepEqual(A.checkingKpi(500, { amount: 500, since: '2026-11-01' }, 'Chase'), { value: 500, sub: 'Chase' });
+  assert.deepEqual(A.checkingKpi(500, null, 'Chase'), { value: 500, sub: 'Chase' });
+});

@@ -1065,6 +1065,13 @@ const KPI_ICON = (() => {
   };
 })();
 
+// The Checking row shows what is in checking now (last update + what was logged since), so it
+// matches the bank; the snapshot figure stays underneath when the two differ.
+function checkingKpi(snapChecking, now, labels) {
+  if (!now || roundMoney(now.amount) === roundMoney(snapChecking)) return { value: snapChecking, sub: labels };
+  return { value: now.amount, sub: `${fmt(snapChecking)} at your ${fmtDate(now.since)} update · ${labels}` };
+}
+
 function renderAccountKPIs() {
   const snap = getLatestSnapshot();
   const el = document.getElementById('account-kpis');
@@ -1091,7 +1098,8 @@ function renderAccountKPIs() {
     : 'No outstanding loans';
 
   const kpis = [
-    { label: 'Checking',    value: checking,   color: 'var(--blue)',                                    sub: lbl('checking') },
+    { label: 'Checking',    color: 'var(--blue)',
+      ...checkingKpi(checking, snap ? checkingNow(loadSnapshots(), loadTxns(), ACCOUNTS, todayISO()) : null, lbl('checking')) },
     { label: 'Savings',     value: savings,    color: 'var(--green)',                                   sub: lbl('savings') },
     { label: 'Investments', value: investment, color: 'var(--purple)',                                  sub: lbl('investment') },
     { label: 'Loans Out',   value: loansOut,   color: 'var(--teal)',                                    sub: loansSub },
@@ -2087,10 +2095,9 @@ function savingsPlanDue(plan, payday, txns, accounts, todayIso) {
   if (!monthly || !payday) return 0;
   const perPeriod = roundMoney(monthly * 12 * payday.periodDays / 365.25);
   const since = _addDaysISO(payday.date, -payday.periodDays);
-  const savings = new Set((accounts || []).filter(a => a.group === 'savings').map(a => a.id));
-  const moved = (txns || []).filter(t => t.type === 'transfer' && savings.has(t.toAccount) && !savings.has(t.account)
-      && t.date >= since && isISODateOnOrBefore(t.date, todayIso))
-    .reduce((s, t) => s + safeAmt(t.amount), 0);
+  // Same rule as the Tracker's "Moved to Savings": transfers into savings and 'Savings Transfer'
+  // expenses logged from outside savings (how Payday Loop and the owner log them) both count.
+  const moved = anMovedToSavings((txns || []).filter(t => t.date >= since && isISODateOnOrBefore(t.date, todayIso)), accounts);
   return roundMoney(Math.max(0, perPeriod - moved));
 }
 
