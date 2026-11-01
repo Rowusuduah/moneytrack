@@ -917,7 +917,7 @@ function cardOwedNow(account, snap, txns, debtAccountCount, asOfISO) {
   const through = asOfISO || todayISO();
   let charges = 0, payments = 0, credits = 0;
   for (const t of txns) {
-    if (!isISODateOnOrBefore(t.date, through) || t.date <= since) continue;
+    if (!isISODateOnOrBefore(t.date, through) || (since && !txnAfterSnapshot(t, snap))) continue;
     if (t.type === 'expense' && t.account === account.id && t.category !== 'Credit Card Payment') {
       charges = roundMoney(charges + safeAmt(t.amount));
     } else if (t.type === 'transfer' && t.toAccount === account.id && t.account !== t.toAccount) {
@@ -1946,6 +1946,7 @@ function payBill(bill, due, todayIso, template, id) {
     category: template.category,
     description: bill.name,
     recurring: '',
+    createdAt: new Date().toISOString(),
   };
   return { txn, bill: { ...bill, paidThrough: dueIso, lastPaidOn: todayIso, lastPaidTxn: id } };
 }
@@ -1979,6 +1980,16 @@ function _daysBetweenISO(aIso, bIso) { return Math.round((new Date(bIso + 'T00:0
 
 // Checking balance now: the latest snapshot's checking accounts plus checking activity
 // logged after it. The monthly carryover is not new money, so it is left out.
+// Is a transaction NOT yet inside this balance snapshot? Later dates never are. On the snapshot's
+// own day it counts only when both carry times and it was added after the snapshot was saved
+// (rent paid at noon after a 9 am snapshot); without times, same-day entries stay inside it.
+function txnAfterSnapshot(t, snap) {
+  if (!snap) return true;
+  if (t.date > snap.date) return true;
+  return t.date === snap.date && typeof t.createdAt === 'string' && typeof snap.savedAt === 'string' &&
+    t.createdAt > snap.savedAt;
+}
+
 function checkingNow(snaps, txns, accounts, todayIso) {
   const ordered = orderedSnapshots(snaps, todayIso);
   if (!ordered.length) return null;
@@ -1987,7 +1998,7 @@ function checkingNow(snaps, txns, accounts, todayIso) {
   let amount = 0;
   for (const id of checking) amount += safeAmt((snap.accounts || {})[id]);
   for (const t of txns || []) {
-    if (!(t.date > snap.date) || !isISODateOnOrBefore(t.date, todayIso)) continue;
+    if (!txnAfterSnapshot(t, snap) || !isISODateOnOrBefore(t.date, todayIso)) continue;
     const amt = safeAmt(t.amount);
     if (t.type === 'income' && checking.has(t.account) && t.category !== 'Money from Last Month') amount += amt;
     else if (t.type === 'expense' && checking.has(t.account)) amount -= amt;
@@ -2609,7 +2620,7 @@ function saveSnapshot() {
   if (!hasData) { alert('Please enter at least one account balance before saving.'); return; }
 
   if (dupIdx !== -1) snaps.splice(dupIdx, 1);
-  snaps.push({ date: selectedDate, note, accounts: balances });
+  snaps.push({ date: selectedDate, savedAt: new Date().toISOString(), note, accounts: balances });
   // Keep array sorted by date ascending
   saveSnapshots(snaps);
 
@@ -3547,7 +3558,8 @@ function saveTransaction() {
   } else {
     const id = crypto.randomUUID();
     savedId = id;
-    txns.push({ id, date, type, amount: roundMoney(amtRaw), account: acct, toAccount: savedToAccount, category: cat, description: desc, recurring });
+    txns.push({ id, date, type, amount: roundMoney(amtRaw), account: acct, toAccount: savedToAccount, category: cat, description: desc, recurring,
+      createdAt: new Date().toISOString() });
   }
 
   saveTxns(txns);

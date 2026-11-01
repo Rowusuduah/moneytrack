@@ -158,3 +158,20 @@ test('one-account Total Left matches the bank: carryover + all money in/out, tra
   assert.equal(A.accountTotalLeft(txns, 'chase_checking', carry), 1826.36);
   assert.equal(A.accountTotalLeft([], 'chase_checking', 0), 0);
 });
+
+// ── Same-day entries after a snapshot ────────────────────────────────
+
+test('an entry dated on the snapshot day counts only if it was added after the snapshot was saved', () => {
+  const snaps = [{ date: '2026-11-01', savedAt: '2026-11-01T13:15:00.000Z', accounts: { chase_checking: 1597.71, usf_checking: 74.74 } }];
+  const txns = [
+    { ...tx('2026-11-01', 'expense', 2500, 'chase_checking', 'Savings Transfer', 'already inside the snapshot'), createdAt: '2026-11-01T13:00:00.000Z' },
+    { ...tx('2026-11-01', 'expense', 849.83, 'chase_checking', 'Rent', 'paid after the snapshot'), createdAt: '2026-11-01T15:30:00.000Z' },
+    { ...tx('2026-11-01', 'expense', 100, 'chase_checking', 'Gifts', 'added after, no snapshot time') },
+  ];
+  assert.deepEqual(A.checkingNow(snaps, txns, ACCTS, '2026-11-01'), { amount: 822.62, since: '2026-11-01' });
+  // Old snapshots without savedAt keep the old rule: same-day entries are inside it.
+  const old = [{ date: '2026-11-01', accounts: { chase_checking: 1597.71, usf_checking: 74.74 } }];
+  assert.deepEqual(A.checkingNow(old, txns, ACCTS, '2026-11-01'), { amount: 1672.45, since: '2026-11-01' });
+  assert.equal(A.txnAfterSnapshot({ date: '2026-11-02' }, old[0]), true);
+  assert.equal(A.txnAfterSnapshot({ date: '2026-10-31', createdAt: '2026-11-02T00:00:00Z' }, snaps[0]), false);
+});

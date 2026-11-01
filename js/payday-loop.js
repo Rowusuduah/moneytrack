@@ -222,7 +222,8 @@ function wlLoopLogPayday(store, today) {
     if (!ACCOUNTS.some(a => a.id === from && a.group === 'checking')) { showToast('Choose a checking account.', 'error'); return; }
     const txns = loadTxns();
     txns.push({ id: wlLoopUid(), date: today, type: 'expense', amount: roundMoney(s.savings.amount), account: from,
-      toAccount: '', category: 'Savings Transfer', description: 'Payday Loop: savings to ' + s.savings.to, recurring: '' });
+      toAccount: '', category: 'Savings Transfer', description: 'Payday Loop: savings to ' + s.savings.to, recurring: '',
+      createdAt: new Date().toISOString() });
     saveTxns(txns);
   }
   const road = wlRoadNumbers(loadTxns(), today);

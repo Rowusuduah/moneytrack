@@ -150,7 +150,9 @@ test('every category a bill name can map to is a real choice in the Add form', (
 test('paying a bill logs today\'s transaction and moves the bill past that due date', () => {
   const template = { type: 'expense', category: 'Rent', account: 'chase_checking', toAccount: '' };
   const { txn, bill } = A.payBill(RENT, day('2026-10-01'), '2026-09-27', template, 'txn-1');
-  assert.deepEqual(txn, { id: 'txn-1', date: '2026-09-27', type: 'expense', amount: 1150, account: 'chase_checking', toAccount: '', category: 'Rent', description: 'Rent', recurring: '' });
+  const { createdAt, ...rest } = txn;
+  assert.match(createdAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, 'records when it was added (same-day snapshot rule)');
+  assert.deepEqual(rest, { id: 'txn-1', date: '2026-09-27', type: 'expense', amount: 1150, account: 'chase_checking', toAccount: '', category: 'Rent', description: 'Rent', recurring: '' });
   assert.equal(bill.paidThrough, '2026-10-01');
   assert.equal(bill.lastPaidOn, '2026-09-27');
   assert.equal(bill.lastPaidTxn, 'txn-1');
